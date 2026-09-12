@@ -29,6 +29,10 @@ describe('secret storage and sanitization', () => {
 		expect(store.get('steam-api-key')).toBe(secrets[0]);
 		store.delete('steam-api-key');
 		expect(store.get('steam-api-key')).toBeNull();
+		expect(() => store.get('unknown-provider-secret')).toThrow();
+		expect(() => store.get('toString')).toThrow();
+		expect(() => store.set('npsso', 'NPSSO_TEST_SECRET_456')).toThrow();
+		expect(() => store.set('steam-api-key', 'A'.repeat(64))).toThrow();
 	});
 
 	it('redacts registered values and bearer or NPSSO-shaped values from errors', () => {
@@ -60,5 +64,13 @@ describe('secret storage and sanitization', () => {
 			accessToken: '[REDACTED]',
 			npsso: '[REDACTED]',
 		});
+	});
+
+	it('redacts standalone unregistered 64-character NPSSO-shaped values', () => {
+		const npsso = 'A'.repeat(64);
+		const sanitized = sanitizeDiagnosticData({ activity: npsso });
+
+		expect(JSON.stringify(sanitized)).not.toContain(npsso);
+		expect(sanitized).toEqual({ activity: '[REDACTED]' });
 	});
 });

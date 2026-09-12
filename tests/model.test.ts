@@ -9,7 +9,7 @@ import {
 	createSyncPlan,
 	isSyncPlanStale,
 } from '../src/model/operations';
-import type { GameIdentity } from '../src/model/identity';
+import { resolveCanonicalGameId, type GameIdentity } from '../src/model/identity';
 
 function providerGame(overrides: Partial<ProviderGame> = {}): ProviderGame {
 	return {
@@ -44,8 +44,8 @@ describe('canonical game domain', () => {
 					identity: {
 						provider: 'playstation',
 						conceptId: 'concept-10',
-						titleIds: [],
-						npCommunicationIds: [],
+						titleIds: ['title-10'],
+						npCommunicationIds: ['comm-10'],
 					},
 				}),
 			],
@@ -80,8 +80,8 @@ describe('canonical game domain', () => {
 					identity: {
 						provider: 'playstation',
 						conceptId: 'concept-10',
-						titleIds: [],
-						npCommunicationIds: [],
+						titleIds: ['title-10'],
+						npCommunicationIds: ['comm-10'],
 					},
 				}),
 			],
@@ -125,6 +125,7 @@ describe('canonical game domain', () => {
 			games: [],
 			fetchedAt: '2026-09-12T12:00:00Z',
 			pagination: { complete: true, pagesFetched: 2 },
+			paginationComplete: true,
 		};
 		const partial = { ...complete, status: 'partial' as const, pagination: { complete: false, pagesFetched: 1 } };
 		const failed = { ...complete, status: 'failed' as const };
@@ -133,6 +134,25 @@ describe('canonical game domain', () => {
 		expect(canDecreaseOwnership(complete)).toBe(true);
 		expect(canDecreaseOwnership(partial)).toBe(false);
 		expect(canDecreaseOwnership(failed)).toBe(false);
+	});
+
+	it('requires a stable provider identifier and preserves durable canonical mappings', () => {
+		expect(() =>
+			createCanonicalGameId({
+				provider: 'playstation',
+				conceptId: '',
+				titleIds: [],
+				npCommunicationIds: [],
+			} as never),
+		).toThrow();
+
+		expect(
+			resolveCanonicalGameId(
+				{ provider: 'steam', appId: 10 },
+				'10',
+				[{ canonicalId: 'game-sync:durable', provider: 'steam', providerGameId: '10' }],
+			),
+		).toBe('game-sync:durable');
 	});
 
 	it('creates deterministic operations and rejects stale note previews', () => {
@@ -154,5 +174,41 @@ describe('canonical game domain', () => {
 		expect(isSyncPlanStale(plan, 'revision-1', { [operationInput.path]: 'fingerprint-1' })).toBe(false);
 		expect(isSyncPlanStale(plan, 'revision-2', { [operationInput.path]: 'fingerprint-1' })).toBe(true);
 		expect(isSyncPlanStale(plan, 'revision-1', { [operationInput.path]: 'fingerprint-2' })).toBe(true);
+	});
+
+	it('enforces operation fingerprint invariants and plan consistency', () => {
+		const invalidCreate = {
+			canonicalGameId: 'game:example',
+			kind: 'create-note' as const,
+			risk: 'safe' as const,
+			summary: 'Create note',
+			planRevision: 'revision-1',
+			expectedNoteFingerprint: 'must-not-exist',
+		};
+		const invalidUpdate = {
+			canonicalGameId: 'game:example',
+			kind: 'update-properties' as const,
+			risk: 'safe' as const,
+			summary: 'Update properties',
+			planRevision: 'revision-1',
+			expectedNoteFingerprint: '  ',
+		};
+
+		expect(() => createOperation(invalidCreate as never)).toThrow();
+		expect(() => createOperation(invalidUpdate as never)).toThrow();
+
+		const update = createOperation({
+			canonicalGameId: 'game:example',
+			kind: 'update-properties',
+			risk: 'safe',
+			path: 'Games/Example.md',
+			summary: 'Update properties',
+			planRevision: 'revision-2',
+			expectedNoteFingerprint: 'fingerprint-1',
+		});
+		const conflicting = createOperation({ ...update, summary: 'Conflicting update', expectedNoteFingerprint: 'fingerprint-2' });
+
+		expect(() => createSyncPlan('revision-1', [update])).toThrow();
+		expect(() => createSyncPlan('revision-2', [update, conflicting])).toThrow();
 	});
 });

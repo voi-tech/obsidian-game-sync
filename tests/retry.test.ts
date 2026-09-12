@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ProviderAuthError, ProviderRateLimitError } from '../src/network/errors';
-import { retry } from '../src/sync/retry';
+import { ProviderAuthError, ProviderNetworkError, ProviderRateLimitError } from '../src/network/errors';
+import { isRetryableProviderError, retry } from '../src/sync/retry';
 import { mapWithLimit } from '../src/utils/concurrency';
 
 describe('provider retry and bounded concurrency', () => {
@@ -35,6 +35,49 @@ describe('provider retry and bounded concurrency', () => {
 		).rejects.toThrow(ProviderAuthError);
 
 		expect(attempts).toBe(1);
+	});
+
+	it('retains status and retryability and excludes non-transient provider errors', async () => {
+		const rateLimited = new ProviderRateLimitError('slow down', 25);
+		const gateway = new ProviderNetworkError('bad gateway', { status: 502 });
+		const serverError = new ProviderNetworkError('server error', { status: 500, retryable: false });
+
+		expect(rateLimited.status).toBe(429);
+		expect(rateLimited.retryable).toBe(true);
+		expect(gateway.status).toBe(502);
+		expect(gateway.retryable).toBe(true);
+		expect(isRetryableProviderError(rateLimited)).toBe(true);
+		expect(isRetryableProviderError(gateway)).toBe(true);
+		expect(isRetryableProviderError(serverError)).toBe(false);
+
+		let attempts = 0;
+		await expect(
+			retry(async () => {
+				attempts += 1;
+				throw serverError;
+			}, { sleep: async () => undefined }),
+		).rejects.toBe(serverError);
+		expect(attempts).toBe(1);
+	});
+
+	it('clamps maxAttempts to one through three total attempts', async () => {
+		for (const [requested, expected] of [
+			[0, 1],
+			[2, 2],
+			[9, 3],
+		] as const) {
+			let attempts = 0;
+			await expect(
+				retry(
+					async () => {
+						attempts += 1;
+						throw new ProviderRateLimitError('slow down');
+					},
+					{ maxAttempts: requested, sleep: async () => undefined },
+				),
+			).rejects.toThrow(ProviderRateLimitError);
+			expect(attempts).toBe(expected);
+		}
 	});
 
 	it('preserves output ordering while respecting the concurrency limit', async () => {

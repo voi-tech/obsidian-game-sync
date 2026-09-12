@@ -50,13 +50,16 @@ function responseMessage(response: HttpTransportResponse): string {
 
 function mapStatus(response: HttpTransportResponse): never | undefined {
 	if (response.status === 401 || response.status === 403) {
-		throw new ProviderAuthError(responseMessage(response));
+		throw new ProviderAuthError(responseMessage(response), { status: response.status });
 	}
 	if (response.status === 429) {
 		throw new ProviderRateLimitError(responseMessage(response), retryAfterMs(response.headers));
 	}
 	if (response.status >= 500) {
-		throw new ProviderNetworkError(responseMessage(response));
+		throw new ProviderNetworkError(responseMessage(response), {
+			status: response.status,
+			retryable: response.status === 502 || response.status === 503 || response.status === 504,
+		});
 	}
 	if (response.status >= 400) {
 		throw new ProviderHttpError(responseMessage(response), response.status);

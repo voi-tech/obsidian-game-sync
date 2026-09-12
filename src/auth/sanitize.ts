@@ -1,10 +1,14 @@
 const SECRET_FIELD_PATTERN = /(?:access[_-]?token|refresh[_-]?token|api[_-]?key|authorization|npsso|password|secret)/i;
 const BEARER_PATTERN = /Bearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const NPSSO_PATTERN = /(?:npsso\s*[:=]\s*)[^\s,;)}]+/gi;
+const STANDALONE_NPSSO_PATTERN = /(^|[^A-Za-z0-9_-])([A-Za-z0-9_-]{64})(?=$|[^A-Za-z0-9_-])/g;
 const REDACTED = '[REDACTED]';
 
 function redactString(value: string, secrets: readonly string[]): string {
-	let sanitized = value.replace(BEARER_PATTERN, `Bearer ${REDACTED}`).replace(NPSSO_PATTERN, `npsso=${REDACTED}`);
+	let sanitized = value
+		.replace(BEARER_PATTERN, `Bearer ${REDACTED}`)
+		.replace(NPSSO_PATTERN, `npsso=${REDACTED}`)
+		.replace(STANDALONE_NPSSO_PATTERN, `$1${REDACTED}`);
 	for (const secret of secrets) {
 		if (secret.length > 0) {
 			sanitized = sanitized.split(secret).join(REDACTED);

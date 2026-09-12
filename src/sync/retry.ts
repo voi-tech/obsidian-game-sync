@@ -9,25 +9,29 @@ export interface RetryOptions {
 
 const defaultSleep = (delayMs: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, delayMs));
 
-function isRetryable(error: unknown): error is ProviderNetworkError | ProviderRateLimitError {
-	return error instanceof ProviderNetworkError || error instanceof ProviderRateLimitError;
+export function isRetryableProviderError(error: unknown): error is ProviderNetworkError | ProviderRateLimitError {
+	if (error instanceof ProviderRateLimitError) {
+		return error.status === 429 && error.retryable;
+	}
+	if (error instanceof ProviderNetworkError) {
+		return error.retryable && (error.status === undefined || error.status === 502 || error.status === 503 || error.status === 504);
+	}
+	return false;
 }
 
 export async function retry<T>(operation: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
-	const maxAttempts = options.maxAttempts ?? 3;
+	const requestedAttempts = options.maxAttempts ?? 3;
+	const maxAttempts = Number.isFinite(requestedAttempts) ? Math.min(3, Math.max(1, Math.floor(requestedAttempts))) : 3;
 	const baseDelayMs = options.baseDelayMs ?? 250;
 	const sleep = options.sleep ?? defaultSleep;
 	const random = options.random ?? Math.random;
-	if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
-		throw new RangeError('Maximum attempts must be a positive integer.');
-	}
 	let attempt = 0;
 	while (attempt < maxAttempts) {
 		attempt += 1;
 		try {
 			return await operation();
 		} catch (error) {
-			if (!isRetryable(error) || attempt >= maxAttempts) {
+			if (!isRetryableProviderError(error) || attempt >= maxAttempts) {
 				throw error;
 			}
 			const exponentialDelay = baseDelayMs * 2 ** (attempt - 1);

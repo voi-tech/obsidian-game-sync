@@ -20,14 +20,21 @@ const SECRET_NAME_MAP: Record<SecretName, string> = {
 	'psn-refresh-token': GAME_SYNC_SECRET_NAMES.psnRefreshToken,
 };
 
+export function isNpssoValue(value: string): boolean {
+	return /^[A-Za-z0-9_-]{64}$/.test(value);
+}
+
 function ownedSecretName(name: string): string {
-	if (name in SECRET_NAME_MAP) {
+	if (name.toLowerCase().includes('npsso')) {
+		throw new Error('NPSSO must never be stored in SecretStorage.');
+	}
+	if (Object.prototype.hasOwnProperty.call(SECRET_NAME_MAP, name)) {
 		return SECRET_NAME_MAP[name as SecretName];
 	}
-	if (name.startsWith('game-sync-')) {
+	if (name === GAME_SYNC_SECRET_NAMES.steamApiKey || name === GAME_SYNC_SECRET_NAMES.psnAccessToken || name === GAME_SYNC_SECRET_NAMES.psnRefreshToken) {
 		return name;
 	}
-	return `game-sync-${name}`;
+	throw new Error(`Unsupported Game Sync secret name: ${name}.`);
 }
 
 export interface SecretStore {
@@ -39,9 +46,13 @@ export interface SecretStore {
 export function createSecretStore(storage: SecretStorageLike): SecretStore {
 	return {
 		get(name: string): string | null {
-			return storage.getSecret(ownedSecretName(name));
+			const value = storage.getSecret(ownedSecretName(name));
+			return value === null || value.length === 0 ? null : value;
 		},
 		set(name: string, value: string): void {
+			if (value.length === 0 || isNpssoValue(value)) {
+				throw new Error('Secret value is empty or NPSSO-shaped and cannot be stored.');
+			}
 			storage.setSecret(ownedSecretName(name), value);
 		},
 		delete(name: string): void {

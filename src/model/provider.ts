@@ -53,11 +53,12 @@ export interface ProviderSnapshot {
 	games: ProviderGame[];
 	fetchedAt: string;
 	pagination: ProviderPaginationState;
+	paginationComplete: boolean;
 	error?: ProviderSnapshotError;
 }
 
 export function isCompleteProviderSnapshot(snapshot: ProviderSnapshot): boolean {
-	return snapshot.status === 'complete' && snapshot.pagination.complete;
+	return snapshot.status === 'complete' && snapshot.paginationComplete === true && snapshot.pagination.complete;
 }
 
 export function canDecreaseOwnership(snapshot: ProviderSnapshot): boolean {

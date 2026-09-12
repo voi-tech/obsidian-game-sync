@@ -1,6 +1,8 @@
-import type { GameIdentity, ProviderIdentity } from './identity';
+import type { GameIdentity } from './identity';
 import type { NormalizedGame } from './game';
 import type { ProviderGame } from './provider';
+
+export { createCanonicalGameId, resolveCanonicalGameId } from './identity';
 
 export type GameOperationKind =
 	| 'create-note'
@@ -14,20 +16,36 @@ export type GameOperationKind =
 
 export type OperationRisk = 'safe' | 'review';
 
-export interface OperationInput {
+type OperationBase = {
 	canonicalGameId: string;
-	kind: GameOperationKind;
 	risk: OperationRisk;
 	path?: string;
 	summary: string;
-	expectedNoteFingerprint?: string | null;
 	planRevision: string;
-}
+};
 
-export interface Operation extends OperationInput {
+export type CreateOperationInput = OperationBase & {
+	kind: 'create-note' | 'create-base';
+	expectedNoteFingerprint?: null;
+};
+
+export type ExistingNoteOperationInput = OperationBase & {
+	kind: Exclude<GameOperationKind, 'create-note' | 'create-base'>;
+	expectedNoteFingerprint: string;
+};
+
+export type OperationInput = CreateOperationInput | ExistingNoteOperationInput;
+
+export type CreateOperation = CreateOperationInput & {
 	id: string;
-	expectedNoteFingerprint: string | null;
-}
+	expectedNoteFingerprint: null;
+};
+
+export type ExistingNoteOperation = ExistingNoteOperationInput & {
+	id: string;
+};
+
+export type Operation = CreateOperation | ExistingNoteOperation;
 
 export interface SyncPlan {
 	id: string;
@@ -57,19 +75,6 @@ function deterministicHash(value: string): string {
 		hash = Math.imul(hash, 16777619);
 	}
 	return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-export function createCanonicalGameId(identity: ProviderIdentity | GameIdentity): string {
-	if ('canonicalId' in identity) {
-		return identity.canonicalId;
-	}
-	if (identity.provider === 'steam') {
-		return `game-sync:steam:${identity.appId}`;
-	}
-	const concept = identity.conceptId ?? '';
-	const titleIds = [...identity.titleIds].sort().join(',');
-	const communicationIds = [...identity.npCommunicationIds].sort().join(',');
-	return `game-sync:playstation:${concept}:${titleIds}:${communicationIds}`;
 }
 
 function copyProviderGame(game: ProviderGame): NormalizedGame['providers'][keyof NormalizedGame['providers']] {
@@ -145,7 +150,16 @@ export function createNormalizedGame(games: readonly ProviderGame[], canonicalId
 	};
 }
 
+export function createOperation(input: CreateOperationInput): CreateOperation;
+export function createOperation(input: ExistingNoteOperationInput): ExistingNoteOperation;
 export function createOperation(input: OperationInput): Operation {
+	const isCreate = input.kind === 'create-note' || input.kind === 'create-base';
+	if (isCreate && input.expectedNoteFingerprint !== undefined && input.expectedNoteFingerprint !== null) {
+		throw new Error(`${input.kind} requires an absent note fingerprint.`);
+	}
+	if (!isCreate && (typeof input.expectedNoteFingerprint !== 'string' || input.expectedNoteFingerprint.trim().length === 0)) {
+		throw new Error(`${input.kind} requires a non-empty note fingerprint.`);
+	}
 	const expectedNoteFingerprint = input.expectedNoteFingerprint ?? null;
 	const payload = {
 		canonicalGameId: input.canonicalGameId,
@@ -156,13 +170,33 @@ export function createOperation(input: OperationInput): Operation {
 		expectedNoteFingerprint,
 		planRevision: input.planRevision,
 	};
-	return { ...input, expectedNoteFingerprint, id: `operation:${deterministicHash(stableStringify(payload))}` };
+	if (isCreate) {
+		return { ...input, expectedNoteFingerprint: null, id: `operation:${deterministicHash(stableStringify(payload))}` };
+	}
+	if (typeof input.expectedNoteFingerprint !== 'string') {
+		throw new Error(`${input.kind} requires a non-empty note fingerprint.`);
+	}
+	return {
+		...input,
+		expectedNoteFingerprint: input.expectedNoteFingerprint,
+		id: `operation:${deterministicHash(stableStringify(payload))}`,
+	};
 }
 
 export function createSyncPlan(planRevision: string, operations: readonly Operation[]): SyncPlan {
+	if (planRevision.trim().length === 0) {
+		throw new Error('Sync plan revision must not be empty.');
+	}
 	const expectedNoteFingerprints: Record<string, string | null> = {};
 	for (const operation of operations) {
+		if (operation.planRevision !== planRevision) {
+			throw new Error('Sync plan operations must use one plan revision.');
+		}
 		if (operation.path !== undefined) {
+			const previous = expectedNoteFingerprints[operation.path];
+			if (previous !== undefined && previous !== operation.expectedNoteFingerprint) {
+				throw new Error(`Conflicting note fingerprints for ${operation.path}.`);
+			}
 			expectedNoteFingerprints[operation.path] = operation.expectedNoteFingerprint;
 		}
 	}

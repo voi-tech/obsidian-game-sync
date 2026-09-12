@@ -1,5 +1,6 @@
 import { StateMigrationError } from '../network/errors';
-import type { GameProvider } from '../model/provider';
+import type { GameIdentity, IdentityMapping } from '../model/identity';
+import type { GameProvider, ProviderSnapshotStatus } from '../model/provider';
 import { DEFAULT_SETTINGS } from './defaults';
 import type {
 	ActivityEntry,
@@ -9,27 +10,99 @@ import type {
 	ProviderPresenceState,
 } from './schema';
 
-const PROVIDERS: readonly GameProvider[] = ['steam', 'playstation'];
 const MAX_RECENT_ACTIVITY = 100;
+const SETTINGS_KEYS = [
+	'setupCompleted',
+	'firstSyncCompleted',
+	'enabledProviders',
+	'notesFolder',
+	'filenamePattern',
+	'templatePath',
+	'createBase',
+	'basePath',
+	'includeUnplayed',
+	'includeFreeToPlay',
+	'includePreviouslyPlayedNoLongerOwned',
+	'includeDemosTrials',
+	'includeBetasTestApps',
+	'previewMode',
+	'backgroundSync',
+	'backgroundIntervalMinutes',
+	'metadataLanguage',
+	'metadataPreference',
+	'revealHiddenAchievements',
+	'showAchievementRarity',
+	'showTrophyType',
+	'showUnlockDate',
+	'recordHistory',
+	'historyPath',
+	'backgroundNotifications',
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function stringValue(value: unknown, fallback = ''): string {
-	return typeof value === 'string' ? value : fallback;
+function rejectUnknownFields(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
+	const unknown = Object.keys(value).find((key) => !allowed.includes(key));
+	if (unknown !== undefined) {
+		throw new StateMigrationError(`Unknown ${label} field: ${unknown}.`);
+	}
 }
 
-function booleanValue(value: unknown, fallback: boolean): boolean {
-	return typeof value === 'boolean' ? value : fallback;
+function requiredString(value: unknown, label: string): string {
+	if (typeof value !== 'string' || value.trim().length === 0) {
+		throw new StateMigrationError(`Invalid ${label}.`);
+	}
+	return value;
 }
 
-function numberValue(value: unknown, fallback: number): number {
-	return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+function optionalString(value: unknown, label: string): string | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	return requiredString(value, label);
 }
 
-function providerValue(value: unknown): GameProvider | null {
-	return value === 'steam' || value === 'playstation' ? value : null;
+function textValue(value: unknown, label: string): string {
+	if (typeof value !== 'string') {
+		throw new StateMigrationError(`Invalid ${label}.`);
+	}
+	return value;
+}
+
+function optionalBoolean(value: unknown, fallback: boolean, label: string): boolean {
+	if (value === undefined) {
+		return fallback;
+	}
+	if (typeof value !== 'boolean') {
+		throw new StateMigrationError(`Invalid ${label}.`);
+	}
+	return value;
+}
+
+function optionalNumber(value: unknown, fallback: number, label: string): number {
+	if (value === undefined) {
+		return fallback;
+	}
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		throw new StateMigrationError(`Invalid ${label}.`);
+	}
+	return value;
+}
+
+function providerValue(value: unknown, label: string): GameProvider {
+	if (value !== 'steam' && value !== 'playstation') {
+		throw new StateMigrationError(`Invalid ${label}.`);
+	}
+	return value;
+}
+
+function snapshotStatus(value: unknown, label: string): ProviderSnapshotStatus {
+	if (value !== 'complete' && value !== 'partial' && value !== 'failed') {
+		throw new StateMigrationError(`Invalid ${label}.`);
+	}
+	return value;
 }
 
 function readSettings(raw: unknown): GameSyncData['settings'] {
@@ -39,53 +112,155 @@ function readSettings(raw: unknown): GameSyncData['settings'] {
 	if (!isRecord(raw)) {
 		throw new StateMigrationError('Invalid settings state.');
 	}
-	const enabledProviders = isRecord(raw.enabledProviders) ? raw.enabledProviders : {};
+	rejectUnknownFields(raw, SETTINGS_KEYS, 'settings');
+	if (raw.enabledProviders !== undefined && !isRecord(raw.enabledProviders)) {
+		throw new StateMigrationError('Invalid enabled providers state.');
+	}
+	const enabledProviders = raw.enabledProviders === undefined ? {} : raw.enabledProviders;
+	rejectUnknownFields(enabledProviders, ['steam', 'playstation'], 'enabled provider');
 	return {
-		...DEFAULT_SETTINGS,
-		setupCompleted: booleanValue(raw.setupCompleted, DEFAULT_SETTINGS.setupCompleted),
-		firstSyncCompleted: booleanValue(raw.firstSyncCompleted, DEFAULT_SETTINGS.firstSyncCompleted),
+		setupCompleted: optionalBoolean(raw.setupCompleted, DEFAULT_SETTINGS.setupCompleted, 'setupCompleted'),
+		firstSyncCompleted: optionalBoolean(raw.firstSyncCompleted, DEFAULT_SETTINGS.firstSyncCompleted, 'firstSyncCompleted'),
 		enabledProviders: {
-			steam: booleanValue(enabledProviders.steam, DEFAULT_SETTINGS.enabledProviders.steam),
-			playstation: booleanValue(enabledProviders.playstation, DEFAULT_SETTINGS.enabledProviders.playstation),
+			steam: optionalBoolean(enabledProviders.steam, DEFAULT_SETTINGS.enabledProviders.steam, 'enabledProviders.steam'),
+			playstation: optionalBoolean(
+				enabledProviders.playstation,
+				DEFAULT_SETTINGS.enabledProviders.playstation,
+				'enabledProviders.playstation',
+			),
 		},
-		notesFolder: stringValue(raw.notesFolder, DEFAULT_SETTINGS.notesFolder),
-		filenamePattern: stringValue(raw.filenamePattern, DEFAULT_SETTINGS.filenamePattern),
-		templatePath: stringValue(raw.templatePath, DEFAULT_SETTINGS.templatePath),
-		createBase: booleanValue(raw.createBase, DEFAULT_SETTINGS.createBase),
-		basePath: stringValue(raw.basePath, DEFAULT_SETTINGS.basePath),
-		includeUnplayed: booleanValue(raw.includeUnplayed, DEFAULT_SETTINGS.includeUnplayed),
-		includeFreeToPlay: booleanValue(raw.includeFreeToPlay, DEFAULT_SETTINGS.includeFreeToPlay),
-		includePreviouslyPlayedNoLongerOwned: booleanValue(
+		notesFolder: raw.notesFolder === undefined ? DEFAULT_SETTINGS.notesFolder : requiredString(raw.notesFolder, 'notesFolder'),
+		filenamePattern:
+			raw.filenamePattern === undefined ? DEFAULT_SETTINGS.filenamePattern : requiredString(raw.filenamePattern, 'filenamePattern'),
+		templatePath: raw.templatePath === undefined ? DEFAULT_SETTINGS.templatePath : textValue(raw.templatePath, 'templatePath'),
+		createBase: optionalBoolean(raw.createBase, DEFAULT_SETTINGS.createBase, 'createBase'),
+		basePath: raw.basePath === undefined ? DEFAULT_SETTINGS.basePath : requiredString(raw.basePath, 'basePath'),
+		includeUnplayed: optionalBoolean(raw.includeUnplayed, DEFAULT_SETTINGS.includeUnplayed, 'includeUnplayed'),
+		includeFreeToPlay: optionalBoolean(raw.includeFreeToPlay, DEFAULT_SETTINGS.includeFreeToPlay, 'includeFreeToPlay'),
+		includePreviouslyPlayedNoLongerOwned: optionalBoolean(
 			raw.includePreviouslyPlayedNoLongerOwned,
 			DEFAULT_SETTINGS.includePreviouslyPlayedNoLongerOwned,
+			'includePreviouslyPlayedNoLongerOwned',
 		),
-		includeDemosTrials: booleanValue(raw.includeDemosTrials, DEFAULT_SETTINGS.includeDemosTrials),
-		includeBetasTestApps: booleanValue(raw.includeBetasTestApps, DEFAULT_SETTINGS.includeBetasTestApps),
+		includeDemosTrials: optionalBoolean(raw.includeDemosTrials, DEFAULT_SETTINGS.includeDemosTrials, 'includeDemosTrials'),
+		includeBetasTestApps: optionalBoolean(raw.includeBetasTestApps, DEFAULT_SETTINGS.includeBetasTestApps, 'includeBetasTestApps'),
 		previewMode:
-			raw.previewMode === 'always' || raw.previewMode === 'review-only' || raw.previewMode === 'first-and-review'
-				? raw.previewMode
-				: DEFAULT_SETTINGS.previewMode,
-		backgroundSync: booleanValue(raw.backgroundSync, DEFAULT_SETTINGS.backgroundSync),
-		backgroundIntervalMinutes: numberValue(raw.backgroundIntervalMinutes, DEFAULT_SETTINGS.backgroundIntervalMinutes),
+			raw.previewMode === undefined
+				? DEFAULT_SETTINGS.previewMode
+				: raw.previewMode === 'always' || raw.previewMode === 'review-only' || raw.previewMode === 'first-and-review'
+					? raw.previewMode
+					: (() => {
+							throw new StateMigrationError('Invalid previewMode.');
+					  })(),
+		backgroundSync: optionalBoolean(raw.backgroundSync, DEFAULT_SETTINGS.backgroundSync, 'backgroundSync'),
+		backgroundIntervalMinutes: optionalNumber(
+			raw.backgroundIntervalMinutes,
+			DEFAULT_SETTINGS.backgroundIntervalMinutes,
+			'backgroundIntervalMinutes',
+		),
 		metadataLanguage:
-			raw.metadataLanguage === 'english' || raw.metadataLanguage === 'polish' || raw.metadataLanguage === 'follow-obsidian'
-				? raw.metadataLanguage
-				: DEFAULT_SETTINGS.metadataLanguage,
+			raw.metadataLanguage === undefined
+				? DEFAULT_SETTINGS.metadataLanguage
+				: raw.metadataLanguage === 'english' || raw.metadataLanguage === 'polish' || raw.metadataLanguage === 'follow-obsidian'
+					? raw.metadataLanguage
+					: (() => {
+							throw new StateMigrationError('Invalid metadataLanguage.');
+					  })(),
 		metadataPreference:
-			raw.metadataPreference === 'english' || raw.metadataPreference === 'polish' || raw.metadataPreference === 'automatic'
-				? raw.metadataPreference
-				: DEFAULT_SETTINGS.metadataPreference,
-		revealHiddenAchievements: booleanValue(raw.revealHiddenAchievements, DEFAULT_SETTINGS.revealHiddenAchievements),
-		showAchievementRarity: booleanValue(raw.showAchievementRarity, DEFAULT_SETTINGS.showAchievementRarity),
-		showTrophyType: booleanValue(raw.showTrophyType, DEFAULT_SETTINGS.showTrophyType),
-		showUnlockDate: booleanValue(raw.showUnlockDate, DEFAULT_SETTINGS.showUnlockDate),
-		recordHistory: booleanValue(raw.recordHistory, DEFAULT_SETTINGS.recordHistory),
-		historyPath: stringValue(raw.historyPath, DEFAULT_SETTINGS.historyPath),
+			raw.metadataPreference === undefined
+				? DEFAULT_SETTINGS.metadataPreference
+				: raw.metadataPreference === 'english' || raw.metadataPreference === 'polish' || raw.metadataPreference === 'automatic'
+					? raw.metadataPreference
+					: (() => {
+							throw new StateMigrationError('Invalid metadataPreference.');
+					  })(),
+		revealHiddenAchievements: optionalBoolean(
+			raw.revealHiddenAchievements,
+			DEFAULT_SETTINGS.revealHiddenAchievements,
+			'revealHiddenAchievements',
+		),
+		showAchievementRarity: optionalBoolean(raw.showAchievementRarity, DEFAULT_SETTINGS.showAchievementRarity, 'showAchievementRarity'),
+		showTrophyType: optionalBoolean(raw.showTrophyType, DEFAULT_SETTINGS.showTrophyType, 'showTrophyType'),
+		showUnlockDate: optionalBoolean(raw.showUnlockDate, DEFAULT_SETTINGS.showUnlockDate, 'showUnlockDate'),
+		recordHistory: optionalBoolean(raw.recordHistory, DEFAULT_SETTINGS.recordHistory, 'recordHistory'),
+		historyPath: raw.historyPath === undefined ? DEFAULT_SETTINGS.historyPath : requiredString(raw.historyPath, 'historyPath'),
 		backgroundNotifications:
-			raw.backgroundNotifications === 'all' || raw.backgroundNotifications === 'none' || raw.backgroundNotifications === 'problems-only'
-				? raw.backgroundNotifications
-				: DEFAULT_SETTINGS.backgroundNotifications,
+			raw.backgroundNotifications === undefined
+				? DEFAULT_SETTINGS.backgroundNotifications
+				: raw.backgroundNotifications === 'all' || raw.backgroundNotifications === 'none' || raw.backgroundNotifications === 'problems-only'
+					? raw.backgroundNotifications
+					: (() => {
+							throw new StateMigrationError('Invalid backgroundNotifications.');
+					  })(),
 	};
+}
+
+function readIdentityMapping(value: unknown): IdentityMapping {
+	if (!isRecord(value)) {
+		throw new StateMigrationError('Invalid identity mapping.');
+	}
+	rejectUnknownFields(value, ['canonicalId', 'provider', 'providerGameId'], 'identity mapping');
+	return {
+		canonicalId: requiredString(value.canonicalId, 'identity mapping canonicalId'),
+		provider: providerValue(value.provider, 'identity mapping provider'),
+		providerGameId: requiredString(value.providerGameId, 'identity mapping providerGameId'),
+	};
+}
+
+function readNegativeMapping(value: unknown): NegativeIdentityMapping {
+	if (!isRecord(value)) {
+		throw new StateMigrationError('Invalid negative mapping.');
+	}
+	rejectUnknownFields(value, ['leftCanonicalId', 'rightCanonicalId'], 'negative mapping');
+	return {
+		leftCanonicalId: requiredString(value.leftCanonicalId, 'negative mapping leftCanonicalId'),
+		rightCanonicalId: requiredString(value.rightCanonicalId, 'negative mapping rightCanonicalId'),
+	};
+}
+
+function readStringList(raw: unknown, label: string): string[] {
+	if (!Array.isArray(raw) || !raw.every((value) => typeof value === 'string' && value.trim().length > 0)) {
+		throw new StateMigrationError(`Invalid ${label} state.`);
+	}
+	const values: unknown[] = raw;
+	return values.map((value) => requiredString(value, label));
+}
+
+function readPresence(raw: unknown): ProviderPresenceState[] {
+	if (raw === undefined) {
+		return [];
+	}
+	if (!Array.isArray(raw)) {
+		throw new StateMigrationError('Invalid provider presence state.');
+	}
+	return raw.map((entry) => {
+		if (!isRecord(entry)) {
+			throw new StateMigrationError('Invalid provider presence entry.');
+		}
+		rejectUnknownFields(
+			entry,
+			['provider', 'providerGameId', 'canonicalGameId', 'owned', 'consecutiveMissing', 'lastSnapshotStatus', 'paginationComplete', 'lastSeenAt'],
+			'provider presence',
+		);
+		const lastSnapshotStatus = snapshotStatus(entry.lastSnapshotStatus, 'provider presence lastSnapshotStatus');
+		const paginationComplete = entry.paginationComplete;
+		if (typeof entry.owned !== 'boolean' || typeof paginationComplete !== 'boolean' || typeof entry.consecutiveMissing !== 'number' || !Number.isInteger(entry.consecutiveMissing) || entry.consecutiveMissing < 0) {
+			throw new StateMigrationError('Invalid provider presence values.');
+		}
+		if (entry.consecutiveMissing > 0 && (lastSnapshotStatus !== 'complete' || paginationComplete !== true)) {
+			throw new StateMigrationError('Incomplete provider presence cannot reduce ownership.');
+		}
+		return {
+			provider: providerValue(entry.provider, 'provider presence provider'),
+			providerGameId: requiredString(entry.providerGameId, 'provider presence providerGameId'),
+			canonicalGameId: requiredString(entry.canonicalGameId, 'provider presence canonicalGameId'),
+			owned: entry.owned,
+			consecutiveMissing: entry.consecutiveMissing,
+			lastSnapshotStatus,
+			paginationComplete,
+			lastSeenAt: optionalString(entry.lastSeenAt, 'provider presence lastSeenAt'),
+		};
+	});
 }
 
 function readProviderCursors(raw: unknown): GameSyncData['providerCursors'] {
@@ -96,43 +271,22 @@ function readProviderCursors(raw: unknown): GameSyncData['providerCursors'] {
 		throw new StateMigrationError('Invalid provider cursor state.');
 	}
 	const result: GameSyncData['providerCursors'] = {};
-	for (const [provider, value] of Object.entries(raw)) {
-		if (!PROVIDERS.includes(provider as GameProvider)) {
-			continue;
-		}
-		if (!isRecord(value) || (value.cursor !== undefined && typeof value.cursor !== 'string') || typeof value.page !== 'number') {
+	for (const provider of Object.keys(raw)) {
+		const providerName = providerValue(provider, 'provider cursor provider');
+		const value = raw[provider];
+		if (!isRecord(value)) {
 			throw new StateMigrationError(`Invalid cursor state for ${provider}.`);
 		}
-		result[provider as GameProvider] = {
-			cursor: value.cursor,
-			page: value.page,
+		rejectUnknownFields(value, ['cursor', 'page'], `cursor ${provider}`);
+		if (value.page !== undefined && (typeof value.page !== 'number' || !Number.isInteger(value.page) || value.page < 0)) {
+			throw new StateMigrationError(`Invalid page for ${provider}.`);
+		}
+		result[providerName] = {
+			cursor: optionalString(value.cursor, `cursor ${provider}`),
+			page: value.page === undefined ? 0 : value.page,
 		};
 	}
 	return result;
-}
-
-function readPresence(raw: unknown): ProviderPresenceState[] {
-	if (raw === undefined) {
-		return [];
-	}
-	if (!Array.isArray(raw)) {
-		throw new StateMigrationError('Invalid provider presence state.');
-	}
-	return raw.map((value) => {
-		if (!isRecord(value) || providerValue(value.provider) === null || typeof value.providerGameId !== 'string') {
-			throw new StateMigrationError('Invalid provider presence entry.');
-		}
-		if (
-			typeof value.canonicalGameId !== 'string' ||
-			typeof value.owned !== 'boolean' ||
-			typeof value.consecutiveMissing !== 'number' ||
-			(value.lastSnapshotStatus !== 'complete' && value.lastSnapshotStatus !== 'partial' && value.lastSnapshotStatus !== 'failed') ||
-			typeof value.paginationComplete !== 'boolean'
-		) {
-			throw new StateMigrationError('Invalid provider presence entry.');
-		}
-		return value as unknown as ProviderPresenceState;
-	});
 }
 
 function readLastSuccessfulProviderStates(raw: unknown): GameSyncData['lastSuccessfulProviderStates'] {
@@ -143,50 +297,123 @@ function readLastSuccessfulProviderStates(raw: unknown): GameSyncData['lastSucce
 		throw new StateMigrationError('Invalid successful provider state.');
 	}
 	const result: GameSyncData['lastSuccessfulProviderStates'] = {};
-	for (const [provider, value] of Object.entries(raw)) {
-		if (!PROVIDERS.includes(provider as GameProvider)) {
-			continue;
-		}
-		if (!isRecord(value) || typeof value.fetchedAt !== 'string' || !Array.isArray(value.gameIds) || !value.gameIds.every((id) => typeof id === 'string')) {
+	for (const provider of Object.keys(raw)) {
+		const providerName = providerValue(provider, 'successful provider state provider');
+		const value = raw[provider];
+		if (!isRecord(value)) {
 			throw new StateMigrationError(`Invalid successful state for ${provider}.`);
 		}
-		result[provider as GameProvider] = {
-			provider: provider as GameProvider,
-			fetchedAt: value.fetchedAt,
-			gameIds: [...value.gameIds],
+		rejectUnknownFields(value, ['provider', 'fetchedAt', 'gameIds', 'status', 'paginationComplete'], `successful state ${provider}`);
+		if (value.status !== 'complete' || value.paginationComplete !== true) {
+			throw new StateMigrationError(`Provider success for ${provider} requires complete pagination.`);
+		}
+		result[providerName] = {
+			provider: providerName,
+			fetchedAt: requiredString(value.fetchedAt, `successful state ${provider} fetchedAt`),
+			gameIds: readStringList(value.gameIds, `successful state ${provider} gameIds`),
+			status: 'complete',
 			paginationComplete: true,
 		} satisfies LastSuccessfulProviderState;
 	}
 	return result;
 }
 
-function readArray<T>(raw: unknown, fallback: T[], label: string): T[] {
+function readGameIdentity(value: unknown): GameIdentity {
+	if (!isRecord(value)) {
+		throw new StateMigrationError('Invalid identity index entry.');
+	}
+	rejectUnknownFields(value, ['canonicalId', 'steamAppId', 'playstation'], 'identity index');
+	const canonicalId = requiredString(value.canonicalId, 'identity index canonicalId');
+	if (value.steamAppId !== undefined && (typeof value.steamAppId !== 'number' || !Number.isInteger(value.steamAppId) || value.steamAppId < 1)) {
+		throw new StateMigrationError('Invalid identity index steamAppId.');
+	}
+	let playstation: GameIdentity['playstation'];
+	if (value.playstation !== undefined) {
+		if (!isRecord(value.playstation)) {
+			throw new StateMigrationError('Invalid identity index PlayStation identity.');
+		}
+		rejectUnknownFields(value.playstation, ['conceptId', 'titleIds', 'npCommunicationIds'], 'identity index PlayStation');
+		const conceptId = optionalString(value.playstation.conceptId, 'identity index conceptId');
+		const titleIds = value.playstation.titleIds === undefined ? [] : readStringList(value.playstation.titleIds, 'identity index titleIds');
+		const npCommunicationIds = value.playstation.npCommunicationIds === undefined ? [] : readStringList(value.playstation.npCommunicationIds, 'identity index communication IDs');
+		if (conceptId === undefined && titleIds.length === 0 && npCommunicationIds.length === 0) {
+			throw new StateMigrationError('PlayStation identity requires a stable identifier.');
+		}
+		playstation = { conceptId, titleIds, npCommunicationIds };
+	}
+	if (value.steamAppId === undefined && playstation === undefined) {
+		throw new StateMigrationError('Identity index requires a stable provider identifier.');
+	}
+	return {
+		canonicalId,
+		steamAppId: value.steamAppId,
+		playstation,
+	};
+}
+
+function readActivity(value: unknown): ActivityEntry {
+	if (!isRecord(value)) {
+		throw new StateMigrationError('Invalid activity entry.');
+	}
+	rejectUnknownFields(value, ['id', 'createdAt', 'kind', 'message', 'data'], 'activity');
+	if (value.data !== undefined && !isRecord(value.data)) {
+		throw new StateMigrationError('Invalid activity data.');
+	}
+	return {
+		id: requiredString(value.id, 'activity id'),
+		createdAt: requiredString(value.createdAt, 'activity createdAt'),
+		kind: requiredString(value.kind, 'activity kind'),
+		message: typeof value.message === 'string' ? value.message : (() => { throw new StateMigrationError('Invalid activity message.'); })(),
+		data: value.data === undefined ? undefined : { ...value.data },
+	};
+}
+
+function readArray<T>(raw: unknown, fallback: T[], reader: (value: unknown) => T, label: string): T[] {
 	if (raw === undefined) {
 		return fallback;
 	}
 	if (!Array.isArray(raw)) {
 		throw new StateMigrationError(`Invalid ${label} state.`);
 	}
-	return raw.map((value: unknown) => value) as T[];
+	return raw.map(reader);
 }
-
 
 function migrateVersionOne(raw: unknown): GameSyncData {
 	if (!isRecord(raw)) {
 		throw new StateMigrationError('State must be an object.');
 	}
+	rejectUnknownFields(
+		raw,
+		[
+			'schemaVersion',
+			'settings',
+			'identityMappings',
+			'negativeMappings',
+			'ignoredCanonicalIds',
+			'ignoredProviderRefs',
+			'presence',
+			'providerCursors',
+			'lastSuccessfulProviderStates',
+			'recentActivity',
+			'identityIndex',
+		],
+		'persistent state',
+	);
+	if (raw.schemaVersion !== undefined && raw.schemaVersion !== 1) {
+		throw new StateMigrationError('Unsupported state schema version.');
+	}
 	return {
 		schemaVersion: 1,
 		settings: readSettings(raw.settings),
-		identityMappings: readArray(raw.identityMappings, [], 'identity mapping'),
-		negativeMappings: readArray<NegativeIdentityMapping>(raw.negativeMappings, [], 'negative mapping'),
-		ignoredCanonicalIds: readArray<string>(raw.ignoredCanonicalIds, [], 'ignored canonical ID'),
-		ignoredProviderRefs: readArray<string>(raw.ignoredProviderRefs, [], 'ignored provider reference'),
+		identityMappings: readArray<IdentityMapping>(raw.identityMappings, [], readIdentityMapping, 'identity mapping'),
+		negativeMappings: readArray<NegativeIdentityMapping>(raw.negativeMappings, [], readNegativeMapping, 'negative mapping'),
+		ignoredCanonicalIds: raw.ignoredCanonicalIds === undefined ? [] : readStringList(raw.ignoredCanonicalIds, 'ignored canonical ID'),
+		ignoredProviderRefs: raw.ignoredProviderRefs === undefined ? [] : readStringList(raw.ignoredProviderRefs, 'ignored provider reference'),
 		presence: readPresence(raw.presence),
 		providerCursors: readProviderCursors(raw.providerCursors),
 		lastSuccessfulProviderStates: readLastSuccessfulProviderStates(raw.lastSuccessfulProviderStates),
-		recentActivity: readArray<ActivityEntry>(raw.recentActivity, [], 'recent activity').slice(-MAX_RECENT_ACTIVITY),
-		identityIndex: readArray(raw.identityIndex, [], 'identity index'),
+		recentActivity: readArray<ActivityEntry>(raw.recentActivity, [], readActivity, 'recent activity').slice(-MAX_RECENT_ACTIVITY),
+		identityIndex: readArray<GameIdentity>(raw.identityIndex, [], readGameIdentity, 'identity index'),
 	};
 }
 
@@ -199,8 +426,7 @@ export function migrateState(raw: unknown): GameSyncData {
 	}
 	const version = raw.schemaVersion === undefined ? 1 : raw.schemaVersion;
 	if (version !== 1) {
-		const versionLabel = typeof version === 'string' ? version : typeof version === 'number' ? version.toString() : 'unknown';
-		throw new StateMigrationError(`Unsupported state schema version: ${versionLabel}.`);
+		throw new StateMigrationError('Unsupported state schema version.');
 	}
 	let currentVersion = version;
 	let migrated: GameSyncData | undefined;
@@ -211,7 +437,7 @@ export function migrateState(raw: unknown): GameSyncData {
 				currentVersion = 2;
 				break;
 			default:
-				throw new StateMigrationError(`Unsupported state schema version: ${currentVersion.toString()}.`);
+				throw new StateMigrationError('Unsupported state schema version.');
 		}
 	}
 	return migrated ?? migrateVersionOne(raw);

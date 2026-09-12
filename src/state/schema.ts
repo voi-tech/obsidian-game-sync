@@ -27,6 +27,7 @@ export interface LastSuccessfulProviderState {
 	provider: GameProvider;
 	fetchedAt: string;
 	gameIds: string[];
+	status: 'complete';
 	paginationComplete: true;
 }
 
