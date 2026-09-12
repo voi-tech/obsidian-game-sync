@@ -2,9 +2,9 @@ import type { NormalizedGame } from '../model/game';
 import type { PropertyMapping } from '../model/property-mapping';
 import { VaultConflictError } from '../network/errors';
 import { buildManagedProperties } from '../model/property-mapping';
-import { replaceAchievementsBlock } from './managed-block';
+import { replaceAchievementsBlock, restoreAchievementsBlock } from './managed-block';
 import { renderAchievementsBlock, type AchievementRenderOptions } from './achievement-renderer';
-import { applyManagedFrontmatter, serializeNote } from './frontmatter';
+import { applyManagedFrontmatter, captureManagedFrontmatter, restoreManagedFrontmatter, serializeNote, type ManagedFrontmatterSnapshot } from './frontmatter';
 import { noteFingerprint, type VaultGateway } from './gateway';
 import { buildTemplateContext, renderTemplate } from './template';
 
@@ -41,25 +41,59 @@ export class VaultWriter {
 		return Object.values(game.providers).every((provider) => provider?.freshness.achievements === true);
 	}
 
+	private async rollbackExisting(
+		input: ExistingNoteInput,
+		originalContent: string,
+		stageFingerprint: string,
+		snapshot: Readonly<Record<string, ManagedFrontmatterSnapshot>>,
+	): Promise<void> {
+		try {
+			const current = await this.gateway.read(input.path);
+			if (noteFingerprint(current) !== stageFingerprint) throw new VaultConflictError(`Rollback is unsafe for ${input.path}.`);
+			await this.gateway.processFrontMatter(input.path, (frontmatter) => restoreManagedFrontmatter(frontmatter, snapshot));
+			const afterFrontmatterRollback = await this.gateway.read(input.path);
+			const rollbackFingerprint = noteFingerprint(afterFrontmatterRollback);
+			await this.gateway.process(input.path, (content) => {
+				if (noteFingerprint(content) !== rollbackFingerprint) throw new VaultConflictError(`Rollback is unsafe for ${input.path}.`);
+				return restoreAchievementsBlock(content, originalContent);
+			});
+		} catch (error) {
+			throw new VaultConflictError(`Vault update failed and rollback is unsafe for ${input.path}.`, { cause: error });
+		}
+	}
+
 	private async processExisting(input: ExistingNoteInput): Promise<void> {
 		if (input.expectedNoteFingerprint.trim().length === 0) throw new VaultConflictError('Existing note mutation requires an expected fingerprint.');
 		if (!(await this.gateway.exists(input.path))) throw new VaultConflictError(`Cannot mutate missing note ${input.path}.`);
 		const expected = input.expectedNoteFingerprint;
-		const current = await this.gateway.read(input.path);
-		if (noteFingerprint(current) !== expected) throw new VaultConflictError(`Stale note preview for ${input.path}.`);
+		const originalContent = await this.gateway.read(input.path);
+		if (noteFingerprint(originalContent) !== expected) throw new VaultConflictError(`Stale note preview for ${input.path}.`);
 		const achievementsFresh = this.shouldUpdateAchievements(input.game);
 		const renderedAchievements = achievementsFresh ? renderAchievementsBlock(input.game, this.options.achievementOptions) : '';
-		replaceAchievementsBlock(current, renderedAchievements);
+		replaceAchievementsBlock(originalContent, renderedAchievements);
 		const updatedAt = this.updatedAt(input.updatedAt);
+		const managedProperties = buildManagedProperties(input.game, this.options.propertyMapping, {
+			updatedAt,
+			omitAchievementProperties: !achievementsFresh,
+		});
+		let snapshot: Record<string, ManagedFrontmatterSnapshot> = {};
 		await this.gateway.processFrontMatter(input.path, (frontmatter) => {
-			applyManagedFrontmatter(frontmatter, buildManagedProperties(input.game, this.options.propertyMapping, updatedAt));
+			snapshot = captureManagedFrontmatter(frontmatter, managedProperties);
+			applyManagedFrontmatter(frontmatter, managedProperties);
 		});
 		const afterFrontmatter = await this.gateway.read(input.path);
 		const expectedAfterFrontmatter = noteFingerprint(afterFrontmatter);
-		await this.gateway.process(input.path, (content) => {
-			if (noteFingerprint(content) !== expectedAfterFrontmatter) throw new VaultConflictError(`Stale note preview for ${input.path}.`);
-			return replaceAchievementsBlock(content, renderedAchievements);
-		});
+		try {
+			const beforeManagedBlock = await this.gateway.read(input.path);
+			if (noteFingerprint(beforeManagedBlock) !== expectedAfterFrontmatter) throw new VaultConflictError(`Stale note preview for ${input.path}.`);
+			await this.gateway.process(input.path, (content) => {
+				if (noteFingerprint(content) !== expectedAfterFrontmatter) throw new VaultConflictError(`Stale note preview for ${input.path}.`);
+				return replaceAchievementsBlock(content, renderedAchievements);
+			});
+		} catch (error) {
+			await this.rollbackExisting(input, originalContent, expectedAfterFrontmatter, snapshot);
+			throw error;
+		}
 	}
 
 	async createNote(input: CreateNoteInput): Promise<void> {

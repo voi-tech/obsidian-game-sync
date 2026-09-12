@@ -5,7 +5,7 @@ import { FakeVaultGateway } from './fake-gateway';
 describe('rebuildable note index', () => {
 	it('indexes game sync, provider identifiers and lower-confidence title candidates', async () => {
 		const gateway = new FakeVaultGateway({
-			'Games/Cyberpunk 2077.md': '---\ngame-sync-id: game-sync:one\nsteam-id: "1091500"\nplaystation-id: concept-1\ntitle: Cyberpunk 2077\n---\nBody',
+			'Games/Cyberpunk 2077.md': '---\ngame-sync-id: game-sync:one\nsteam-id: "1091500"\nplaystation-id: concept-1\nplaystation-concept-id: concept-1\nplaystation-title-ids: [concept-1]\ntitle: Cyberpunk 2077\n---\nBody',
 			'Games/Cyberpunk 2077 (copy).md': '---\ngame-sync-id: game-sync:two\nsteam-id: "1091500"\ntitle: Other title\n---\nBody',
 			'Games/Untitled.md': '---\ntitle: Mapped title\n---\nBody',
 		});

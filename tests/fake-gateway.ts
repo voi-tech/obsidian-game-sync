@@ -6,6 +6,8 @@ export class FakeVaultGateway implements VaultGateway {
 	private readonly files = new Map<string, string>();
 	frontMatterProcessCount = 0;
 	beforeProcess?: (path: string) => void;
+	failProcessBeforeUpdate?: Error;
+	failProcessAfterUpdate?: Error;
 
 	constructor(initial: Record<string, string> = {}) {
 		for (const [path, content] of Object.entries(initial)) this.files.set(path, content);
@@ -32,7 +34,17 @@ export class FakeVaultGateway implements VaultGateway {
 	async process(path: string, updater: (content: string) => string): Promise<void> {
 		this.beforeProcess?.(path);
 		const current = await this.read(path);
+		if (this.failProcessBeforeUpdate) {
+			const error = this.failProcessBeforeUpdate;
+			this.failProcessBeforeUpdate = undefined;
+			throw error;
+		}
 		this.files.set(path, updater(current));
+		if (this.failProcessAfterUpdate) {
+			const error = this.failProcessAfterUpdate;
+			this.failProcessAfterUpdate = undefined;
+			throw error;
+		}
 	}
 
 	async processFrontMatter(path: string, updater: (frontmatter: Record<string, unknown>) => void): Promise<void> {

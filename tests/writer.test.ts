@@ -61,11 +61,12 @@ describe('safe vault writer', () => {
 			gateway.set('Games/one.md', `${initial}\nuser edit`);
 		};
 
-		await expect(writer.updateNote({ path: 'Games/one.md', game, expectedNoteFingerprint: noteFingerprint(initial), updatedAt: '2026-09-12T00:00:00.000Z' })).rejects.toThrow(/stale/i);
+		await expect(writer.updateNote({ path: 'Games/one.md', game, expectedNoteFingerprint: noteFingerprint(initial), updatedAt: '2026-09-12T00:00:00.000Z' })).rejects.toThrow(/rollback is unsafe/i);
+		expect(await gateway.read('Games/one.md')).toContain('user edit');
 	});
 
 	it('preserves an existing achievement block when achievement freshness is incomplete', async () => {
-		const initial = '---\nstatus: playing\n---\n%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%';
+		const initial = '---\nstatus: playing\ntitle: Old title\nsteam-achievements-earned: 9\n---\n%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%';
 		const gateway = new FakeVaultGateway({ 'Games/one.md': initial });
 		const staleAchievementsGame = {
 			...game,
@@ -83,6 +84,21 @@ describe('safe vault writer', () => {
 		const updated = await gateway.read('Games/one.md');
 		expect(updated).toContain('\nold\n');
 		expect(updated).not.toContain('- [x] New');
+		expect(parseFrontmatter(updated).frontmatter['steam-achievements-earned']).toBe(9);
+	});
+
+	it('rolls back managed Properties and the block after a second-stage failure', async () => {
+		const initial = '---\nstatus: playing\ntitle: Old title\nsteam-achievements-earned: 9\n---\n%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%';
+		const gateway = new FakeVaultGateway({ 'Games/one.md': initial });
+		gateway.failProcessBeforeUpdate = new Error('managed block write failed');
+		const writer = new VaultWriter(gateway);
+
+		await expect(writer.updateNote({ path: 'Games/one.md', game: { ...game, title: 'New title', providers: { steam: { ...game.providers.steam!, freshness: { ...game.providers.steam!.freshness, achievements: true }, achievements: { earned: 1, total: 1, progress: 100, achievements: [{ id: 'new', name: 'New', unlocked: true, hidden: false }] } } } }, expectedNoteFingerprint: noteFingerprint(initial), updatedAt: '2026-09-12T00:00:00.000Z' })).rejects.toThrow('managed block write failed');
+		const recovered = await gateway.read('Games/one.md');
+		expect(parseFrontmatter(recovered).frontmatter.title).toBe('Old title');
+		expect(parseFrontmatter(recovered).frontmatter['steam-achievements-earned']).toBe(9);
+		expect(recovered).toContain('\nold\n');
+		expect(recovered).not.toContain('- [x] New');
 	});
 
 	it('rejects stale previews and duplicate achievement blocks before writing', async () => {

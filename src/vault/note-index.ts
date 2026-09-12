@@ -41,7 +41,7 @@ export class NoteIndex {
 	private add(target: Map<string, IndexedNote[]>, note: IndexedNote, values: readonly string[]): void {
 		for (const value of values) {
 			const list = target.get(value) ?? [];
-			list.push(note);
+			if (!list.some((candidate) => candidate.path === note.path)) list.push(note);
 			target.set(value, list);
 		}
 	}

@@ -9,6 +9,10 @@ export type ManagedPropertyKey =
 
 export type PropertyMapping = Partial<Record<ManagedPropertyKey, string | null | false>>;
 export type ResolvedPropertyMapping = Record<ManagedPropertyKey, string | undefined>;
+export interface ManagedPropertyBuildOptions {
+	updatedAt?: string;
+	omitAchievementProperties?: boolean;
+}
 
 export const DEFAULT_PROPERTY_MAPPING: Record<ManagedPropertyKey, string> = {
 	gameSyncId: 'game-sync-id', type: 'type', title: 'title', released: 'released', developers: 'developers', publishers: 'publishers',
@@ -63,12 +67,21 @@ function setIfPresent(result: Record<string, unknown>, destination: string | und
 	if (destination !== undefined && value !== undefined && value !== null) result[destination] = value;
 }
 
+function isAchievementFresh(game: NormalizedGame): boolean {
+	return Object.values(game.providers).every((provider) => provider?.freshness.achievements === true);
+}
+
+function buildOptions(value: string | ManagedPropertyBuildOptions | undefined): ManagedPropertyBuildOptions {
+	return typeof value === 'string' ? { updatedAt: value } : value ?? {};
+}
+
 export function buildManagedProperties(
 	game: NormalizedGame,
 	mapping: PropertyMapping = {},
-	updatedAt?: string,
+	updatedAtOrOptions?: string | ManagedPropertyBuildOptions,
 ): Record<string, unknown> {
 	const resolved = resolvePropertyMapping(mapping);
+	const options = buildOptions(updatedAtOrOptions);
 	const steam = game.providers.steam;
 	const playstation = game.providers.playstation;
 	const steamAchievements = steam?.achievements;
@@ -85,8 +98,14 @@ export function buildManagedProperties(
 		playstationPlaytime: playstation?.playtimeMinutes, playstationLastPlayed: playstation?.lastPlayed,
 		psnTrophiesEarned: playstationAchievements?.earned, psnTrophiesTotal: playstationAchievements?.total,
 		psnTrophiesProgress: playstationAchievements?.progress, psnBronze: trophyCount('bronze'), psnSilver: trophyCount('silver'),
-		psnGold: trophyCount('gold'), psnPlatinum: trophyCount('platinum'), updated: updatedAt,
+		psnGold: trophyCount('gold'), psnPlatinum: trophyCount('platinum'), updated: options.updatedAt,
 	};
+	if (options.omitAchievementProperties && !isAchievementFresh(game)) {
+		for (const key of [
+			'steamAchievementsEarned', 'steamAchievementsTotal', 'steamAchievementsProgress', 'psnTrophiesEarned', 'psnTrophiesTotal',
+			'psnTrophiesProgress', 'psnBronze', 'psnSilver', 'psnGold', 'psnPlatinum',
+		] as const) delete values[key];
+	}
 	const result: Record<string, unknown> = {};
 	for (const key of Object.keys(values) as ManagedPropertyKey[]) setIfPresent(result, resolved[key], values[key]);
 	return result;

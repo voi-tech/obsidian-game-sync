@@ -112,3 +112,36 @@ export function applyManagedFrontmatter(frontmatter: Record<string, unknown>, ma
 		if (value !== undefined && value !== null) frontmatter[key] = value;
 	}
 }
+
+export interface ManagedFrontmatterSnapshot {
+	present: boolean;
+	value?: unknown;
+}
+
+function copyValue(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(copyValue);
+	if (value !== null && typeof value === 'object') {
+		return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, copyValue(nested)]));
+	}
+	return value;
+}
+
+export function captureManagedFrontmatter(
+	frontmatter: Record<string, unknown>,
+	managedProperties: Record<string, unknown>,
+): Record<string, ManagedFrontmatterSnapshot> {
+	return Object.fromEntries(Object.keys(managedProperties).map((key) => [key, {
+		present: Object.prototype.hasOwnProperty.call(frontmatter, key),
+		value: copyValue(frontmatter[key]),
+	}]));
+}
+
+export function restoreManagedFrontmatter(
+	frontmatter: Record<string, unknown>,
+	snapshot: Readonly<Record<string, ManagedFrontmatterSnapshot>>,
+): void {
+	for (const [key, previous] of Object.entries(snapshot)) {
+		if (previous.present) frontmatter[key] = copyValue(previous.value);
+		else delete frontmatter[key];
+	}
+}

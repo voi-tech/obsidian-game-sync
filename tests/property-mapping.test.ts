@@ -69,4 +69,22 @@ describe('managed Property mapping', () => {
 		expect(values).not.toHaveProperty('cover');
 		expect(values).not.toHaveProperty('last-played');
 	});
+
+	it('omits every achievement and trophy Property when freshness is incomplete', () => {
+		const staleGame = {
+			...game,
+			providers: {
+				steam: {
+					...game.providers.steam!,
+					freshness: { ...game.providers.steam!.freshness, achievements: false },
+					achievements: { earned: 1, total: 2, progress: 50, achievements: [] },
+				},
+			},
+		};
+		const values = buildManagedProperties(staleGame, {}, { updatedAt: '2026-09-12T12:30:00.000Z', omitAchievementProperties: true });
+
+		for (const key of ['steam-achievements-earned', 'steam-achievements-total', 'steam-achievements-progress', 'psn-trophies-earned', 'psn-trophies-total', 'psn-trophies-progress', 'psn-bronze', 'psn-silver', 'psn-gold', 'psn-platinum']) {
+			expect(values).not.toHaveProperty(key);
+		}
+	});
 });
