@@ -50,7 +50,7 @@ export class VaultWriter {
 		try {
 			const current = await this.gateway.read(input.path);
 			if (noteFingerprint(current) !== stageFingerprint) throw new VaultConflictError(`Rollback is unsafe for ${input.path}.`);
-			await this.gateway.processFrontMatter(input.path, (frontmatter) => restoreManagedFrontmatter(frontmatter, snapshot));
+			await this.gateway.processFrontMatter(input.path, (frontmatter) => restoreManagedFrontmatter(frontmatter, snapshot), stageFingerprint);
 			const afterFrontmatterRollback = await this.gateway.read(input.path);
 			const rollbackFingerprint = noteFingerprint(afterFrontmatterRollback);
 			await this.gateway.process(input.path, (content) => {
@@ -80,7 +80,7 @@ export class VaultWriter {
 		await this.gateway.processFrontMatter(input.path, (frontmatter) => {
 			snapshot = captureManagedFrontmatter(frontmatter, managedProperties);
 			applyManagedFrontmatter(frontmatter, managedProperties);
-		});
+		}, expected);
 		const afterFrontmatter = await this.gateway.read(input.path);
 		const expectedAfterFrontmatter = noteFingerprint(afterFrontmatter);
 		try {

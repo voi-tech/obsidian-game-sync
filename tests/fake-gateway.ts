@@ -1,11 +1,13 @@
 import type { VaultGateway, VaultNoteRef } from '../src/vault/gateway';
 import { parseFrontmatter, serializeNote } from '../src/vault/frontmatter';
 import { noteFingerprint } from '../src/vault/gateway';
+import { VaultConflictError } from '../src/network/errors';
 
 export class FakeVaultGateway implements VaultGateway {
 	private readonly files = new Map<string, string>();
 	frontMatterProcessCount = 0;
 	beforeProcess?: (path: string) => void;
+	beforeProcessFrontMatter?: (path: string) => void;
 	failProcessBeforeUpdate?: Error;
 	failProcessAfterUpdate?: Error;
 
@@ -47,9 +49,17 @@ export class FakeVaultGateway implements VaultGateway {
 		}
 	}
 
-	async processFrontMatter(path: string, updater: (frontmatter: Record<string, unknown>) => void): Promise<void> {
+	async processFrontMatter(
+		path: string,
+		updater: (frontmatter: Record<string, unknown>) => void,
+		expectedFingerprint?: string,
+	): Promise<void> {
 		this.frontMatterProcessCount += 1;
+		this.beforeProcessFrontMatter?.(path);
 		const current = await this.read(path);
+		if (expectedFingerprint !== undefined && noteFingerprint(current) !== expectedFingerprint) {
+			throw new VaultConflictError(`Stale note preview for ${path}.`);
+		}
 		const parsed = parseFrontmatter(current);
 		updater(parsed.frontmatter);
 		this.files.set(path, serializeNote(parsed.frontmatter, parsed.body));

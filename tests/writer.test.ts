@@ -113,6 +113,20 @@ describe('safe vault writer', () => {
 		const fingerprint = noteFingerprint(duplicate);
 		await expect(writer.updateNote({ path: 'Games/one.md', game, expectedNoteFingerprint: fingerprint, updatedAt: '2026-09-12T00:00:00.000Z' })).rejects.toThrow(VaultConflictError);
 		expect(await gateway.read('Games/one.md')).toBe(duplicate);
+
+		const boundaryInitial = '---\nstatus: playing\ntitle: Old title\n---\n%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%';
+		gateway.set('Games/one.md', boundaryInitial);
+		gateway.beforeProcessFrontMatter = () => {
+			gateway.beforeProcessFrontMatter = undefined;
+			gateway.set('Games/one.md', `${boundaryInitial}\nuser edit`);
+		};
+		await expect(writer.updateNote({
+			path: 'Games/one.md',
+			game,
+			expectedNoteFingerprint: noteFingerprint(boundaryInitial),
+			updatedAt: '2026-09-12T00:00:00.000Z',
+		})).rejects.toThrow(/stale note preview/i);
+		expect(await gateway.read('Games/one.md')).toBe(`${boundaryInitial}\nuser edit`);
 	});
 
 	it('requires an explicit expected fingerprint for every existing-note mutation', async () => {
