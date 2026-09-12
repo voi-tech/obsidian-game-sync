@@ -19,6 +19,14 @@ Game Sync synchronizes Steam and PlayStation game library data into ordinary Obs
 
 ## Release scope
 
+## Compatibility
+
+- `minAppVersion` is `1.13.7`.
+- The planned API surface includes `SecretStorage`, `SecretComponent`, `requestUrl`, and `FileManager.processFrontMatter`. The official API documentation and guides do not establish reliable introduction versions for every one of these APIs. The official plugin submission requirements therefore permit using the latest stable build when the appropriate minimum cannot be determined reliably.
+- The official Obsidian changelog records public Obsidian Desktop `1.13.7` on 2026-08-12, with public Mobile `1.13.7` on the same date. This release is the compatibility floor for the initial package scaffold.
+- Official references: [submission requirements for plugins](https://docs.obsidian.md/community-directory/submission-requirements-for-plugins), [SecretStorage and SecretComponent](https://docs.obsidian.md/plugins/guides/secret-storage), [`requestUrl`](https://docs.obsidian.md/Reference/TypeScript%20API/requestUrl), [frontmatter processing guidance](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines#Prefer+%60FileManager.processFrontMatter%60+to+modify+frontmatter+of+a+note), [Obsidian 1.13.7 Desktop Public changelog](https://obsidian.md/changelog/2026-08-12-desktop-v1.13.7/), and [Obsidian 1.13.7 Mobile Public changelog](https://obsidian.md/changelog/2026-08-12-mobile-v1.13.7/).
+- Approved architectural ruling: mobile bundle validation runs now and at final release. The mobile bundle must load without Node or Electron imports; `isDesktopOnly` remains `false`.
+
 ## Global Constraints
 
 - Repozytorium: `voi-tech/obsidian-game-sync`.
