@@ -110,12 +110,15 @@ describe('canonical game domain', () => {
 		expect(normalized.lastPlayed).toBe('2026-09-01');
 	});
 
-	it('uses stable canonical IDs independent of title', () => {
-		const identity: GameIdentity = { canonicalId: createCanonicalGameId({ provider: 'steam', appId: 10 }) };
-		const renamedIdentity: GameIdentity = { canonicalId: createCanonicalGameId({ provider: 'steam', appId: 10 }) };
+	it('uses random UUID canonical IDs and preserves an existing GameIdentity ID', () => {
+		const persisted: GameIdentity = { canonicalId: '6e8d9f9c-7c5b-4aa4-8cd1-2f0cf6cb6fb0' };
+		const first = createCanonicalGameId({ provider: 'steam', appId: 10 });
+		const second = createCanonicalGameId({ provider: 'steam', appId: 10 });
 
-		expect(identity.canonicalId).toBe(renamedIdentity.canonicalId);
-		expect(identity.canonicalId).not.toContain('Example Game');
+		expect(createCanonicalGameId(persisted)).toBe(persisted.canonicalId);
+		expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+		expect(first).not.toMatch(/^game-sync:(steam|playstation):/);
+		expect(second).not.toBe(first);
 	});
 
 	it('allows ownership reduction only for a complete paginated snapshot', () => {
@@ -153,6 +156,10 @@ describe('canonical game domain', () => {
 				[{ canonicalId: 'game-sync:durable', provider: 'steam', providerGameId: '10' }],
 			),
 		).toBe('game-sync:durable');
+
+		const generated = resolveCanonicalGameId({ provider: 'steam', appId: 10 }, '11', []);
+		expect(generated).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+		expect(generated).not.toMatch(/^game-sync:(steam|playstation):/);
 	});
 
 	it('creates deterministic operations and rejects stale note previews', () => {

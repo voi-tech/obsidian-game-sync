@@ -1,4 +1,5 @@
 import type { GameProvider } from './provider';
+import { createCanonicalGameId as createRandomCanonicalGameId } from '../identity/id';
 
 export interface SteamIdentity {
 	provider: 'steam';
@@ -63,7 +64,7 @@ export function createCanonicalGameId(identity: ProviderIdentity | GameIdentity)
 		if (!Number.isInteger(identity.appId) || identity.appId < 1) {
 			throw new Error('Steam identity requires a positive numeric app ID.');
 		}
-		return `game-sync:steam:${identity.appId}`;
+		return createRandomCanonicalGameId();
 	}
 	const concept = nonEmpty(identity.conceptId) ? identity.conceptId : '';
 	const titleIds = identity.titleIds.filter(nonEmpty).sort();
@@ -71,7 +72,7 @@ export function createCanonicalGameId(identity: ProviderIdentity | GameIdentity)
 	if (concept.length === 0 && titleIds.length === 0 && communicationIds.length === 0) {
 		throw new Error('PlayStation identity requires a concept ID, title ID or communication ID.');
 	}
-	return `game-sync:playstation:${concept}:${titleIds.join(',')}:${communicationIds.join(',')}`;
+	return createRandomCanonicalGameId();
 }
 
 export function resolveCanonicalGameId(
