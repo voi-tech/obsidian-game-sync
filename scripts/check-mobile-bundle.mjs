@@ -5,6 +5,7 @@ const bundlePath = process.argv[2] ?? 'main.js';
 const nodeBuiltins = new Set(
 	builtinModules.map((name) => (name.startsWith('node:') ? name.slice(5) : name)),
 );
+const nodeBuiltinRoots = new Set([...nodeBuiltins].map((name) => name.split('/')[0]));
 const dependencyPattern = /\b(?:require|import)\s*\(\s*["']([^"']+)["']\s*\)|\b(?:from|import)\s+["']([^"']+)["']/g;
 const errors = [];
 
@@ -28,9 +29,12 @@ if (bundle !== undefined) {
 			? dependency.slice(5)
 			: dependency;
 
-		if (normalizedDependency === 'electron') {
+		if (normalizedDependency === 'electron' || normalizedDependency.startsWith('electron/')) {
 			errors.push(`Forbidden dependency: ${dependency}.`);
-		} else if (nodeBuiltins.has(normalizedDependency)) {
+		} else if (
+			nodeBuiltins.has(normalizedDependency) ||
+			[...nodeBuiltinRoots].some((root) => normalizedDependency.startsWith(`${root}/`))
+		) {
 			errors.push(`Node built-in dependency: ${dependency}.`);
 		}
 	}
