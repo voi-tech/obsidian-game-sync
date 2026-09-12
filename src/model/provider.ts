@@ -5,6 +5,13 @@ export type GameProvider = 'steam' | 'playstation';
 export type GamePlatform = string;
 export type AcquisitionType = 'purchased' | 'subscription' | 'free' | 'key' | 'gift' | 'unknown';
 
+export interface ProviderAccount {
+	provider: GameProvider;
+	displayName: string;
+	accountId: string;
+	gameCount?: number;
+}
+
 export interface ProviderGameFreshness {
 	metadata: boolean;
 	ownership: boolean;
