@@ -1,0 +1,32 @@
+import type { GameSyncSettings } from '../model/settings';
+
+export const DEFAULT_SETTINGS: GameSyncSettings = {
+	setupCompleted: false,
+	firstSyncCompleted: false,
+	enabledProviders: {
+		steam: false,
+		playstation: false,
+	},
+	notesFolder: 'Games',
+	filenamePattern: '{{title}}',
+	templatePath: '',
+	createBase: false,
+	basePath: 'Games.base',
+	includeUnplayed: true,
+	includeFreeToPlay: true,
+	includePreviouslyPlayedNoLongerOwned: true,
+	includeDemosTrials: false,
+	includeBetasTestApps: false,
+	previewMode: 'first-and-review',
+	backgroundSync: false,
+	backgroundIntervalMinutes: 360,
+	metadataLanguage: 'follow-obsidian',
+	metadataPreference: 'automatic',
+	revealHiddenAchievements: false,
+	showAchievementRarity: true,
+	showTrophyType: true,
+	showUnlockDate: true,
+	recordHistory: false,
+	historyPath: 'archive/game-sync/game-events.jsonl',
+	backgroundNotifications: 'problems-only',
+};
