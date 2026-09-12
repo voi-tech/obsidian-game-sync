@@ -1,0 +1,77 @@
+import { describe, expect, it } from 'vitest';
+import { VaultConflictError } from '../src/network/errors';
+import { buildTemplateContext } from '../src/vault/template';
+import { VaultWriter } from '../src/vault/writer';
+import { noteFingerprint } from '../src/vault/gateway';
+import { parseFrontmatter } from '../src/vault/frontmatter';
+import { FakeVaultGateway } from './fake-gateway';
+import type { NormalizedGame } from '../src/model/game';
+
+const game: NormalizedGame = {
+	identity: { canonicalId: 'game-sync:one', steamAppId: 1 },
+	canonicalId: 'game-sync:one',
+	title: 'New title',
+	developers: [],
+	publishers: [],
+	genres: [],
+	platforms: ['pc'],
+	providers: {
+		steam: {
+			providerGameId: '1', title: 'New title', developers: [], publishers: [], genres: [], platforms: ['pc'],
+			owned: true, freshness: { metadata: true, ownership: true, playtime: true, achievements: false },
+		},
+	},
+	owned: true,
+	acquisitionType: 'unknown',
+	playtimeMinutes: 0,
+};
+
+describe('safe vault writer', () => {
+	it('executes the template only when creating a note', async () => {
+		const gateway = new FakeVaultGateway();
+		const writer = new VaultWriter(gateway, { template: '# {{title}}\n\nCreated body' });
+		await writer.createNote({ path: 'Games/one.md', game, expectedNoteFingerprint: null, updatedAt: '2026-09-12T00:00:00.000Z' });
+		expect(await gateway.read('Games/one.md')).toContain('# New title');
+
+		await writer.adoptNote({ path: 'Games/one.md', game: { ...game, title: 'Changed title' }, expectedNoteFingerprint: noteFingerprint(await gateway.read('Games/one.md')), updatedAt: '2026-09-12T00:00:00.000Z' });
+		const adopted = await gateway.read('Games/one.md');
+		expect(adopted).toContain('Created body');
+		expect(adopted).not.toContain('# Changed title');
+	});
+
+	it('updates only managed areas and preserves body, filename and unmanaged frontmatter', async () => {
+		const initial = '---\nstatus: playing\ncustom: keep\ntitle: Old title\n---\n# User body\n\nDo not touch';
+		const gateway = new FakeVaultGateway({ 'Games/old-name.md': initial });
+		const writer = new VaultWriter(gateway);
+		await writer.updateNote({ path: 'Games/old-name.md', game, expectedNoteFingerprint: noteFingerprint(initial), updatedAt: '2026-09-12T00:00:00.000Z' });
+
+		const updated = await gateway.read('Games/old-name.md');
+		expect(parseFrontmatter(updated).frontmatter).toMatchObject({ status: 'playing', custom: 'keep', title: 'New title' });
+		expect(parseFrontmatter(updated).body).toBe('# User body\n\nDo not touch');
+		expect(await gateway.listMarkdownFiles()).toHaveLength(1);
+	});
+
+	it('rejects stale previews and duplicate achievement blocks before writing', async () => {
+		const initial = '---\nstatus: playing\n---\nBody';
+		const gateway = new FakeVaultGateway({ 'Games/one.md': initial });
+		const writer = new VaultWriter(gateway, { template: '# {{title}}' });
+		gateway.set('Games/one.md', `${initial}\nChanged`);
+		await expect(writer.updateNote({ path: 'Games/one.md', game, expectedNoteFingerprint: noteFingerprint(initial), updatedAt: '2026-09-12T00:00:00.000Z' })).rejects.toThrow(/stale/i);
+
+		const duplicate = '%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%\n\n%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%';
+		gateway.set('Games/one.md', duplicate);
+		const fingerprint = noteFingerprint(duplicate);
+		await expect(writer.updateNote({ path: 'Games/one.md', game, expectedNoteFingerprint: fingerprint, updatedAt: '2026-09-12T00:00:00.000Z' })).rejects.toThrow(VaultConflictError);
+		expect(await gateway.read('Games/one.md')).toBe(duplicate);
+	});
+
+	it('requires an explicit expected fingerprint for every existing-note mutation', async () => {
+		const gateway = new FakeVaultGateway({ 'Games/one.md': '# One' });
+		const writer = new VaultWriter(gateway);
+		await expect(writer.adoptNote({ path: 'Games/one.md', game, expectedNoteFingerprint: '', updatedAt: '2026-09-12T00:00:00.000Z' })).rejects.toThrow(/fingerprint/i);
+	});
+
+	it('does not depend on template context property names for managed Properties', () => {
+		expect(buildTemplateContext(game).title).toBe('New title');
+	});
+});

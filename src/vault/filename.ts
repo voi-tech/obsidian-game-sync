@@ -1,0 +1,1 @@
+export { renderFilename } from './template';
