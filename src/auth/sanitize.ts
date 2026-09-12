@@ -35,9 +35,53 @@ function sanitizeValue(value: unknown, secrets: readonly string[], seen: WeakSet
 	}
 	const result: Record<string, unknown> = {};
 	for (const [key, nested] of Object.entries(value)) {
-		result[key] = SECRET_FIELD_PATTERN.test(key)
-			? REDACTED
-			: sanitizeValue(nested, secrets, seen, includeStandaloneNpsso || key === 'recentActivity');
+		result[key] = SECRET_FIELD_PATTERN.test(key) ? REDACTED : sanitizeValue(nested, secrets, seen, includeStandaloneNpsso);
+	}
+	return result;
+}
+
+function sanitizePersistedStateValue(value: unknown, secrets: readonly string[], seen: WeakSet<object>): unknown {
+	if (typeof value === 'string') {
+		return redactString(value, secrets, false);
+	}
+	if (value === null || typeof value !== 'object') {
+		return value;
+	}
+	if (seen.has(value)) {
+		return REDACTED;
+	}
+	seen.add(value);
+	if (Array.isArray(value)) {
+		return value.map((item) => sanitizePersistedStateValue(item, secrets, seen));
+	}
+	const result: Record<string, unknown> = {};
+	for (const [key, nested] of Object.entries(value)) {
+		if (SECRET_FIELD_PATTERN.test(key)) {
+			result[key] = REDACTED;
+		} else if (key === 'recentActivity' && Array.isArray(nested)) {
+			result[key] = nested.map((entry) => sanitizeActivityEntry(entry, secrets, seen));
+		} else {
+			result[key] = sanitizePersistedStateValue(nested, secrets, seen);
+		}
+	}
+	return result;
+}
+
+function sanitizeActivityEntry(value: unknown, secrets: readonly string[], seen: WeakSet<object>): unknown {
+	if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+		return sanitizePersistedStateValue(value, secrets, seen);
+	}
+	if (seen.has(value)) {
+		return REDACTED;
+	}
+	seen.add(value);
+	const result: Record<string, unknown> = {};
+	for (const [key, nested] of Object.entries(value)) {
+		if (SECRET_FIELD_PATTERN.test(key)) {
+			result[key] = REDACTED;
+		} else {
+			result[key] = sanitizeValue(nested, secrets, seen, key === 'message');
+		}
 	}
 	return result;
 }
@@ -54,5 +98,5 @@ export function sanitizeDiagnosticData<T>(data: T, secrets: readonly string[] = 
 }
 
 export function sanitizePersistedState<T>(data: T, secrets: readonly string[] = []): T {
-	return sanitizeValue(data, secrets, new WeakSet<object>(), false) as T;
+	return sanitizePersistedStateValue(data, secrets, new WeakSet<object>()) as T;
 }

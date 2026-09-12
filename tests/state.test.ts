@@ -223,6 +223,7 @@ describe('versioned plugin state', () => {
 		const cursor = 'A'.repeat(64);
 		const providerGameId = 'B'.repeat(64);
 		const successfulGameId = 'C'.repeat(64);
+		const activityId = 'E'.repeat(64);
 		const activitySecret = 'D'.repeat(64);
 		const state = migrateState(undefined);
 		state.providerCursors = { steam: { cursor, page: 1 } };
@@ -238,7 +239,7 @@ describe('versioned plugin state', () => {
 		};
 		state.recentActivity = [
 			{
-				id: 'activity-structural-boundary',
+				id: activityId,
 				createdAt: '2026-09-12T12:00:00Z',
 				kind: 'diagnostic',
 				message: activitySecret,
@@ -257,6 +258,7 @@ describe('versioned plugin state', () => {
 		expect(persisted.providerCursors.steam?.cursor).toBe(cursor);
 		expect(persisted.identityMappings[0]?.providerGameId).toBe(providerGameId);
 		expect(persisted.lastSuccessfulProviderStates.steam?.gameIds[0]).toBe(successfulGameId);
+		expect(persisted.recentActivity[0]?.id).toBe(activityId);
 		expect(persisted.recentActivity[0]?.message).toBe('[REDACTED]');
 	});
 });
