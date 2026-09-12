@@ -304,6 +304,9 @@ function readLastSuccessfulProviderStates(raw: unknown): GameSyncData['lastSucce
 			throw new StateMigrationError(`Invalid successful state for ${provider}.`);
 		}
 		rejectUnknownFields(value, ['provider', 'fetchedAt', 'gameIds', 'status', 'paginationComplete'], `successful state ${provider}`);
+		if (value.provider !== providerName) {
+			throw new StateMigrationError(`Successful state provider mismatch for ${provider}.`);
+		}
 		if (value.status !== 'complete' || value.paginationComplete !== true) {
 			throw new StateMigrationError(`Provider success for ${provider} requires complete pagination.`);
 		}

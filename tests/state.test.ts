@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS } from '../src/state/defaults';
 import { migrateState } from '../src/state/migrations';
 import { createStateStore } from '../src/state/store';
 import { StateMigrationError } from '../src/network/errors';
+import type { GameSyncData } from '../src/state/schema';
 
 const stateSecrets = [
 	'STEAM_TEST_SECRET_123',
@@ -120,6 +121,23 @@ describe('versioned plugin state', () => {
 		}
 	});
 
+	it('rejects successful provider state whose embedded provider mismatches its map key', () => {
+		expect(() =>
+			migrateState({
+				schemaVersion: 1,
+				lastSuccessfulProviderStates: {
+					steam: {
+						provider: 'playstation',
+						fetchedAt: '2026-09-12T12:00:00Z',
+						gameIds: ['1'],
+						status: 'complete',
+						paginationComplete: true,
+					},
+				},
+			}),
+		).toThrow(StateMigrationError);
+	});
+
 	it('turns invalid provider state into a controlled migration error', () => {
 		expect(() =>
 			migrateState({
@@ -198,5 +216,47 @@ describe('versioned plugin state', () => {
 		await store.save(state);
 
 		expect(JSON.stringify(raw)).not.toContain('TEST_SECRET');
+	});
+
+	it('preserves standalone 64-character structural IDs while redacting activity text', async () => {
+		let raw: unknown;
+		const cursor = 'A'.repeat(64);
+		const providerGameId = 'B'.repeat(64);
+		const successfulGameId = 'C'.repeat(64);
+		const activitySecret = 'D'.repeat(64);
+		const state = migrateState(undefined);
+		state.providerCursors = { steam: { cursor, page: 1 } };
+		state.identityMappings = [{ canonicalId: 'game:structural', provider: 'steam', providerGameId }];
+		state.lastSuccessfulProviderStates = {
+			steam: {
+				provider: 'steam',
+				fetchedAt: '2026-09-12T12:00:00Z',
+				gameIds: [successfulGameId],
+				status: 'complete',
+				paginationComplete: true,
+			},
+		};
+		state.recentActivity = [
+			{
+				id: 'activity-structural-boundary',
+				createdAt: '2026-09-12T12:00:00Z',
+				kind: 'diagnostic',
+				message: activitySecret,
+			},
+		];
+		const store = createStateStore(
+			async () => raw,
+			async (value) => {
+				raw = value;
+			},
+		);
+
+		await store.save(state);
+
+		const persisted = raw as GameSyncData;
+		expect(persisted.providerCursors.steam?.cursor).toBe(cursor);
+		expect(persisted.identityMappings[0]?.providerGameId).toBe(providerGameId);
+		expect(persisted.lastSuccessfulProviderStates.steam?.gameIds[0]).toBe(successfulGameId);
+		expect(persisted.recentActivity[0]?.message).toBe('[REDACTED]');
 	});
 });

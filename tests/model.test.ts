@@ -193,9 +193,20 @@ describe('canonical game domain', () => {
 			planRevision: 'revision-1',
 			expectedNoteFingerprint: '  ',
 		};
+		const missingPathUpdate = {
+			canonicalGameId: 'game:example',
+			kind: 'update-properties' as const,
+			risk: 'safe' as const,
+			summary: 'Update properties',
+			planRevision: 'revision-1',
+			expectedNoteFingerprint: 'fingerprint-1',
+		};
+		const missingPathAdopt = { ...missingPathUpdate, kind: 'adopt-note' as const };
 
 		expect(() => createOperation(invalidCreate as never)).toThrow();
 		expect(() => createOperation(invalidUpdate as never)).toThrow();
+		expect(() => createOperation(missingPathUpdate as never)).toThrow();
+		expect(() => createOperation(missingPathAdopt as never)).toThrow();
 
 		const update = createOperation({
 			canonicalGameId: 'game:example',
@@ -207,8 +218,21 @@ describe('canonical game domain', () => {
 			expectedNoteFingerprint: 'fingerprint-1',
 		});
 		const conflicting = createOperation({ ...update, summary: 'Conflicting update', expectedNoteFingerprint: 'fingerprint-2' });
+		const createNote = createOperation({
+			canonicalGameId: 'game:new',
+			kind: 'create-note',
+			risk: 'safe',
+			path: 'Games/New.md',
+			summary: 'Create note',
+			planRevision: 'revision-2',
+		});
 
 		expect(() => createSyncPlan('revision-1', [update])).toThrow();
 		expect(() => createSyncPlan('revision-2', [update, conflicting])).toThrow();
+		const notePlan = createSyncPlan('revision-2', [update, createNote]);
+		expect(notePlan.expectedNoteFingerprints).toEqual({
+			'Games/Example.md': 'fingerprint-1',
+			'Games/New.md': null,
+		});
 	});
 });

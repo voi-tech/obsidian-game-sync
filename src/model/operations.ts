@@ -24,12 +24,21 @@ type OperationBase = {
 	planRevision: string;
 };
 
-export type CreateOperationInput = OperationBase & {
-	kind: 'create-note' | 'create-base';
-	expectedNoteFingerprint?: null;
+type NoteOperationBase = Omit<OperationBase, 'path'> & {
+	path: string;
 };
 
-export type ExistingNoteOperationInput = OperationBase & {
+export type CreateOperationInput =
+	| (NoteOperationBase & {
+			kind: 'create-note';
+			expectedNoteFingerprint?: null;
+	  })
+	| (OperationBase & {
+			kind: 'create-base';
+			expectedNoteFingerprint?: null;
+	  });
+
+export type ExistingNoteOperationInput = NoteOperationBase & {
 	kind: Exclude<GameOperationKind, 'create-note' | 'create-base'>;
 	expectedNoteFingerprint: string;
 };
@@ -154,6 +163,9 @@ export function createOperation(input: CreateOperationInput): CreateOperation;
 export function createOperation(input: ExistingNoteOperationInput): ExistingNoteOperation;
 export function createOperation(input: OperationInput): Operation {
 	const isCreate = input.kind === 'create-note' || input.kind === 'create-base';
+	if (input.kind !== 'create-base' && (typeof input.path !== 'string' || input.path.trim().length === 0)) {
+		throw new Error(`${input.kind} requires a non-empty note path.`);
+	}
 	if (isCreate && input.expectedNoteFingerprint !== undefined && input.expectedNoteFingerprint !== null) {
 		throw new Error(`${input.kind} requires an absent note fingerprint.`);
 	}
@@ -174,7 +186,7 @@ export function createOperation(input: OperationInput): Operation {
 		return { ...input, expectedNoteFingerprint: null, id: `operation:${deterministicHash(stableStringify(payload))}` };
 	}
 	if (typeof input.expectedNoteFingerprint !== 'string') {
-		throw new Error(`${input.kind} requires a non-empty note fingerprint.`);
+		throw new Error('Existing note operation requires a non-empty note fingerprint.');
 	}
 	return {
 		...input,
@@ -192,12 +204,13 @@ export function createSyncPlan(planRevision: string, operations: readonly Operat
 		if (operation.planRevision !== planRevision) {
 			throw new Error('Sync plan operations must use one plan revision.');
 		}
-		if (operation.path !== undefined) {
-			const previous = expectedNoteFingerprints[operation.path];
+		if (operation.kind !== 'create-base') {
+			const path = operation.path;
+			const previous = expectedNoteFingerprints[path];
 			if (previous !== undefined && previous !== operation.expectedNoteFingerprint) {
-				throw new Error(`Conflicting note fingerprints for ${operation.path}.`);
+				throw new Error(`Conflicting note fingerprints for ${path}.`);
 			}
-			expectedNoteFingerprints[operation.path] = operation.expectedNoteFingerprint;
+			expectedNoteFingerprints[path] = operation.expectedNoteFingerprint;
 		}
 	}
 	const planPayload = { planRevision, operations, expectedNoteFingerprints };

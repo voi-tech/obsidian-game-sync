@@ -1,6 +1,6 @@
 import { migrateState } from './migrations';
 import type { GameSyncData } from './schema';
-import { sanitizeDiagnosticData } from '../auth/sanitize';
+import { sanitizePersistedState } from '../auth/sanitize';
 
 export interface StateStore {
 	load(): Promise<GameSyncData>;
@@ -18,7 +18,7 @@ export function createStateStore(
 		},
 		async save(data: GameSyncData): Promise<void> {
 			const validated = migrateState(data);
-			const sanitized = sanitizeDiagnosticData(validated, secretValues);
+			const sanitized = sanitizePersistedState(validated, secretValues);
 			await saveData(migrateState(sanitized));
 		},
 	};
