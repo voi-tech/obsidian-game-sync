@@ -2,7 +2,7 @@
 	"id": "game-sync",
 	"name": "Game Sync",
 	"version": "26.9.0",
-	"minAppVersion": "1.14.1",
+	"minAppVersion": "1.13.7",
 	"description": "Sync your Steam and PlayStation game library, playtime, achievements and trophies into ordinary Obsidian Markdown notes.",
 	"author": "voitech",
 	"authorUrl": "https://voitech.lol",
