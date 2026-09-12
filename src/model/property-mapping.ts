@@ -23,25 +23,39 @@ export const DEFAULT_PROPERTY_MAPPING: Record<ManagedPropertyKey, string> = {
 
 const USER_OWNED_PROPERTY_NAMES = new Set(['status', 'rating', 'favorite', 'start', 'end', 'review', 'notes', 'tags']);
 
-export function validatePropertyMapping(mapping: PropertyMapping): void {
-	const destinations = new Map<string, ManagedPropertyKey>();
-	for (const [key, destination] of Object.entries(mapping) as [ManagedPropertyKey, string | null | false][]) {
-		if (destination === null || destination === false || destination === undefined) continue;
-		if (typeof destination !== 'string' || destination.trim().length === 0) throw new Error(`Invalid property mapping for ${key}.`);
-		if (USER_OWNED_PROPERTY_NAMES.has(destination)) throw new Error(`Property ${destination} is user-owned and cannot be managed.`);
-		const previous = destinations.get(destination);
-		if (previous !== undefined) throw new Error(`Duplicate property mapping destination ${destination} for ${previous} and ${key}.`);
-		destinations.set(destination, key);
-	}
+function normalizeDestination(destination: string): string {
+	return destination.trim().toLocaleLowerCase();
 }
 
-export function resolvePropertyMapping(mapping: PropertyMapping = {}): ResolvedPropertyMapping {
-	validatePropertyMapping(mapping);
+function resolveWithoutValidation(mapping: PropertyMapping): ResolvedPropertyMapping {
 	const resolved = {} as ResolvedPropertyMapping;
 	for (const key of Object.keys(DEFAULT_PROPERTY_MAPPING) as ManagedPropertyKey[]) {
 		const destination = mapping[key];
-		resolved[key] = destination === null || destination === false ? undefined : destination ?? DEFAULT_PROPERTY_MAPPING[key];
+		resolved[key] = destination === null || destination === false ? undefined : destination === undefined ? DEFAULT_PROPERTY_MAPPING[key] : destination.trim();
 	}
+	return resolved;
+}
+
+function validateResolvedPropertyMapping(resolved: ResolvedPropertyMapping): void {
+	const destinations = new Map<string, ManagedPropertyKey>();
+	for (const [key, destination] of Object.entries(resolved) as [ManagedPropertyKey, string | undefined][]) {
+		if (destination === undefined) continue;
+		if (destination.length === 0) throw new Error(`Invalid property mapping for ${key}.`);
+		const normalized = normalizeDestination(destination);
+		if (USER_OWNED_PROPERTY_NAMES.has(normalized)) throw new Error(`Property ${destination} is user-owned and cannot be managed.`);
+		const previous = destinations.get(normalized);
+		if (previous !== undefined) throw new Error(`Duplicate property mapping destination ${destination} for ${previous} and ${key}.`);
+		destinations.set(normalized, key);
+	}
+}
+
+export function validatePropertyMapping(mapping: PropertyMapping): void {
+	validateResolvedPropertyMapping(resolveWithoutValidation(mapping));
+}
+
+export function resolvePropertyMapping(mapping: PropertyMapping = {}): ResolvedPropertyMapping {
+	const resolved = resolveWithoutValidation(mapping);
+	validateResolvedPropertyMapping(resolved);
 	return resolved;
 }
 

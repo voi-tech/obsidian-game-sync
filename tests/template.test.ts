@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { NormalizedGame } from '../src/model/game';
 import type { ProviderGame } from '../src/model/provider';
 import { buildTemplateContext, renderFilename, renderTemplate } from '../src/vault/template';
+import { TEMPLATE_PUBLIC_KEYS } from '../src/vault/template-reference';
 
 function makeProvider(provider: ProviderGame['provider'], overrides: Partial<ProviderGame> = {}): ProviderGame {
 	return {
@@ -34,7 +35,7 @@ function makeGame(): NormalizedGame {
 			progress: 50,
 			achievements: [
 				{ id: 'a1', name: 'The Fool', unlocked: true, hidden: false },
-				{ id: 'a2', name: 'Secret', unlocked: false, hidden: true },
+				{ id: 'a2', name: 'Secret', description: 'Hidden description', iconUrl: 'https://example.com/secret.png', unlocked: false, hidden: true },
 			],
 		},
 	});
@@ -75,6 +76,7 @@ function makeGame(): NormalizedGame {
 describe('stable Handlebars template contract', () => {
 	it('exposes the complete flat public context independently of property mappings', () => {
 		const context = buildTemplateContext(makeGame(), { updatedAt: '2026-09-12T12:30:00.000Z' });
+		expect(Object.keys(context).sort()).toEqual([...TEMPLATE_PUBLIC_KEYS].sort());
 
 		expect(context).toMatchObject({
 			id: 'game-sync:cyberpunk-2077',
@@ -96,6 +98,17 @@ describe('stable Handlebars template contract', () => {
 		expect(rendered).toBe('Cyberpunk 2077|RPG, Action|1091500|120');
 	});
 
+	it('does not expose locked hidden achievement fields without explicit reveal', () => {
+		const hidden = buildTemplateContext(makeGame()).steamAchievements.find((achievement) => achievement.id === 'a2');
+		expect(hidden).toMatchObject({ id: 'a2', hidden: true, unlocked: false });
+		expect(hidden).not.toHaveProperty('name');
+		expect(hidden).not.toHaveProperty('description');
+		expect(hidden).not.toHaveProperty('iconUrl');
+
+		const revealed = buildTemplateContext(makeGame(), { revealHidden: true }).steamAchievements.find((achievement) => achievement.id === 'a2');
+		expect(revealed).toMatchObject({ name: 'Secret', description: 'Hidden description', iconUrl: 'https://example.com/secret.png' });
+	});
+
 	it('supports helpers, each achievement arrays and Obsidian date placeholders', () => {
 		const context = buildTemplateContext(makeGame());
 		const rendered = renderTemplate(
@@ -103,7 +116,7 @@ describe('stable Handlebars template contract', () => {
 			context,
 			{ now: new Date('2026-09-12T15:04:05.000Z') },
 		);
-		expect(rendered).toBe('1.5|70.46|2020-12-10|2026-09-12|The Fool;Secret;');
+		expect(rendered).toBe('1.5|70.46|2020-12-10|2026-09-12|The Fool;;');
 	});
 
 	it('registers the required partials and handles empty optional date values', () => {
@@ -117,6 +130,7 @@ describe('stable Handlebars template contract', () => {
 		expect(renderFilename('{{title}}: deluxe/edition', context)).toBe('Cyberpunk 2077 deluxe edition');
 		expect(renderFilename('', context)).toBe('Cyberpunk 2077');
 		expect(renderFilename('{{missingValue}}', context)).toBe('Cyberpunk 2077');
+		expect(renderFilename('{{title}}', buildTemplateContext({ ...makeGame(), title: '/:*?' }))).toBe('game');
 	});
 
 	it('wraps template compilation errors', () => {

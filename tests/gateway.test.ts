@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { noteFingerprint } from '../src/vault/gateway';
+import { describe, expect, it, vi } from 'vitest';
+import type { FileManager, Vault } from 'obsidian';
+import { ObsidianVaultGateway, noteFingerprint } from '../src/vault/gateway';
 import { FakeVaultGateway } from './fake-gateway';
 
 describe('VaultGateway fake', () => {
@@ -13,5 +14,30 @@ describe('VaultGateway fake', () => {
 		await gateway.create('Games/Two.md', '# Two');
 		expect(await gateway.read('Games/One.md')).toBe('# One\nBody');
 		expect(await gateway.read('Games/Two.md')).toBe('# Two');
+	});
+
+	it('delegates Obsidian operations without parsing or serializing note content', async () => {
+		const file = { path: 'Games/One.md', extension: 'md' };
+		const vault = {
+			getAbstractFileByPath: vi.fn(() => file),
+			getMarkdownFiles: vi.fn(() => [file]),
+			read: vi.fn(async () => '---\ncustom:\n  nested: true\n# comment\n---\nBody'),
+			create: vi.fn(async () => file),
+			process: vi.fn(async (_file: typeof file, updater: (content: string) => string) => { updater('Body'); }),
+		};
+		const fileManager = {
+			processFrontMatter: vi.fn(async (_file: typeof file, updater: (frontmatter: Record<string, unknown>) => void) => {
+				const frontmatter: Record<string, unknown> = { custom: { nested: true } };
+				updater(frontmatter);
+			}),
+		};
+		const gateway = new ObsidianVaultGateway(vault as unknown as Vault, fileManager as unknown as FileManager);
+
+		await gateway.processFrontMatter('Games/One.md', (frontmatter) => { frontmatter['game-sync-id'] = 'game-sync:one'; });
+		await gateway.process('Games/One.md', (content) => `${content}\nManaged block`);
+
+		expect(fileManager.processFrontMatter).toHaveBeenCalledWith(file, expect.any(Function));
+		expect(vault.process).toHaveBeenCalledWith(file, expect.any(Function));
+		expect(vault.getAbstractFileByPath).toHaveBeenCalled();
 	});
 });

@@ -5,7 +5,8 @@ import type { VaultGateway, VaultNoteRef } from './gateway';
 export interface IndexedNote extends VaultNoteRef {
 	properties: Record<string, unknown>;
 	title?: string;
-	normalizedTitle: string;
+	normalizedTitle?: string;
+	normalizedFilename: string;
 }
 
 function normalize(value: string): string {
@@ -45,16 +46,16 @@ export class NoteIndex {
 		}
 	}
 
-	private first(target: Map<string, IndexedNote[]>, value: string): IndexedNote | undefined {
-		return target.get(value)?.[0];
+	private all(target: Map<string, IndexedNote[]>, value: string): IndexedNote[] {
+		return [...(target.get(value) ?? [])];
 	}
 
-	findByGameSyncId(value: string): IndexedNote | undefined { return this.first(this.gameSyncIds, value); }
-	findBySteamId(value: string): IndexedNote | undefined { return this.first(this.steamIds, value); }
-	findByPlayStationIdentifier(value: string): IndexedNote | undefined { return this.first(this.playstationIds, value); }
+	findByGameSyncId(value: string): IndexedNote[] { return this.all(this.gameSyncIds, value); }
+	findBySteamId(value: string): IndexedNote[] { return this.all(this.steamIds, value); }
+	findByPlayStationIdentifier(value: string): IndexedNote[] { return this.all(this.playstationIds, value); }
 	findCandidates(title: string): IndexedNote[] {
 		const normalized = normalize(title);
-		return this.notes.filter((note) => note.normalizedTitle === normalized);
+		return this.notes.filter((note) => note.normalizedTitle === normalized || note.normalizedFilename === normalized);
 	}
 }
 
@@ -67,7 +68,14 @@ export async function buildNoteIndex(gateway: VaultGateway, mapping: PropertyMap
 		const parsed = parseFrontmatter(content);
 		const titleValue = parsed.frontmatter[resolved.title ?? 'title'];
 		const fileTitle = ref.path.split('/').at(-1) ?? ref.path;
-		notes.push({ ...ref, fingerprint: ref.fingerprint, properties: parsed.frontmatter, title: typeof titleValue === 'string' ? titleValue : undefined, normalizedTitle: normalize(typeof titleValue === 'string' ? titleValue : fileTitle) });
+		notes.push({
+			...ref,
+			fingerprint: ref.fingerprint,
+			properties: parsed.frontmatter,
+			title: typeof titleValue === 'string' ? titleValue : undefined,
+			normalizedTitle: typeof titleValue === 'string' ? normalize(titleValue) : undefined,
+			normalizedFilename: normalize(fileTitle),
+		});
 	}
 	return new NoteIndex(notes, mapping);
 }

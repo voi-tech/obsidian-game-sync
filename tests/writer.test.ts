@@ -49,6 +49,40 @@ describe('safe vault writer', () => {
 		expect(parseFrontmatter(updated).frontmatter).toMatchObject({ status: 'playing', custom: 'keep', title: 'New title' });
 		expect(parseFrontmatter(updated).body).toBe('# User body\n\nDo not touch');
 		expect(await gateway.listMarkdownFiles()).toHaveLength(1);
+		expect(gateway.frontMatterProcessCount).toBe(1);
+	});
+
+	it('rechecks the fingerprint before the separate managed-block process', async () => {
+		const initial = '---\nstatus: playing\n---\n%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%';
+		const gateway = new FakeVaultGateway({ 'Games/one.md': initial });
+		const writer = new VaultWriter(gateway);
+		gateway.beforeProcess = () => {
+			gateway.beforeProcess = undefined;
+			gateway.set('Games/one.md', `${initial}\nuser edit`);
+		};
+
+		await expect(writer.updateNote({ path: 'Games/one.md', game, expectedNoteFingerprint: noteFingerprint(initial), updatedAt: '2026-09-12T00:00:00.000Z' })).rejects.toThrow(/stale/i);
+	});
+
+	it('preserves an existing achievement block when achievement freshness is incomplete', async () => {
+		const initial = '---\nstatus: playing\n---\n%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%';
+		const gateway = new FakeVaultGateway({ 'Games/one.md': initial });
+		const staleAchievementsGame = {
+			...game,
+			providers: {
+				steam: {
+					...game.providers.steam!,
+					freshness: { ...game.providers.steam!.freshness, achievements: false },
+					achievements: { earned: 1, total: 2, progress: 50, achievements: [{ id: 'new', name: 'New', unlocked: true, hidden: false }] },
+				},
+			},
+		};
+		const writer = new VaultWriter(gateway);
+
+		await writer.updateNote({ path: 'Games/one.md', game: staleAchievementsGame, expectedNoteFingerprint: noteFingerprint(initial), updatedAt: '2026-09-12T00:00:00.000Z' });
+		const updated = await gateway.read('Games/one.md');
+		expect(updated).toContain('\nold\n');
+		expect(updated).not.toContain('- [x] New');
 	});
 
 	it('rejects stale previews and duplicate achievement blocks before writing', async () => {

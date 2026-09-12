@@ -106,3 +106,9 @@ export function applyManagedProperties(content: string, managedProperties: Recor
 	}
 	return serializeNote(frontmatter, parsed.body);
 }
+
+export function applyManagedFrontmatter(frontmatter: Record<string, unknown>, managedProperties: Record<string, unknown>): void {
+	for (const [key, value] of Object.entries(managedProperties)) {
+		if (value !== undefined && value !== null) frontmatter[key] = value;
+	}
+}

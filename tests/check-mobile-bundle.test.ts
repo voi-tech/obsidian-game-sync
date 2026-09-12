@@ -46,9 +46,16 @@ describe('check-mobile-bundle', () => {
 	});
 
 	test('allows the Obsidian external', async () => {
-		const result = await runScan('require("obsidian");');
+		const result = await runScan('require("obsidian"); "game-sync-vault-runtime" "template-context" "filename" "property-mapping" "achievement-renderer" "managed-block" "gateway" "note-index" "writer";');
 
 		expect(result.code).toBe(0);
 		expect(result.output).toContain('Mobile bundle verified');
+	});
+
+	test('rejects a bundle that omits the retained Game Sync runtime graph', async () => {
+		const result = await runScan('require("obsidian");');
+
+		expect(result.code).not.toBe(0);
+		expect(result.output).toContain('Missing retained Game Sync runtime marker');
 	});
 });

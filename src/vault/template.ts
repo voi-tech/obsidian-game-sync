@@ -61,6 +61,11 @@ export interface TemplateRenderOptions {
 	now?: Date;
 }
 
+export interface TemplateContextOptions {
+	updatedAt?: string;
+	revealHidden?: boolean;
+}
+
 function hours(minutes: unknown): number | string {
 	return typeof minutes === 'number' && Number.isFinite(minutes) ? minutes / 60 : '';
 }
@@ -89,25 +94,23 @@ function resolveObsidianPlaceholders(source: string, now: Date): string {
 	});
 }
 
-function normalizedAchievements(achievements: readonly ProviderAchievement[] | undefined): ProviderAchievement[] {
+function normalizedAchievements(achievements: readonly ProviderAchievement[] | undefined, revealHidden: boolean): ProviderAchievement[] {
 	return (achievements ?? []).map((achievement) => ({
 		id: achievement.id,
-		name: achievement.name,
-		description: achievement.description,
+		...(achievement.hidden && !achievement.unlocked && !revealHidden ? {} : { name: achievement.name, description: achievement.description, iconUrl: achievement.iconUrl }),
 		unlocked: achievement.unlocked,
 		unlockedAt: achievement.unlockedAt,
 		hidden: achievement.hidden,
 		rarityPercent: achievement.rarityPercent,
 		trophyType: achievement.trophyType,
-		iconUrl: achievement.iconUrl,
 	}));
 }
 
-export function buildTemplateContext(game: NormalizedGame, options: { updatedAt?: string } = {}): TemplateContext {
+export function buildTemplateContext(game: NormalizedGame, options: TemplateContextOptions = {}): TemplateContext {
 	const steam = game.providers.steam;
 	const playstation = game.providers.playstation;
-	const steamAchievements = normalizedAchievements(steam?.achievements?.achievements);
-	const playstationTrophies = normalizedAchievements(playstation?.achievements?.achievements);
+	const steamAchievements = normalizedAchievements(steam?.achievements?.achievements, options.revealHidden === true);
+	const playstationTrophies = normalizedAchievements(playstation?.achievements?.achievements, options.revealHidden === true);
 	const values: TemplateContext = {
 		id: game.canonicalId, title: game.title, original: game.originalTitle, year: game.releaseDate ? Number(game.releaseDate.slice(0, 4)) : undefined,
 		released: game.releaseDate, description: game.description, cover: game.cover, developers: [...game.developers], publishers: [...game.publishers],
@@ -124,7 +127,8 @@ export function buildTemplateContext(game: NormalizedGame, options: { updatedAt?
 		psnSilver: playstation?.achievements?.achievements.filter((achievement) => achievement.trophyType === 'silver').length,
 		psnGold: playstation?.achievements?.achievements.filter((achievement) => achievement.trophyType === 'gold').length,
 		psnPlatinum: playstation?.achievements?.achievements.filter((achievement) => achievement.trophyType === 'platinum').length,
-		playstationTrophies, developersText: game.developers.join(', '), publishersText: game.publishers.join(', '), genresText: game.genres.join(', '),
+		playstationTrophies, purchaseDate: undefined, purchasePrice: undefined, purchaseCurrency: undefined, purchaseSource: undefined,
+		developersText: game.developers.join(', '), publishersText: game.publishers.join(', '), genresText: game.genres.join(', '),
 		platformsText: game.platforms.join(', '), providersText: Object.keys(game.providers).join(', '),
 	};
 	return values;
@@ -160,7 +164,7 @@ export function renderTemplate(template: string, context: TemplateContext, optio
 }
 
 export function renderFilename(pattern: string, context: TemplateContext, options: TemplateRenderOptions = {}): string {
-	const rendered = renderTemplate(pattern.trim(), context, options)
+	const sanitize = (value: string): string => value
 		.replace(/[<>:"/\\|?*]/g, ' ')
 		.split('')
 		.filter((character) => character.charCodeAt(0) >= 32)
@@ -168,5 +172,8 @@ export function renderFilename(pattern: string, context: TemplateContext, option
 		.replace(/\s+/g, ' ')
 		.trim()
 		.replace(/^\.+|\.+$/g, '');
-	return rendered.length > 0 ? rendered : context.title;
+	const rendered = sanitize(renderTemplate(pattern.trim(), context, options));
+	if (rendered.length > 0) return rendered;
+	const fallback = sanitize(context.title);
+	return fallback.length > 0 ? fallback : 'game';
 }

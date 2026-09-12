@@ -19,6 +19,20 @@ try {
 }
 
 if (bundle !== undefined) {
+	const requiredRuntimeMarkers = [
+		'game-sync-vault-runtime',
+		'template-context',
+		'filename',
+		'property-mapping',
+		'achievement-renderer',
+		'managed-block',
+		'gateway',
+		'note-index',
+		'writer',
+	];
+	for (const marker of requiredRuntimeMarkers) {
+		if (!bundle.includes(marker)) errors.push(`Missing retained Game Sync runtime marker: ${marker}.`);
+	}
 	if (/\bBuffer\b/.test(bundle)) {
 		errors.push('Buffer is not available on mobile.');
 	}

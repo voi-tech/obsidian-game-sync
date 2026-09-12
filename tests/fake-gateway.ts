@@ -4,6 +4,8 @@ import { noteFingerprint } from '../src/vault/gateway';
 
 export class FakeVaultGateway implements VaultGateway {
 	private readonly files = new Map<string, string>();
+	frontMatterProcessCount = 0;
+	beforeProcess?: (path: string) => void;
 
 	constructor(initial: Record<string, string> = {}) {
 		for (const [path, content] of Object.entries(initial)) this.files.set(path, content);
@@ -28,11 +30,13 @@ export class FakeVaultGateway implements VaultGateway {
 	}
 
 	async process(path: string, updater: (content: string) => string): Promise<void> {
+		this.beforeProcess?.(path);
 		const current = await this.read(path);
 		this.files.set(path, updater(current));
 	}
 
 	async processFrontMatter(path: string, updater: (frontmatter: Record<string, unknown>) => void): Promise<void> {
+		this.frontMatterProcessCount += 1;
 		const current = await this.read(path);
 		const parsed = parseFrontmatter(current);
 		updater(parsed.frontmatter);

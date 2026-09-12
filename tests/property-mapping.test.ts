@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NormalizedGame } from '../src/model/game';
-import { buildManagedProperties, DEFAULT_PROPERTY_MAPPING, validatePropertyMapping } from '../src/model/property-mapping';
+import { buildManagedProperties, DEFAULT_PROPERTY_MAPPING, resolvePropertyMapping, validatePropertyMapping } from '../src/model/property-mapping';
 
 const game: NormalizedGame = {
 	identity: { canonicalId: 'game-sync:one', steamAppId: 1 },
@@ -55,6 +55,13 @@ describe('managed Property mapping', () => {
 	it('rejects duplicate destinations and user-owned destinations', () => {
 		expect(() => validatePropertyMapping({ title: 'same', type: 'same' })).toThrow(/duplicate/i);
 		expect(() => validatePropertyMapping({ title: 'status' })).toThrow(/user-owned/i);
+		expect(() => validatePropertyMapping({ title: ' Steam-ID ' })).toThrow(/duplicate/i);
+		expect(() => validatePropertyMapping({ title: ' STATUS ' })).toThrow(/user-owned/i);
+	});
+
+	it('resolves defaults before validating active destinations and trims overrides', () => {
+		expect(resolvePropertyMapping({ title: '  custom-title  ' }).title).toBe('custom-title');
+		expect(resolvePropertyMapping({ steamPlaytime: null }).steamPlaytime).toBeUndefined();
 	});
 
 	it('omits null and undefined source values instead of erasing unrelated data', () => {
