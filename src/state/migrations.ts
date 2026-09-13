@@ -4,6 +4,7 @@ import type { GameProvider, ProviderGame, ProviderSnapshotStatus } from '../mode
 import { createOperation, type Operation, type OperationRisk } from '../model/operations';
 import type { ProviderAchievement, ProviderAchievementSet } from '../model/achievement';
 import type { NormalizedGame, NormalizedProviderGame } from '../model/game';
+import { DEFAULT_PROPERTY_MAPPING, validatePropertyMapping, type ManagedPropertyKey, type PropertyMapping } from '../model/property-mapping';
 import { isSupportedBackgroundIntervalMinutes } from '../model/settings';
 import { DEFAULT_SETTINGS } from './defaults';
 import type {
@@ -15,6 +16,7 @@ import type {
 } from './schema';
 
 const MAX_RECENT_ACTIVITY = 100;
+const PROPERTY_MAPPING_KEYS = Object.keys(DEFAULT_PROPERTY_MAPPING) as ManagedPropertyKey[];
 const SETTINGS_KEYS = [
 	'setupCompleted',
 	'firstSyncCompleted',
@@ -196,6 +198,30 @@ function readSettings(raw: unknown): GameSyncData['settings'] {
 							throw new StateMigrationError('Invalid backgroundNotifications.');
 					  })(),
 	};
+}
+
+function readPropertyMapping(raw: unknown): PropertyMapping {
+	if (raw === undefined) {
+		return {};
+	}
+	if (!isRecord(raw)) {
+		throw new StateMigrationError('Invalid property mapping state.');
+	}
+	rejectUnknownFields(raw, PROPERTY_MAPPING_KEYS, 'property mapping');
+	const mapping: PropertyMapping = {};
+	for (const key of Object.keys(raw) as ManagedPropertyKey[]) {
+		const value = raw[key];
+		if (value !== null && value !== false && (typeof value !== 'string' || value.trim().length === 0)) {
+			throw new StateMigrationError('Invalid property mapping value.');
+		}
+		mapping[key] = value;
+	}
+	try {
+		validatePropertyMapping(mapping);
+	} catch {
+		throw new StateMigrationError('Invalid property mapping.');
+	}
+	return mapping;
 }
 
 function readIdentityMapping(value: unknown): IdentityMapping {
@@ -658,6 +684,7 @@ function migrateVersionOne(raw: unknown): GameSyncData {
 		[
 			'schemaVersion',
 			'settings',
+			'propertyMapping',
 			'identityMappings',
 			'negativeMappings',
 			'ignoredCanonicalIds',
@@ -679,6 +706,7 @@ function migrateVersionOne(raw: unknown): GameSyncData {
 	return {
 		schemaVersion: 1,
 		settings: readSettings(raw.settings),
+		propertyMapping: readPropertyMapping(raw.propertyMapping),
 		identityMappings: readArray<IdentityMapping>(raw.identityMappings, [], readIdentityMapping, 'identity mapping'),
 		negativeMappings: readArray<NegativeIdentityMapping>(raw.negativeMappings, [], readNegativeMapping, 'negative mapping'),
 		ignoredCanonicalIds: raw.ignoredCanonicalIds === undefined ? [] : readStringList(raw.ignoredCanonicalIds, 'ignored canonical ID'),

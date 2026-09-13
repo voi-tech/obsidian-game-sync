@@ -20,8 +20,49 @@ describe('versioned plugin state', () => {
 
 		expect(state.schemaVersion).toBe(1);
 		expect(state.settings).toEqual(DEFAULT_SETTINGS);
+		expect(state.propertyMapping).toEqual({});
 		expect(state.identityMappings).toEqual([]);
 		expect(state.recentActivity).toEqual([]);
+	});
+
+	it('persists a valid custom property mapping without changing schema version', () => {
+		const state = migrateState({
+			schemaVersion: 1,
+			propertyMapping: { title: 'game-title', steamId: null, type: false },
+		});
+
+		expect(state.schemaVersion).toBe(1);
+		expect(state.propertyMapping).toEqual({ title: 'game-title', steamId: null, type: false });
+	});
+
+	it('rejects unknown property mapping keys and invalid values', () => {
+		for (const invalidMapping of [null, [], 'mapping', 42]) {
+			expect(() => migrateState({ schemaVersion: 1, propertyMapping: invalidMapping })).toThrow(StateMigrationError);
+		}
+
+		for (const invalidMapping of [
+			{ unknown: 'game-title' },
+			{ title: '' },
+			{ title: '   ' },
+			{ title: 42 },
+			{ title: true },
+			{ title: {} },
+			{ title: [] },
+		]) {
+			expect(() => migrateState({ schemaVersion: 1, propertyMapping: invalidMapping })).toThrow(StateMigrationError);
+		}
+	});
+
+	it('rejects duplicate property mapping destinations without exposing their value', () => {
+		const secretDestination = stateSecrets[0];
+
+		try {
+			migrateState({ schemaVersion: 1, propertyMapping: { title: secretDestination, type: secretDestination } });
+			expect.fail('Expected duplicate property mapping to be rejected.');
+		} catch (error) {
+			expect(error).toBeInstanceOf(StateMigrationError);
+			expect(String(error)).not.toContain(secretDestination);
+		}
 	});
 
 	it('accepts only the supported background intervals and keeps the 360-minute default', () => {
@@ -254,11 +295,14 @@ describe('versioned plugin state', () => {
 
 		const initial = await store.load();
 		initial.settings.createBase = true;
+		initial.propertyMapping = { title: 'game-title', steamId: null };
 		await store.save(initial);
 		const loaded = await store.load();
 
 		expect(loaded.schemaVersion).toBe(1);
 		expect(loaded.settings.createBase).toBe(true);
+		expect(loaded.propertyMapping).toEqual({ title: 'game-title', steamId: null });
+		expect((raw as GameSyncData).propertyMapping).toEqual({ title: 'game-title', steamId: null });
 		expect(JSON.stringify(raw)).not.toMatch(/secret|token|password/i);
 	});
 

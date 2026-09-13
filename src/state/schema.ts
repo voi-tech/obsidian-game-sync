@@ -3,6 +3,7 @@ import type { GameProvider, ProviderGame, ProviderSnapshotStatus } from '../mode
 import type { Operation } from '../model/operations';
 import type { GameSyncSettings } from '../model/settings';
 import type { NormalizedGame } from '../model/game';
+import type { PropertyMapping } from '../model/property-mapping';
 
 export interface NegativeIdentityMapping {
 	leftCanonicalId: string;
@@ -54,6 +55,7 @@ export interface OperationJournalEntry {
 export interface GameSyncData {
 	schemaVersion: 1;
 	settings: GameSyncSettings;
+	propertyMapping: PropertyMapping;
 	identityMappings: IdentityMapping[];
 	negativeMappings: NegativeIdentityMapping[];
 	ignoredCanonicalIds: string[];
