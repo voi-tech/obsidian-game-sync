@@ -12,7 +12,8 @@ import { VaultWriter } from '../vault/writer';
 export interface RuntimeCompositionOptions {
 	stateStore: StateStore;
 	gateway: VaultGateway;
-	adapters: readonly GameProviderAdapter[];
+	adapters?: readonly GameProviderAdapter[];
+	createAdapters?: (settings: GameSyncSettings) => readonly GameProviderAdapter[];
 	cache?: DisposableCache;
 	now?: () => string;
 	secretValues?: readonly string[];
@@ -49,9 +50,10 @@ export class GameSyncRuntimeComposition {
 			},
 			revealHidden: state.settings.revealHiddenAchievements,
 		});
+		const availableAdapters = this.options.createAdapters?.(state.settings) ?? this.options.adapters ?? [];
 		const scopedAdapters = providers === undefined
-			? [...this.options.adapters]
-			: this.options.adapters.filter((adapter) => providers.includes(adapter.id));
+			? [...availableAdapters]
+			: availableAdapters.filter((adapter) => providers.includes(adapter.id));
 		const enabledProviders = providers === undefined
 			? PROVIDERS.filter((provider) => state.settings.enabledProviders[provider])
 			: undefined;
