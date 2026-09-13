@@ -17,6 +17,7 @@ const MAX_RECENT_ACTIVITY = 100;
 const SETTINGS_KEYS = [
 	'setupCompleted',
 	'firstSyncCompleted',
+	'steamAccountId',
 	'enabledProviders',
 	'notesFolder',
 	'filenamePattern',
@@ -129,6 +130,7 @@ function readSettings(raw: unknown): GameSyncData['settings'] {
 	return {
 		setupCompleted: optionalBoolean(raw.setupCompleted, DEFAULT_SETTINGS.setupCompleted, 'setupCompleted'),
 		firstSyncCompleted: optionalBoolean(raw.firstSyncCompleted, DEFAULT_SETTINGS.firstSyncCompleted, 'firstSyncCompleted'),
+		steamAccountId: raw.steamAccountId === undefined ? DEFAULT_SETTINGS.steamAccountId : requiredString(raw.steamAccountId, 'steamAccountId'),
 		enabledProviders: {
 			steam: optionalBoolean(enabledProviders.steam, DEFAULT_SETTINGS.enabledProviders.steam, 'enabledProviders.steam'),
 			playstation: optionalBoolean(

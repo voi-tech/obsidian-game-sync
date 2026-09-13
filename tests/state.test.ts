@@ -251,6 +251,33 @@ describe('versioned plugin state', () => {
 		expect(JSON.stringify(raw)).not.toMatch(/secret|token|password/i);
 	});
 
+	it('round-trips the public Steam account identity without persisting credentials', async () => {
+		let raw: unknown;
+		const store = createStateStore(
+			async () => raw,
+			async (value) => {
+				raw = value;
+			},
+			stateSecrets,
+		);
+
+		const state = await store.load();
+		state.settings.steamAccountId = '76561198000000001';
+		await store.save(state);
+
+		const loaded = await store.load();
+		expect(loaded.settings.steamAccountId).toBe('76561198000000001');
+		expect(JSON.stringify(raw)).toContain('76561198000000001');
+		expect(JSON.stringify(raw)).not.toMatch(/STEAM_TEST_SECRET|NPSSO_TEST_SECRET|ACCESS_TEST_SECRET|REFRESH_TEST_SECRET|apiKey|npsso|token/i);
+	});
+
+	it('defaults to no public Steam identity and no credential fields', () => {
+		const state = migrateState(undefined);
+
+		expect(state.settings.steamAccountId).toBeUndefined();
+		expect(JSON.stringify(state)).not.toMatch(/apiKey|npsso|accessToken|refreshToken|password/i);
+	});
+
 	it('sanitizes four secret forms across persisted state containers before writing', async () => {
 		let raw: unknown;
 		const state = migrateState(undefined);

@@ -6,6 +6,7 @@ export type BackgroundNotifications = 'problems-only' | 'all' | 'none';
 export interface GameSyncSettings {
 	setupCompleted: boolean;
 	firstSyncCompleted: boolean;
+	steamAccountId?: string;
 	enabledProviders: {
 		steam: boolean;
 		playstation: boolean;

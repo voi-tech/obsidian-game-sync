@@ -3,6 +3,7 @@ import type { GameSyncSettings } from '../model/settings';
 export const DEFAULT_SETTINGS: GameSyncSettings = {
 	setupCompleted: false,
 	firstSyncCompleted: false,
+	steamAccountId: undefined,
 	enabledProviders: {
 		steam: false,
 		playstation: false,
