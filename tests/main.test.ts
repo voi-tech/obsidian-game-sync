@@ -10,6 +10,11 @@ vi.mock('obsidian', () => ({
 
 		open(): void {}
 	},
+	PluginSettingTab: class {
+		containerEl = {};
+
+		constructor(public readonly app: unknown, public readonly plugin: unknown) {}
+	},
 	Setting: class {
 		constructor(public readonly containerEl: unknown) {}
 	},
@@ -34,6 +39,7 @@ import { createGameSyncRuntime, createStaticCommandErrorNotifier } from '../src/
 
 function createHost(rawState: unknown) {
 	const commands: Array<{ id: string; name: string; callback: () => void }> = [];
+	const settingTabs: unknown[] = [];
 	const registeredIntervals: number[] = [];
 	const host = {
 		app: {
@@ -48,15 +54,17 @@ function createHost(rawState: unknown) {
 			},
 			workspace: { openLinkText: vi.fn() },
 		} as unknown as import('obsidian').App,
+		plugin: {} as import('obsidian').Plugin,
 		loadData: vi.fn(async () => rawState),
 		saveData: vi.fn(async () => undefined),
 		addCommand: (command: { id: string; name: string; callback: () => void }) => { commands.push(command); },
+		addSettingTab: (settingTab: unknown) => { settingTabs.push(settingTab); },
 		registerInterval: (timerId: number) => {
 			registeredIntervals.push(timerId);
 			return timerId;
 		},
 	};
-	return { host, commands, registeredIntervals };
+	return { host, commands, settingTabs, registeredIntervals };
 }
 
 describe('main runtime integration', () => {
@@ -71,6 +79,7 @@ describe('main runtime integration', () => {
 		await runtime.ready;
 
 		expect(fixture.commands).toHaveLength(13);
+		expect(fixture.settingTabs).toHaveLength(1);
 		expect(timer.setInterval).toHaveBeenCalledOnce();
 		expect(runtime.scheduler.getState()).toBe('scheduled');
 

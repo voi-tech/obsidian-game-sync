@@ -21,6 +21,8 @@ import { LibrarySummaryModal } from './ui/library-summary-modal';
 import { SetupModal } from './ui/setup/setup-modal';
 import { SteamConnectModal } from './ui/steam-connect-modal';
 import { SummaryModal } from './ui/summary-modal';
+import { GameSyncSettingsTab } from './ui/settings/game-sync-settings';
+import { TemplateKeysModal } from './ui/template-keys-modal';
 import { ObsidianVaultGateway } from './vault/gateway';
 import { renderTemplate } from './vault/template';
 
@@ -28,10 +30,12 @@ export { GAME_SYNC_RUNTIME_REGISTRY } from './runtime/registry';
 
 export interface GameSyncRuntimeHost {
 	app: App;
+	plugin?: Plugin;
 	gameSyncVersion?: string;
 	loadData: () => Promise<unknown>;
 	saveData: StateStore['save'];
 	addCommand: CommandRegistrar['addCommand'];
+	addSettingTab?: (settingTab: GameSyncSettingsTab) => void;
 	registerInterval: Component['registerInterval'];
 }
 
@@ -148,6 +152,54 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 		await host.app.workspace.openLinkText(path, '', false);
 	};
 
+	const openConnection = (provider: GameProvider): void => {
+		if (provider === 'steam') {
+			new SteamConnectModal(host.app, { http, secretStore, onConnected: saveConnectedAccount }).open();
+		} else {
+			new PlayStationConnectModal(host.app, {
+				secretStore,
+				openUrl: (url) => { window.open(url, '_blank'); },
+				onConnected: saveConnectedAccount,
+			}).open();
+		}
+	};
+
+	const disconnectProvider = async (provider: GameProvider): Promise<void> => {
+		const state = await stateStore.load();
+		const adapter = createAdapters(http, secretStore, state.settings).find((candidate) => candidate.id === provider);
+		if (adapter === undefined) throw new Error('Provider adapter is unavailable.');
+		await adapter.disconnect();
+		state.settings.enabledProviders[provider] = false;
+		if (provider === 'steam') state.settings.steamAccountId = undefined;
+		await stateStore.save(state);
+	};
+	const confirm = (message: string): boolean => {
+		const browserConfirm = window['confirm'].bind(window);
+		return browserConfirm(message);
+	};
+
+	const settingsHost = {
+		readSettings: async () => (await stateStore.load()).settings,
+		writeSettings: async (settings: GameSyncSettings) => {
+			const state = await stateStore.load();
+			state.settings = { ...settings, enabledProviders: { ...settings.enabledProviders } };
+			await stateStore.save(state);
+		},
+		readPropertyMapping: async () => (await stateStore.load()).propertyMapping,
+		writePropertyMapping: async (propertyMapping: import('./model/property-mapping').PropertyMapping) => {
+			const state = await stateStore.load();
+			state.propertyMapping = { ...propertyMapping };
+			await stateStore.save(state);
+		},
+		getConnectionStatus,
+		connect: openConnection,
+		disconnect: disconnectProvider,
+		confirm,
+		openTemplate: () => { void openTemplate(); },
+		openTemplateKeys: () => new TemplateKeysModal(host.app).open(),
+	};
+	if (host.addSettingTab !== undefined && host.plugin !== undefined) host.addSettingTab(new GameSyncSettingsTab(host.app, host.plugin, settingsHost));
+
 	const validateTemplate = async (templatePath: string): Promise<void> => {
 		const path = templatePath.trim();
 		if (path.length === 0) return;
@@ -199,17 +251,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 			new SetupModal(host.app, {
 				stateStore,
 				save: (state) => stateStore.save(state),
-				openConnection: (provider) => {
-					if (provider === 'steam') {
-						new SteamConnectModal(host.app, { http, secretStore, onConnected: saveConnectedAccount }).open();
-					} else {
-						new PlayStationConnectModal(host.app, {
-							secretStore,
-							openUrl: (url) => { window.open(url, '_blank'); },
-							onConnected: saveConnectedAccount,
-						}).open();
-					}
-				},
+				openConnection,
 				getConnectionStatus,
 				openTemplate: () => { void openTemplate(); },
 				fixTemplate: () => { void openTemplate(); },
@@ -292,10 +334,12 @@ export default class GameSyncPlugin extends Plugin {
 		void GAME_SYNC_RUNTIME_REGISTRY.marker;
 		this.runtime = createGameSyncRuntime({
 			app: this.app,
+			plugin: this,
 			gameSyncVersion: this.manifest.version,
 			loadData: () => this.loadData(),
 			saveData: (data) => this.saveData(data),
 			addCommand: (command) => this.addCommand(command),
+			addSettingTab: (settingTab) => this.addSettingTab(settingTab),
 			registerInterval: (timerId) => this.registerInterval(timerId),
 		});
 		await this.runtime.ready;
