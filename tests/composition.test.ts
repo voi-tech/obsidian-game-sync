@@ -1,0 +1,172 @@
+import { describe, expect, it } from 'vitest';
+import type { GameProviderAdapter } from '../src/providers/provider';
+import type { GameProvider, ProviderGame, ProviderSnapshot } from '../src/model/provider';
+import type { GameSyncData } from '../src/state/schema';
+import type { StateStore } from '../src/state/store';
+import { DEFAULT_SETTINGS } from '../src/state/defaults';
+import { migrateState } from '../src/state/migrations';
+import { parseFrontmatter } from '../src/vault/frontmatter';
+import { FakeVaultGateway } from './fake-gateway';
+import { GameSyncRuntimeComposition } from '../src/runtime/composition';
+
+class MutableStateStore implements StateStore {
+
+	loads = 0;
+	saves = 0;
+
+	constructor(public state: GameSyncData) {}
+
+	async load(): Promise<GameSyncData> {
+		this.loads += 1;
+		return structuredClone(this.state);
+	}
+
+	async save(data: GameSyncData): Promise<void> {
+		this.saves += 1;
+		this.state = structuredClone(data);
+	}
+}
+
+class CountingVaultGateway extends FakeVaultGateway {
+	readonly reads: string[] = [];
+	readonly existenceChecks: string[] = [];
+
+	override async read(path: string): Promise<string> {
+		this.reads.push(path);
+		return super.read(path);
+	}
+
+	override async exists(path: string): Promise<boolean> {
+		this.existenceChecks.push(path);
+		return super.exists(path);
+	}
+}
+
+function state(overrides: Partial<GameSyncData['settings']> = {}, propertyMapping: GameSyncData['propertyMapping'] = {}): GameSyncData {
+	return migrateState({
+		settings: {
+			...DEFAULT_SETTINGS,
+			...overrides,
+			enabledProviders: {
+				...DEFAULT_SETTINGS.enabledProviders,
+				...overrides.enabledProviders,
+			},
+		},
+		propertyMapping,
+	});
+}
+
+function providerGame(provider: GameProvider, id: string, title = `${provider} game`): ProviderGame {
+	return {
+		provider,
+		providerGameId: id,
+		title,
+		releaseDate: '2024-01-01',
+		developers: ['Studio'],
+		publishers: [],
+		genres: [],
+		platforms: provider === 'steam' ? ['pc'] : ['ps5'],
+		owned: true,
+		playtimeMinutes: 60,
+		freshness: { metadata: true, ownership: true, playtime: true, achievements: false },
+		identity: provider === 'steam'
+			? { provider: 'steam', appId: Number(id) || 1 }
+			: { provider: 'playstation', conceptId: `concept-${id}`, titleIds: [`title-${id}`], npCommunicationIds: [`comm-${id}`] },
+	};
+}
+
+function snapshot(game: ProviderGame): ProviderSnapshot {
+	return {
+		provider: game.provider,
+		status: 'complete',
+		games: [game],
+		fetchedAt: '2026-09-12T12:00:00.000Z',
+		pagination: { complete: true, pagesFetched: 1 },
+		paginationComplete: true,
+	};
+}
+
+function adapter(game: ProviderGame, onFetch: () => void): GameProviderAdapter {
+	return {
+		id: game.provider,
+		getConnectionStatus: async () => ({ provider: game.provider, state: 'connected', connected: true }),
+		testConnection: async () => ({ provider: game.provider, displayName: game.provider, accountId: `${game.provider}-account` }),
+		fetchLibrary: async () => {
+			onFetch();
+			return snapshot(game);
+		},
+		disconnect: async () => undefined,
+	};
+}
+
+describe('GameSyncRuntimeComposition', () => {
+	it('reads current settings for each service and applies provider scope', async () => {
+		const steamFetches = { count: 0 };
+		const playstationFetches = { count: 0 };
+		const steam = adapter(providerGame('steam', '1'), () => { steamFetches.count += 1; });
+		const playstation = adapter(providerGame('playstation', '2'), () => { playstationFetches.count += 1; });
+		const store = new MutableStateStore(state({ enabledProviders: { steam: true, playstation: false } }));
+		const composition = new GameSyncRuntimeComposition({ stateStore: store, gateway: new FakeVaultGateway(), adapters: [steam, playstation] });
+
+		await (await composition.createService()).prepareAll();
+		expect(steamFetches.count).toBe(1);
+		expect(playstationFetches.count).toBe(0);
+
+		store.state.settings.enabledProviders = { steam: false, playstation: true };
+		await (await composition.createService()).prepareAll();
+		expect(steamFetches.count).toBe(1);
+		expect(playstationFetches.count).toBe(1);
+
+		const explicitlyScoped = await composition.createService(['steam']);
+		await explicitlyScoped.prepareAll();
+		expect(steamFetches.count).toBe(2);
+		expect(playstationFetches.count).toBe(1);
+	});
+
+	it('passes custom property mapping to planning and writing without changing the source state', async () => {
+		const gateway = new FakeVaultGateway({
+			'Games/Custom.md': '---\nlogical-id: game-sync:one\nsource-id: "1"\nname: Old title\n---\nManual body',
+		});
+		const propertyMapping = { gameSyncId: 'logical-id', steamId: 'source-id', title: 'name' } as const;
+		const store = new MutableStateStore(state({ enabledProviders: { steam: true, playstation: false } }, propertyMapping));
+		store.state.identityMappings = [{ canonicalId: 'game-sync:one', provider: 'steam', providerGameId: '1' }];
+		const before = structuredClone(store.state);
+		const composition = new GameSyncRuntimeComposition({
+			stateStore: store,
+			gateway,
+			adapters: [adapter(providerGame('steam', '1', 'New title'), () => undefined)],
+		});
+		const service = await composition.createService();
+		expect(store.state).toEqual(before);
+
+		const prepared = await service.prepareAll();
+		expect(prepared.plan.statuses[0]?.status).toBe('update');
+		expect(prepared.plan.operations[0]?.path).toBe('Games/Custom.md');
+		await service.applySelection(prepared, prepared.plan.operations.map((operation) => operation.id), { explicit: true });
+
+		const parsed = parseFrontmatter(await gateway.read('Games/Custom.md'));
+		expect(parsed.frontmatter['logical-id']).toBe('game-sync:one');
+		expect(parsed.frontmatter.name).toBe('New title');
+		expect(parsed.frontmatter['source-id']).toBe(1);
+		expect(parsed.frontmatter.title).toBeUndefined();
+		expect(store.state.settings.firstSyncCompleted).toBe(true);
+	});
+
+	it('reads a template only after confirming that its path exists and leaves inputs untouched', async () => {
+		const missingGateway = new CountingVaultGateway();
+		const missingStore = new MutableStateStore(state({ templatePath: 'Templates/missing.tmpl' }));
+		const missingBefore = structuredClone(missingStore.state);
+		await new GameSyncRuntimeComposition({ stateStore: missingStore, gateway: missingGateway, adapters: [] }).createService();
+
+		expect(missingGateway.existenceChecks).toEqual(['Templates/missing.tmpl']);
+		expect(missingGateway.reads).toEqual([]);
+		expect(missingStore.state).toEqual(missingBefore);
+
+		const existingGateway = new CountingVaultGateway({ 'Templates/game.tmpl': '# {{title}}' });
+		const existingStore = new MutableStateStore(state({ templatePath: 'Templates/game.tmpl' }));
+		await new GameSyncRuntimeComposition({ stateStore: existingStore, gateway: existingGateway, adapters: [] }).createService();
+
+		expect(existingGateway.existenceChecks).toEqual(['Templates/game.tmpl']);
+		expect(existingGateway.reads).toEqual(['Templates/game.tmpl']);
+	});
+});
