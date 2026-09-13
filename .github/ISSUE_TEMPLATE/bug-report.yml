@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a reproducible Game Sync problem.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste credentials, NPSSO, access tokens, refresh tokens or private vault content. Remove secrets before sharing diagnostics.
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      description: Steam, PlayStation, or both.
+    validations:
+      required: true
+  - type: input
+    id: obsidian
+    attributes:
+      label: Obsidian platform and version
+      placeholder: macOS desktop 1.x, Windows desktop 1.x, iOS 1.x, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste Copy diagnostic information after removing any private context. Never paste credentials.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the command, provider state and smallest reproducible sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
