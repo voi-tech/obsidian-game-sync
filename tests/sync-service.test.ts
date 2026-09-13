@@ -37,6 +37,60 @@ function adapter(fetchLibrary: GameProviderAdapter['fetchLibrary']): GameProvide
 }
 
 describe('provider-isolated SyncService', () => {
+	it('propagates prepare options to every provider during prepareAll', async () => {
+		const gateway = new FakeVaultGateway();
+		const receivedForce: boolean[] = [];
+		const steam = adapter(async (options) => {
+			receivedForce.push(options.force === true);
+			return snapshot('complete', [providerGame('1')]);
+		});
+		const playstation = {
+			...adapter(async (options) => {
+				receivedForce.push(options.force === true);
+				return { ...snapshot('complete', [playstationGame('2')]), provider: 'playstation' as const };
+			}),
+			id: 'playstation' as const,
+		};
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const service = new SyncService({ adapters: [steam, playstation], planner, writer: new VaultWriter(gateway) });
+
+		await service.prepareAll({ force: true });
+
+		expect(receivedForce).toEqual([true, true]);
+	});
+
+	it('records only complete explicit applies as the last successful provider state', async () => {
+		const gateway = new FakeVaultGateway();
+		let mode: 'complete' | 'partial' | 'failed' = 'complete';
+		const steam = adapter(async () => {
+			if (mode === 'failed') throw new Error('Steam unavailable');
+			return snapshot(mode, [providerGame('1', mode === 'partial' ? 90 : 60)]);
+		});
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const service = new SyncService({ adapters: [steam], planner, writer: new VaultWriter(gateway) });
+		const initial = await service.prepareAll();
+		await service.applySelection(initial, initial.plan.operations.map((operation) => operation.id), { explicit: true });
+
+		const successful = (await service.getState()).lastSuccessfulProviderStates.steam;
+		expect(successful).toEqual({
+			provider: 'steam',
+			fetchedAt: '2026-09-12T12:00:00.000Z',
+			gameIds: ['1'],
+			status: 'complete',
+			paginationComplete: true,
+		});
+
+		mode = 'partial';
+		const partial = await service.prepareAll();
+		await service.applySelection(partial, partial.plan.operations.map((operation) => operation.id), { explicit: true });
+		expect((await service.getState()).lastSuccessfulProviderStates.steam).toEqual(successful);
+
+		mode = 'failed';
+		const failed = await service.prepareAll();
+		await service.applySelection(failed, failed.plan.operations.map((operation) => operation.id), { explicit: true });
+		expect((await service.getState()).lastSuccessfulProviderStates.steam).toEqual(successful);
+	});
+
 	it('keeps a successful provider plan when another provider fails', async () => {
 		const gateway = new FakeVaultGateway();
 		const steam = adapter(async () => { throw new Error('Steam unavailable'); });

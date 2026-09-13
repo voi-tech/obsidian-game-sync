@@ -1,6 +1,6 @@
 import { resolveCanonicalGameId } from '../model/identity';
 import type { NormalizedGame, NormalizedProviderGame } from '../model/game';
-import type { GameSyncData, OperationJournalEntry } from '../state/schema';
+import type { GameSyncData, LastSuccessfulProviderState, OperationJournalEntry } from '../state/schema';
 import { migrateState } from '../state/migrations';
 import type { StateStore } from '../state/store';
 import type {
@@ -714,13 +714,13 @@ export class SyncService {
 		return this.adapters.map((adapter) => adapter.id).filter((provider, index, providers) => providers.indexOf(provider) === index && (this.enabledProviders === undefined || this.enabledProviders.has(provider)));
 	}
 
-	async prepareAll(): Promise<PreparedSync> {
+	async prepareAll(fetchOptions: PrepareProviderOptions = {}): Promise<PreparedSync> {
 		const state = await this.loadState();
 		const providerResults: Partial<Record<GameProvider, ProviderPreparation>> = {};
 		const providerStatuses = {} as Record<GameProvider, ProviderStatusSummary>;
 		const warnings: string[] = [];
 		for (const provider of this.providersToPrepare()) {
-			const result = await this.prepareProvider(provider);
+			const result = await this.prepareProvider(provider, fetchOptions);
 			providerResults[provider] = result;
 			providerStatuses[provider] = result.providerStatus;
 			warnings.push(...result.warnings);
@@ -933,7 +933,17 @@ export class SyncService {
 				const snapshot = (result.providerGames ?? []).map(clonePersistedProviderGame);
 				this.committedProviderGames.set(result.provider, snapshot.map(cloneProviderGame));
 				state.lastAppliedProviderSnapshots[result.provider] = snapshot;
-				if (result.providerStatus.state === 'success' && isCompleteProviderSnapshot(result.snapshot)) state.lastSuccessfulProviderSnapshots[result.provider] = snapshot;
+				if (result.providerStatus.state === 'success' && isCompleteProviderSnapshot(result.snapshot)) {
+					state.lastSuccessfulProviderSnapshots[result.provider] = snapshot;
+					const lastSuccessfulProviderState: LastSuccessfulProviderState = {
+						provider: result.provider,
+						fetchedAt: result.snapshot.fetchedAt,
+						gameIds: snapshot.map((game) => game.providerGameId),
+						status: 'complete',
+						paginationComplete: true,
+					};
+					state.lastSuccessfulProviderStates[result.provider] = lastSuccessfulProviderState;
+				}
 			}
 			const preparedKeys = new Set((result.presence ?? []).map((record) => `${record.provider}:${record.providerGameId}`));
 			state.presence = state.presence.filter((record) => record.provider !== result.provider || !preparedKeys.has(`${record.provider}:${record.providerGameId}`));
