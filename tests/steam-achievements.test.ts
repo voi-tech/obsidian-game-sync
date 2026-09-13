@@ -48,6 +48,40 @@ describe('Steam achievement refresh policy', () => {
 		expect(result.freshness).toBe(false);
 	});
 
+	it('distinguishes a fresh identical network result from cached achievement reuse', async () => {
+		let playtime = 10;
+		const api: SteamApi = {
+			resolveVanityUrl: async () => ({ success: 1, steamid: '76561198000000001' }),
+			getPlayerSummaries: async () => [{ steamid: '76561198000000001', personaname: 'Test Player' }],
+			getOwnedGames: async () => ({ game_count: 1, games: [{ appid: 10, name: 'Game', playtime_forever: playtime }] }),
+			getAppDetails: async () => ({ type: 'game', supportsAchievements: true }),
+			getPlayerAchievements: async () => ({ achievements: [{ name: 'a', displayName: 'A', achieved: 1, hidden: false }] }),
+		};
+		const secretStore: SecretStore = { get: () => 'steam-key', set: () => undefined, delete: () => undefined };
+		const adapter = createSteamAdapter({ http: { request: async () => ({}) as never }, secretStore, account: '76561198000000001', api });
+		const first = await adapter.fetchLibrary({ now: '2026-09-12T12:00:00.000Z', force: true });
+		const firstGame = first.games[0];
+		if (firstGame === undefined) throw new Error('Expected a Steam game.');
+		expect(first.achievementProvenance?.['10']).toEqual({ source: 'network', fetchedAt: '2026-09-12T12:00:00.000Z' });
+
+		playtime = 20;
+		const second = await adapter.fetchLibrary({
+			now: '2026-09-13T12:00:00.000Z',
+			previousGames: [firstGame],
+			achievementCache: { '10': { fetchedAt: '2026-09-12T12:00:00.000Z', playtimeMinutes: 10, achievements: firstGame.achievements } },
+		});
+		expect(second.achievementProvenance?.['10']).toEqual({ source: 'network', fetchedAt: '2026-09-13T12:00:00.000Z' });
+
+		const secondGame = second.games[0];
+		if (secondGame === undefined) throw new Error('Expected a second Steam game.');
+		const reused = await adapter.fetchLibrary({
+			now: '2026-09-14T12:00:00.000Z',
+			previousGames: [secondGame],
+			achievementCache: { '10': { fetchedAt: '2026-09-13T12:00:00.000Z', playtimeMinutes: 20, achievements: secondGame.achievements } },
+		});
+		expect(reused.achievementProvenance?.['10']).toEqual({ source: 'cache', fetchedAt: '2026-09-13T12:00:00.000Z' });
+	});
+
 	it('marks the snapshot partial and retains previous achievements when one app fails', async () => {
 		const api: SteamApi = {
 			resolveVanityUrl: async () => ({ success: 1, steamid: '76561198000000001' }),

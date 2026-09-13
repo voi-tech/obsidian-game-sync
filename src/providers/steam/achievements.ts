@@ -1,5 +1,5 @@
 import type { ProviderAchievement, ProviderAchievementSet } from '../../model/achievement';
-import type { ProviderGame } from '../../model/provider';
+import type { ProviderAchievementProvenance, ProviderGame } from '../../model/provider';
 import type { SteamApi, SteamAchievement } from './types';
 
 export interface SteamAchievementCacheEntry {
@@ -21,6 +21,7 @@ export interface SteamAchievementRefreshResult {
 	ok: boolean;
 	freshness: boolean;
 	achievements?: ProviderAchievementSet;
+	provenance?: ProviderAchievementProvenance;
 	error?: string;
 }
 
@@ -55,10 +56,22 @@ export function normalizeSteamAchievements(achievements: readonly SteamAchieveme
 }
 
 export async function refreshSteamAchievements(game: ProviderGame, cached: SteamAchievementCacheEntry | undefined, options: SteamAchievementRefreshOptions): Promise<SteamAchievementRefreshResult> {
-	if (!shouldRefreshSteamAchievements(game, cached, options)) return { ok: true, freshness: true, achievements: cached?.achievements };
+	if (!shouldRefreshSteamAchievements(game, cached, options)) {
+		return {
+			ok: true,
+			freshness: true,
+			achievements: cached?.achievements,
+			...(cached === undefined ? {} : { provenance: { source: 'cache' as const, fetchedAt: cached.fetchedAt } }),
+		};
+	}
 	try {
 		const result = await options.fetch();
-		return { ok: true, freshness: true, achievements: normalizeSteamAchievements(result.achievements ?? []) };
+		return {
+			ok: true,
+			freshness: true,
+			achievements: normalizeSteamAchievements(result.achievements ?? []),
+			provenance: { source: 'network', fetchedAt: options.now ?? new Date().toISOString() },
+		};
 	} catch (error) {
 		return { ok: false, freshness: false, achievements: options.previousAchievements ?? cached?.achievements, error: error instanceof Error ? error.message : 'Steam achievements request failed.' };
 	}

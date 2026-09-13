@@ -46,7 +46,7 @@ describe('check-mobile-bundle', () => {
 	});
 
 	test('allows the Obsidian external', async () => {
-		const result = await runScan('require("obsidian"); "game-sync-vault-runtime" "template-context" "filename" "property-mapping" "achievement-renderer" "managed-block" "gateway" "note-index" "writer";');
+		const result = await runScan('require("obsidian"); "game-sync-vault-runtime" "template-context" "filename" "property-mapping" "achievement-renderer" "managed-block" "gateway" "note-index" "writer" "cache" "executor" "planner" "sync-service" "history";');
 
 		expect(result.code).toBe(0);
 		expect(result.output).toContain('Mobile bundle verified');

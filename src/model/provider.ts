@@ -54,6 +54,13 @@ export interface ProviderSnapshotError {
 	message: string;
 }
 
+export type ProviderAchievementSource = 'cache' | 'network';
+
+export interface ProviderAchievementProvenance {
+	source: ProviderAchievementSource;
+	fetchedAt: string;
+}
+
 export interface ProviderSnapshot {
 	provider: GameProvider;
 	status: ProviderSnapshotStatus;
@@ -61,6 +68,7 @@ export interface ProviderSnapshot {
 	fetchedAt: string;
 	pagination: ProviderPaginationState;
 	paginationComplete: boolean;
+	achievementProvenance?: Readonly<Record<string, ProviderAchievementProvenance>>;
 	error?: ProviderSnapshotError;
 }
 

@@ -29,6 +29,11 @@ if (bundle !== undefined) {
 		'gateway',
 		'note-index',
 		'writer',
+		'cache',
+		'executor',
+		'planner',
+		'sync-service',
+		'history',
 	];
 	for (const marker of requiredRuntimeMarkers) {
 		if (!bundle.includes(marker)) errors.push(`Missing retained Game Sync runtime marker: ${marker}.`);

@@ -1,4 +1,4 @@
-import type { ProviderGame, ProviderSnapshot } from '../../model/provider';
+import type { ProviderAchievementProvenance, ProviderGame, ProviderSnapshot } from '../../model/provider';
 import type { PlayStationIdentity } from '../../model/identity';
 import { ProviderAuthError } from '../../network/errors';
 import type { GameProviderAdapter, ProviderConnectionStatus, ProviderFetchOptions } from '../provider';
@@ -121,6 +121,7 @@ export function createPlayStationAdapter(options: PlayStationAdapterOptions): Ga
 				const trophyServices = normalization.trophyServices;
 				const games = normalization.games;
 				let trophyFailure = false;
+				const achievementProvenance: Record<string, ProviderAchievementProvenance> = {};
 				for (const game of games) {
 					const old = findPreviousGame(game, previous);
 					if (old?.identity.provider === 'playstation' && game.identity.provider === 'playstation') {
@@ -132,8 +133,16 @@ export function createPlayStationAdapter(options: PlayStationAdapterOptions): Ga
 					}
 					if (old?.achievements !== undefined) game.achievements = old.achievements;
 					const commIds = game.identity.provider === 'playstation' ? game.identity.npCommunicationIds : [];
-					if (commIds.length === 0 || cacheIsFresh(game, old, options, now)) {
+					if (commIds.length === 0) {
+						game.freshness.achievements = false;
+						continue;
+					}
+					if (cacheIsFresh(game, old, options, now)) {
 						game.freshness.achievements = old?.freshness.achievements ?? false;
+						if (commIds.length > 0 && old?.freshness.achievements === true) {
+							const cached = options.achievementCache?.[game.providerGameId];
+							if (cached !== undefined) achievementProvenance[game.providerGameId] = { source: 'cache', fetchedAt: cached.fetchedAt };
+						}
 						continue;
 					}
 					const sets = [];
@@ -155,6 +164,7 @@ export function createPlayStationAdapter(options: PlayStationAdapterOptions): Ga
 					if (merged !== undefined && !gameTrophyFailure) {
 						game.achievements = merged;
 						game.freshness.achievements = true;
+						achievementProvenance[game.providerGameId] = { source: 'network', fetchedAt: now };
 					} else {
 						game.freshness.achievements = false;
 					}
@@ -168,6 +178,7 @@ export function createPlayStationAdapter(options: PlayStationAdapterOptions): Ga
 					fetchedAt: now,
 					pagination: { complete: paginationComplete, pagesFetched: playedResult.pagesFetched + purchasesPages + recentlyPlayedPages + trophyTitlesPages },
 					paginationComplete,
+					...(Object.keys(achievementProvenance).length === 0 ? {} : { achievementProvenance }),
 					error: partial ? { code: trophyFailure ? 'playstation-trophies-partial' : 'playstation-library-partial', message: 'Some PlayStation data could not be refreshed; previous values were retained when available.' } : undefined,
 				};
 			} catch (error) {

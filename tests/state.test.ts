@@ -4,6 +4,7 @@ import { migrateState } from '../src/state/migrations';
 import { createStateStore } from '../src/state/store';
 import { StateMigrationError } from '../src/network/errors';
 import type { GameSyncData } from '../src/state/schema';
+import { createOperation } from '../src/model/operations';
 
 const stateSecrets = [
 	'STEAM_TEST_SECRET_123',
@@ -118,6 +119,89 @@ describe('versioned plugin state', () => {
 					},
 				}),
 			).toThrow(StateMigrationError);
+		}
+	});
+
+	it('validates and sanitizes durable provider snapshots while preserving schema version 1', () => {
+		const state = migrateState({
+			schemaVersion: 1,
+			lastSuccessfulProviderSnapshots: {
+				steam: [{
+					provider: 'steam', providerGameId: '1', title: 'Example', developers: [], publishers: [], genres: [], platforms: [], owned: true,
+					playtimeMinutes: 60, sourceUrl: 'https://example.test/?access_token=secret',
+					freshness: { metadata: true, ownership: true, playtime: true, achievements: false }, identity: { provider: 'steam', appId: 1 },
+				}],
+			},
+			lastAppliedProviderSnapshots: {
+				steam: [{
+					provider: 'steam', providerGameId: '1', title: 'Example', developers: [], publishers: [], genres: [], platforms: [], owned: true,
+					playtimeMinutes: 90, sourceUrl: 'https://example.test/?access_token=secret',
+					freshness: { metadata: true, ownership: true, playtime: true, achievements: false }, identity: { provider: 'steam', appId: 1 },
+				}],
+			},
+		});
+
+		expect(state.schemaVersion).toBe(1);
+		expect(state.lastSuccessfulProviderSnapshots.steam?.[0]?.playtimeMinutes).toBe(60);
+		expect(state.lastSuccessfulProviderSnapshots.steam?.[0]?.sourceUrl).toBeUndefined();
+		expect(state.lastAppliedProviderSnapshots.steam?.[0]?.playtimeMinutes).toBe(90);
+		expect(state.lastAppliedProviderSnapshots.steam?.[0]?.sourceUrl).toBeUndefined();
+		expect(() => migrateState({
+			schemaVersion: 1,
+			lastSuccessfulProviderSnapshots: {
+				steam: [{
+					provider: 'steam', providerGameId: '1', title: 'Example', developers: [], publishers: [], genres: [], platforms: [],
+					freshness: { metadata: true, ownership: true, playtime: true, achievements: false }, identity: { provider: 'steam', appId: 1 }, unexpected: 'reject',
+				}],
+			},
+		})).toThrow(StateMigrationError);
+	});
+
+	it('strictly validates achievement totals, progress, rarity and journal achievement fields', () => {
+		const baseAchievement = { id: 'achievement-1', name: 'Achievement', unlocked: true, hidden: false, rarityPercent: 50 };
+		const baseSet = { earned: 1, total: 1, progress: 100, achievements: [baseAchievement] };
+		const snapshotGame = {
+			provider: 'steam', providerGameId: '1', title: 'Example', developers: [], publishers: [], genres: [], platforms: [], owned: true,
+			freshness: { metadata: true, ownership: true, playtime: true, achievements: true }, identity: { provider: 'steam', appId: 1 }, achievements: baseSet,
+		};
+		const invalidSets = [
+			{ ...baseSet, earned: 1.5 },
+			{ ...baseSet, total: -1 },
+			{ ...baseSet, earned: 2, total: 1 },
+			{ ...baseSet, total: 2 },
+			{ ...baseSet, earned: 0 },
+			{ ...baseSet, progress: 101 },
+			{ ...baseSet, achievements: [{ ...baseAchievement, rarityPercent: 101 }] },
+			{ ...baseSet, achievements: [{ ...baseAchievement, unlocked: 'yes' }] },
+		];
+		for (const achievements of invalidSets) {
+			expect(() => migrateState({ schemaVersion: 1, lastSuccessfulProviderSnapshots: { steam: [{ ...snapshotGame, achievements }] } })).toThrow(StateMigrationError);
+		}
+
+		const operation = createOperation({ canonicalGameId: 'game-sync:one', kind: 'create-note', path: 'Games/Example.md', risk: 'safe', summary: 'Create note.', planRevision: 'revision-1', expectedNoteFingerprint: null });
+		const journalGame = {
+			identity: { canonicalId: 'game-sync:one', steamAppId: 1 }, canonicalId: 'game-sync:one', title: 'Example', developers: [], publishers: [], genres: [], platforms: [],
+			providers: { steam: { providerGameId: '1', title: 'Example', developers: [], publishers: [], genres: [], platforms: [], owned: true, achievements: baseSet, freshness: { metadata: true, ownership: true, playtime: true, achievements: true } } },
+			owned: true, acquisitionType: 'unknown', playtimeMinutes: 0,
+		};
+		for (const achievements of invalidSets) {
+			expect(() => migrateState({ schemaVersion: 1, operationJournal: [{ operation, game: { ...journalGame, providers: { steam: { ...journalGame.providers.steam, achievements } } }, noteApplied: false, providerStateApplied: false, historyApplied: false, cacheApplied: false }] })).toThrow(StateMigrationError);
+		}
+	});
+
+	it('rejects inconsistent operation journal flags and malformed create fingerprints', () => {
+		const base = migrateState(undefined);
+		const operation = createOperation({ canonicalGameId: 'game-sync:one', kind: 'create-note', path: 'Games/Example.md', risk: 'safe', summary: 'Create note.', planRevision: 'revision-1', expectedNoteFingerprint: null });
+		const entry = { operation, noteApplied: false, providerStateApplied: false, historyApplied: false, cacheApplied: false };
+
+		for (const invalid of [
+			{ ...entry, providerStateApplied: true },
+			{ ...entry, noteApplied: true },
+			{ ...entry, noteFingerprintAfter: 'fingerprint' },
+			{ ...entry, operation: { ...operation, expectedNoteFingerprint: 'not-null' } },
+			{ ...entry, unexpected: 'reject' },
+		]) {
+			expect(() => migrateState({ ...base, operationJournal: [invalid] })).toThrow(StateMigrationError);
 		}
 	});
 

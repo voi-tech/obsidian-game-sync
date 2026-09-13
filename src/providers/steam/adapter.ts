@@ -1,5 +1,5 @@
 import { ProviderAuthError, ProviderHttpError } from '../../network/errors';
-import type { ProviderAccount, ProviderGame, ProviderSnapshot } from '../../model/provider';
+import type { ProviderAccount, ProviderAchievementProvenance, ProviderGame, ProviderSnapshot } from '../../model/provider';
 import type { GameProviderAdapter, ProviderConnectionStatus, ProviderFetchOptions } from '../provider';
 import { fetchSteamAchievements, type SteamAchievementCacheEntry } from './achievements';
 import { createSteamAuth } from './auth';
@@ -69,6 +69,7 @@ export function createSteamAdapter(options: SteamAdapterOptions): GameProviderAd
 				const games = normalizeSteamGames(response.games ?? [], details);
 				if (detailFailure) for (const game of games) if (!details.has(game.identity.provider === 'steam' ? game.identity.appId : -1)) game.freshness.metadata = false;
 				let achievementFailure = false;
+				const achievementProvenance: Record<string, ProviderAchievementProvenance> = {};
 				const previous = new Map((options.previousGames ?? []).map((game) => [game.providerGameId, game]));
 				const cache = options.achievementCache ?? {};
 				for (const game of games) {
@@ -83,6 +84,7 @@ export function createSteamAdapter(options: SteamAdapterOptions): GameProviderAd
 					const result = await fetchSteamAchievements(api, steamId64, game, cached, { now, ttlMs: options.achievementCacheTtlMs, force: options.force });
 					if (result.achievements !== undefined) game.achievements = result.achievements;
 					game.freshness.achievements = result.freshness;
+					if (result.provenance !== undefined && result.freshness) achievementProvenance[game.providerGameId] = result.provenance;
 					if (!result.ok) {
 						achievementFailure = true;
 						const old = previous.get(game.providerGameId);
@@ -96,6 +98,7 @@ export function createSteamAdapter(options: SteamAdapterOptions): GameProviderAd
 					fetchedAt: now,
 					pagination: { complete: true, pagesFetched: 1 },
 					paginationComplete: true,
+					...(Object.keys(achievementProvenance).length === 0 ? {} : { achievementProvenance }),
 					error: achievementFailure || detailFailure ? { code: achievementFailure ? 'steam-achievements-partial' : 'steam-app-details-partial', message: 'Some Steam data could not be refreshed; unknown fields were retained without guessing.' } : undefined,
 				};
 			} catch (error) {

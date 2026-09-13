@@ -1,6 +1,9 @@
 import { StateMigrationError } from '../network/errors';
 import type { GameIdentity, IdentityMapping } from '../model/identity';
-import type { GameProvider, ProviderSnapshotStatus } from '../model/provider';
+import type { GameProvider, ProviderGame, ProviderSnapshotStatus } from '../model/provider';
+import { createOperation, type Operation, type OperationRisk } from '../model/operations';
+import type { ProviderAchievement, ProviderAchievementSet } from '../model/achievement';
+import type { NormalizedGame, NormalizedProviderGame } from '../model/game';
 import { DEFAULT_SETTINGS } from './defaults';
 import type {
 	ActivityEntry,
@@ -78,6 +81,11 @@ function optionalBoolean(value: unknown, fallback: boolean, label: string): bool
 	if (typeof value !== 'boolean') {
 		throw new StateMigrationError(`Invalid ${label}.`);
 	}
+	return value;
+}
+
+function requiredBoolean(value: unknown, label: string): boolean {
+	if (typeof value !== 'boolean') throw new StateMigrationError(`Invalid ${label}.`);
 	return value;
 }
 
@@ -321,6 +329,271 @@ function readLastSuccessfulProviderStates(raw: unknown): GameSyncData['lastSucce
 	return result;
 }
 
+function readStringArray(value: unknown, label: string): string[] {
+	return readStringList(value, label);
+}
+
+function readAchievements(raw: unknown, label: string): ProviderAchievementSet | undefined {
+	if (raw === undefined) return undefined;
+	if (!isRecord(raw)) throw new StateMigrationError(`Invalid ${label}.`);
+	rejectUnknownFields(raw, ['earned', 'total', 'progress', 'achievements'], label);
+	if (typeof raw.earned !== 'number' || !Number.isInteger(raw.earned) || raw.earned < 0
+		|| typeof raw.total !== 'number' || !Number.isInteger(raw.total) || raw.total < 0 || raw.earned > raw.total
+		|| typeof raw.progress !== 'number' || !Number.isFinite(raw.progress) || raw.progress < 0 || raw.progress > 100) {
+		throw new StateMigrationError(`Invalid ${label} values.`);
+	}
+	if (!Array.isArray(raw.achievements)) throw new StateMigrationError(`Invalid ${label} list.`);
+	const achievements = raw.achievements.map((value) => {
+		if (!isRecord(value)) throw new StateMigrationError(`Invalid ${label} entry.`);
+		rejectUnknownFields(value, ['id', 'name', 'description', 'unlocked', 'unlockedAt', 'hidden', 'rarityPercent', 'trophyType', 'iconUrl'], `${label} entry`);
+		if (typeof value.unlocked !== 'boolean' || typeof value.hidden !== 'boolean') {
+			throw new StateMigrationError(`Invalid ${label} entry values.`);
+		}
+		const trophyType = value.trophyType;
+		if (trophyType !== undefined && trophyType !== 'bronze' && trophyType !== 'silver' && trophyType !== 'gold' && trophyType !== 'platinum') {
+			throw new StateMigrationError(`Invalid ${label} trophy type.`);
+		}
+		if (value.rarityPercent !== undefined && (typeof value.rarityPercent !== 'number' || !Number.isFinite(value.rarityPercent) || value.rarityPercent < 0 || value.rarityPercent > 100)) throw new StateMigrationError(`Invalid ${label} rarity.`);
+		return {
+			id: requiredString(value.id, `${label} id`),
+			name: optionalString(value.name, `${label} name`),
+			description: optionalString(value.description, `${label} description`),
+			unlocked: value.unlocked,
+			unlockedAt: optionalString(value.unlockedAt, `${label} unlockedAt`),
+			hidden: value.hidden,
+			rarityPercent: value.rarityPercent,
+			trophyType,
+			iconUrl: optionalString(value.iconUrl, `${label} iconUrl`),
+		} satisfies ProviderAchievement;
+	});
+	if (raw.total !== achievements.length || raw.earned !== achievements.filter((achievement) => achievement.unlocked).length) {
+		throw new StateMigrationError(`Invalid ${label} totals.`);
+	}
+	return { earned: raw.earned, total: raw.total, progress: raw.progress, achievements };
+}
+
+function readProviderGame(value: unknown, provider: GameProvider): ProviderGame {
+	if (!isRecord(value)) throw new StateMigrationError(`Invalid ${provider} provider snapshot game.`);
+	rejectUnknownFields(value, [
+		'provider', 'providerGameId', 'title', 'originalTitle', 'releaseDate', 'description', 'cover', 'developers', 'publishers', 'genres', 'platforms',
+		'owned', 'acquisitionType', 'playtimeMinutes', 'lastPlayed', 'achievements', 'sourceUrl', 'freshness', 'identity',
+	], `${provider} provider snapshot game`);
+	if (value.provider !== provider || typeof value.title !== 'string') throw new StateMigrationError(`Invalid ${provider} provider snapshot game identity.`);
+	const arrays = ['developers', 'publishers', 'genres', 'platforms'] as const;
+	for (const key of arrays) if (!Array.isArray(value[key]) || !value[key].every((item) => typeof item === 'string')) throw new StateMigrationError(`Invalid ${provider} provider snapshot ${key}.`);
+	if (value.owned !== undefined && typeof value.owned !== 'boolean') throw new StateMigrationError(`Invalid ${provider} provider snapshot ownership.`);
+	if (value.playtimeMinutes !== undefined && (typeof value.playtimeMinutes !== 'number' || !Number.isFinite(value.playtimeMinutes) || value.playtimeMinutes < 0)) throw new StateMigrationError(`Invalid ${provider} provider snapshot playtime.`);
+	if (value.acquisitionType !== undefined && value.acquisitionType !== 'purchased' && value.acquisitionType !== 'subscription' && value.acquisitionType !== 'free' && value.acquisitionType !== 'key' && value.acquisitionType !== 'gift' && value.acquisitionType !== 'unknown') throw new StateMigrationError(`Invalid ${provider} provider snapshot acquisition type.`);
+	if (!isRecord(value.freshness)) throw new StateMigrationError(`Invalid ${provider} provider snapshot freshness.`);
+	const freshness = value.freshness;
+	rejectUnknownFields(freshness, ['metadata', 'ownership', 'playtime', 'achievements'], `${provider} provider snapshot freshness`);
+	const freshnessValue = {
+		metadata: requiredBoolean(freshness.metadata, `${provider} provider snapshot metadata freshness`),
+		ownership: requiredBoolean(freshness.ownership, `${provider} provider snapshot ownership freshness`),
+		playtime: requiredBoolean(freshness.playtime, `${provider} provider snapshot playtime freshness`),
+		achievements: requiredBoolean(freshness.achievements, `${provider} provider snapshot achievement freshness`),
+	};
+	if (!isRecord(value.identity) || value.identity.provider !== provider) throw new StateMigrationError(`Invalid ${provider} provider snapshot identity.`);
+	const identityValue = value.identity;
+	let identity: ProviderGame['identity'];
+	if (provider === 'steam') {
+		if (Object.keys(identityValue).some((key) => !['provider', 'appId'].includes(key)) || typeof identityValue.appId !== 'number' || !Number.isInteger(identityValue.appId) || identityValue.appId < 1) throw new StateMigrationError('Invalid Steam provider snapshot identity.');
+		identity = { provider: 'steam', appId: identityValue.appId };
+	} else {
+		if (Object.keys(identityValue).some((key) => !['provider', 'conceptId', 'titleIds', 'npCommunicationIds'].includes(key))) throw new StateMigrationError('Invalid PlayStation provider snapshot identity.');
+		const titleIds = identityValue.titleIds === undefined ? [] : readStringArray(identityValue.titleIds, 'PlayStation provider snapshot title IDs');
+		const npCommunicationIds = identityValue.npCommunicationIds === undefined ? [] : readStringArray(identityValue.npCommunicationIds, 'PlayStation provider snapshot communication IDs');
+		const conceptId = optionalString(identityValue.conceptId, 'PlayStation provider snapshot concept ID');
+		if (conceptId === undefined && titleIds.length === 0 && npCommunicationIds.length === 0) throw new StateMigrationError('PlayStation provider snapshot identity requires a stable identifier.');
+		identity = conceptId !== undefined
+			? { provider: 'playstation', conceptId, titleIds, npCommunicationIds }
+			: titleIds.length > 0
+				? { provider: 'playstation', titleIds: titleIds as [string, ...string[]], npCommunicationIds }
+				: { provider: 'playstation', titleIds, npCommunicationIds: npCommunicationIds as [string, ...string[]] };
+	}
+	const developers = readStringArray(value.developers, `${provider} provider snapshot developers`);
+	const publishers = readStringArray(value.publishers, `${provider} provider snapshot publishers`);
+	const genres = readStringArray(value.genres, `${provider} provider snapshot genres`);
+	const platforms = readStringArray(value.platforms, `${provider} provider snapshot platforms`);
+	return {
+		provider,
+		providerGameId: requiredString(value.providerGameId, `${provider} provider snapshot game ID`),
+		title: value.title,
+		originalTitle: optionalString(value.originalTitle, `${provider} provider snapshot original title`),
+		releaseDate: optionalString(value.releaseDate, `${provider} provider snapshot release date`),
+		description: optionalString(value.description, `${provider} provider snapshot description`),
+		cover: optionalString(value.cover, `${provider} provider snapshot cover`),
+		developers,
+		publishers,
+		genres,
+		platforms,
+		owned: value.owned,
+		acquisitionType: value.acquisitionType,
+		playtimeMinutes: value.playtimeMinutes,
+		lastPlayed: optionalString(value.lastPlayed, `${provider} provider snapshot last played`),
+		achievements: readAchievements(value.achievements, `${provider} provider snapshot achievements`),
+		freshness: freshnessValue,
+		identity,
+	};
+}
+
+function readNormalizedProviderGame(value: unknown, provider: GameProvider): NormalizedProviderGame {
+	if (!isRecord(value)) throw new StateMigrationError(`Invalid ${provider} journal game.`);
+	rejectUnknownFields(value, [
+		'providerGameId', 'title', 'originalTitle', 'releaseDate', 'description', 'cover', 'developers', 'publishers', 'genres', 'platforms',
+		'owned', 'acquisitionType', 'playtimeMinutes', 'lastPlayed', 'achievements', 'sourceUrl', 'freshness',
+	], `${provider} journal game`);
+	if (typeof value.title !== 'string') throw new StateMigrationError(`Invalid ${provider} journal game title.`);
+	const arrays = ['developers', 'publishers', 'genres', 'platforms'] as const;
+	for (const key of arrays) if (!Array.isArray(value[key]) || !value[key].every((item) => typeof item === 'string')) throw new StateMigrationError(`Invalid ${provider} journal game ${key}.`);
+	if (value.owned !== undefined && typeof value.owned !== 'boolean') throw new StateMigrationError(`Invalid ${provider} journal game ownership.`);
+	if (value.playtimeMinutes !== undefined && (typeof value.playtimeMinutes !== 'number' || !Number.isFinite(value.playtimeMinutes) || value.playtimeMinutes < 0)) throw new StateMigrationError(`Invalid ${provider} journal game playtime.`);
+	if (value.acquisitionType !== undefined && value.acquisitionType !== 'purchased' && value.acquisitionType !== 'subscription' && value.acquisitionType !== 'free' && value.acquisitionType !== 'key' && value.acquisitionType !== 'gift' && value.acquisitionType !== 'unknown') throw new StateMigrationError(`Invalid ${provider} journal game acquisition type.`);
+	if (!isRecord(value.freshness)) throw new StateMigrationError(`Invalid ${provider} journal game freshness.`);
+	rejectUnknownFields(value.freshness, ['metadata', 'ownership', 'playtime', 'achievements'], `${provider} journal game freshness`);
+	const freshness = {
+		metadata: requiredBoolean(value.freshness.metadata, `${provider} journal metadata freshness`),
+		ownership: requiredBoolean(value.freshness.ownership, `${provider} journal ownership freshness`),
+		playtime: requiredBoolean(value.freshness.playtime, `${provider} journal playtime freshness`),
+		achievements: requiredBoolean(value.freshness.achievements, `${provider} journal achievement freshness`),
+	};
+	return {
+		providerGameId: requiredString(value.providerGameId, `${provider} journal game ID`),
+		title: value.title,
+		originalTitle: optionalString(value.originalTitle, `${provider} journal original title`),
+		releaseDate: optionalString(value.releaseDate, `${provider} journal release date`),
+		description: optionalString(value.description, `${provider} journal description`),
+		cover: optionalString(value.cover, `${provider} journal cover`),
+		developers: readStringArray(value.developers, `${provider} journal developers`),
+		publishers: readStringArray(value.publishers, `${provider} journal publishers`),
+		genres: readStringArray(value.genres, `${provider} journal genres`),
+		platforms: readStringArray(value.platforms, `${provider} journal platforms`),
+		owned: value.owned,
+		acquisitionType: value.acquisitionType,
+		playtimeMinutes: value.playtimeMinutes,
+		lastPlayed: optionalString(value.lastPlayed, `${provider} journal last played`),
+		achievements: readAchievements(value.achievements, `${provider} journal achievements`),
+		freshness,
+	};
+}
+
+function readNormalizedGame(value: unknown): NormalizedGame {
+	if (!isRecord(value)) throw new StateMigrationError('Invalid operation journal game payload.');
+	rejectUnknownFields(value, [
+		'identity', 'canonicalId', 'title', 'originalTitle', 'releaseDate', 'description', 'cover', 'developers', 'publishers', 'genres', 'platforms',
+		'providers', 'owned', 'acquisitionType', 'playtimeMinutes', 'lastPlayed',
+	], 'operation journal game');
+	if (!isRecord(value.providers)) throw new StateMigrationError('Invalid operation journal game providers.');
+	rejectUnknownFields(value.providers, ['steam', 'playstation'], 'operation journal provider');
+	const providers: NormalizedGame['providers'] = {};
+	for (const provider of ['steam', 'playstation'] as const) {
+		if (value.providers[provider] !== undefined) providers[provider] = readNormalizedProviderGame(value.providers[provider], provider);
+	}
+	const acquisitionType = value.acquisitionType;
+	if (acquisitionType !== 'purchased' && acquisitionType !== 'subscription' && acquisitionType !== 'free' && acquisitionType !== 'key' && acquisitionType !== 'gift' && acquisitionType !== 'unknown') throw new StateMigrationError('Invalid operation journal game acquisition type.');
+	if (typeof value.owned !== 'boolean' || typeof value.playtimeMinutes !== 'number' || !Number.isFinite(value.playtimeMinutes) || value.playtimeMinutes < 0) throw new StateMigrationError('Invalid operation journal game totals.');
+	return {
+		identity: readGameIdentity(value.identity),
+		canonicalId: requiredString(value.canonicalId, 'operation journal game canonicalId'),
+		title: requiredString(value.title, 'operation journal game title'),
+		originalTitle: optionalString(value.originalTitle, 'operation journal game original title'),
+		releaseDate: optionalString(value.releaseDate, 'operation journal game release date'),
+		description: optionalString(value.description, 'operation journal game description'),
+		cover: optionalString(value.cover, 'operation journal game cover'),
+		developers: readStringArray(value.developers, 'operation journal game developers'),
+		publishers: readStringArray(value.publishers, 'operation journal game publishers'),
+		genres: readStringArray(value.genres, 'operation journal game genres'),
+		platforms: readStringArray(value.platforms, 'operation journal game platforms'),
+		providers,
+		owned: value.owned,
+		acquisitionType,
+		playtimeMinutes: value.playtimeMinutes,
+		lastPlayed: optionalString(value.lastPlayed, 'operation journal game last played'),
+	};
+}
+
+function readProviderSnapshots(raw: unknown, label: string): Partial<Record<GameProvider, ProviderGame[]>> {
+	if (raw === undefined) return {};
+	if (!isRecord(raw)) throw new StateMigrationError(`Invalid ${label} state.`);
+	const result: Partial<Record<GameProvider, ProviderGame[]>> = {};
+	for (const provider of Object.keys(raw)) {
+		const providerName = providerValue(provider, `${label} provider`);
+		const games = raw[provider];
+		if (!Array.isArray(games)) throw new StateMigrationError(`Invalid ${label} list for ${provider}.`);
+		result[providerName] = games.map((game) => readProviderGame(game, providerName));
+	}
+	return result;
+}
+
+function readLastSuccessfulProviderSnapshots(raw: unknown): GameSyncData['lastSuccessfulProviderSnapshots'] {
+	return readProviderSnapshots(raw, 'provider snapshot');
+}
+
+function readLastAppliedProviderSnapshots(raw: unknown): GameSyncData['lastAppliedProviderSnapshots'] {
+	return readProviderSnapshots(raw, 'applied provider snapshot');
+}
+
+function readOperation(value: unknown): Operation {
+	if (!isRecord(value)) throw new StateMigrationError('Invalid operation journal operation.');
+	rejectUnknownFields(value, ['id', 'canonicalGameId', 'kind', 'risk', 'path', 'summary', 'planRevision', 'expectedNoteFingerprint'], 'operation journal operation');
+	const kind = value.kind;
+	const risk = value.risk;
+	if (kind !== 'create-note' && kind !== 'adopt-note' && kind !== 'update-properties' && kind !== 'add-achievement-block' && kind !== 'update-achievement-block' && kind !== 'link-providers' && kind !== 'unlink-providers' && kind !== 'create-base') throw new StateMigrationError('Invalid operation journal kind.');
+	if (risk !== 'safe' && risk !== 'review') throw new StateMigrationError('Invalid operation journal risk.');
+	const common: {
+		canonicalGameId: string;
+		risk: OperationRisk;
+		summary: string;
+		planRevision: string;
+	} = {
+		canonicalGameId: requiredString(value.canonicalGameId, 'operation journal canonicalGameId'),
+		risk,
+		summary: requiredString(value.summary, 'operation journal summary'),
+		planRevision: requiredString(value.planRevision, 'operation journal planRevision'),
+	};
+	let operation: Operation;
+	if (kind === 'create-note') {
+		if (value.expectedNoteFingerprint !== null) throw new StateMigrationError('Create-note journal operation requires a null fingerprint.');
+		operation = createOperation({ ...common, kind, path: requiredString(value.path, 'operation journal path'), expectedNoteFingerprint: null });
+	} else if (kind === 'create-base') {
+		if (value.expectedNoteFingerprint !== null) throw new StateMigrationError('Create-base journal operation requires a null fingerprint.');
+		operation = createOperation({ ...common, kind, expectedNoteFingerprint: null });
+	} else {
+		operation = createOperation({
+			...common,
+			kind,
+			path: requiredString(value.path, 'operation journal path'),
+			expectedNoteFingerprint: requiredString(value.expectedNoteFingerprint, 'operation journal fingerprint'),
+		});
+	}
+	if (value.id !== operation.id) throw new StateMigrationError('Operation journal ID does not match its operation.');
+	return operation;
+}
+
+function readOperationJournal(raw: unknown): GameSyncData['operationJournal'] {
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw)) throw new StateMigrationError('Invalid operation journal state.');
+	return raw.map((value) => {
+			if (!isRecord(value)) throw new StateMigrationError('Invalid operation journal entry.');
+			rejectUnknownFields(value, ['operation', 'game', 'noteApplied', 'noteFingerprintAfter', 'providerStateApplied', 'historyApplied', 'cacheApplied'], 'operation journal entry');
+			if (typeof value.noteApplied !== 'boolean' || typeof value.providerStateApplied !== 'boolean' || typeof value.historyApplied !== 'boolean' || typeof value.cacheApplied !== 'boolean') throw new StateMigrationError('Invalid operation journal flags.');
+			const noteFingerprintAfter = typeof value.noteFingerprintAfter === 'string' ? value.noteFingerprintAfter : undefined;
+			if (value.noteFingerprintAfter !== undefined && noteFingerprintAfter === undefined) throw new StateMigrationError('Invalid operation journal note fingerprint.');
+			if (!value.noteApplied && (value.providerStateApplied || value.historyApplied || value.cacheApplied)) throw new StateMigrationError('Operation journal hooks require an applied note.');
+			if (value.noteApplied && (noteFingerprintAfter === undefined || noteFingerprintAfter.trim().length === 0)) throw new StateMigrationError('Applied operation journal note requires a fingerprint.');
+			if (!value.noteApplied && noteFingerprintAfter !== undefined) throw new StateMigrationError('Pending operation journal note cannot have a fingerprint.');
+			return {
+				operation: readOperation(value.operation),
+				game: value.game === undefined ? undefined : readNormalizedGame(value.game),
+				noteApplied: value.noteApplied,
+				noteFingerprintAfter,
+			providerStateApplied: value.providerStateApplied,
+			historyApplied: value.historyApplied,
+			cacheApplied: value.cacheApplied,
+		};
+	});
+}
+
 function readGameIdentity(value: unknown): GameIdentity {
 	if (!isRecord(value)) {
 		throw new StateMigrationError('Invalid identity index entry.');
@@ -397,6 +670,9 @@ function migrateVersionOne(raw: unknown): GameSyncData {
 			'presence',
 			'providerCursors',
 			'lastSuccessfulProviderStates',
+			'lastSuccessfulProviderSnapshots',
+			'lastAppliedProviderSnapshots',
+			'operationJournal',
 			'recentActivity',
 			'identityIndex',
 		],
@@ -415,6 +691,9 @@ function migrateVersionOne(raw: unknown): GameSyncData {
 		presence: readPresence(raw.presence),
 		providerCursors: readProviderCursors(raw.providerCursors),
 		lastSuccessfulProviderStates: readLastSuccessfulProviderStates(raw.lastSuccessfulProviderStates),
+		lastSuccessfulProviderSnapshots: readLastSuccessfulProviderSnapshots(raw.lastSuccessfulProviderSnapshots),
+		lastAppliedProviderSnapshots: readLastAppliedProviderSnapshots(raw.lastAppliedProviderSnapshots),
+		operationJournal: readOperationJournal(raw.operationJournal),
 		recentActivity: readArray<ActivityEntry>(raw.recentActivity, [], readActivity, 'recent activity').slice(-MAX_RECENT_ACTIVITY),
 		identityIndex: readArray<GameIdentity>(raw.identityIndex, [], readGameIdentity, 'identity index'),
 	};

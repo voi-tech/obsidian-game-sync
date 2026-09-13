@@ -1,13 +1,15 @@
 const SECRET_FIELD_PATTERN = /(?:access[_-]?token|refresh[_-]?token|api[_-]?key|authorization|npsso|password|secret)/i;
 const BEARER_PATTERN = /Bearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const NPSSO_PATTERN = /(?:npsso\s*[:=]\s*)[^\s,;)}]+/gi;
+const INLINE_SECRET_PATTERN = /((?:(?:access[_-]?token|refresh[_-]?token|api[_-]?key|authorization|npsso|password|secret|token)\s*[:=]\s*|[?&]key=))(?:"[^"]*"|'[^']*'|[^\s,;)}&#"']+)/gi;
 const STANDALONE_NPSSO_PATTERN = /(^|[^A-Za-z0-9_-])([A-Za-z0-9_-]{64})(?=$|[^A-Za-z0-9_-])/g;
 const REDACTED = '[REDACTED]';
 
 function redactString(value: string, secrets: readonly string[], includeStandaloneNpsso: boolean): string {
 	let sanitized = value
 		.replace(BEARER_PATTERN, `Bearer ${REDACTED}`)
-		.replace(NPSSO_PATTERN, `npsso=${REDACTED}`);
+		.replace(NPSSO_PATTERN, `npsso=${REDACTED}`)
+		.replace(INLINE_SECRET_PATTERN, `$1${REDACTED}`);
 	if (includeStandaloneNpsso) {
 		sanitized = sanitized.replace(STANDALONE_NPSSO_PATTERN, `$1${REDACTED}`);
 	}

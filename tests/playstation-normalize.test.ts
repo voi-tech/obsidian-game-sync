@@ -132,5 +132,57 @@ describe('PlayStation normalization', () => {
 
 		expect(trophyCalls).toBe(1);
 		expect(snapshot.games[0]?.freshness.achievements).toBe(true);
+		expect(snapshot.achievementProvenance?.['12345']).toEqual({ source: 'network', fetchedAt: '2026-09-12T12:00:00.000Z' });
+	});
+
+	it('marks a fresh PlayStation cache reuse with the original fetchedAt', async () => {
+		let trophyCalls = 0;
+		const api: PlayStationApi = {
+			getUserPlayedGames: async () => ({ complete: true, pagesFetched: 1, titles: [{ titleId: 'CUSA00001_00', name: 'Shared Game', category: 'ps4_game', playDuration: 'PT2H', concept: { id: '12345', titleIds: ['CUSA00001_00'], name: 'Shared Game' } }] }),
+			getPurchasedGames: async () => ({ complete: true, pagesFetched: 1, games: [] }),
+			getRecentlyPlayedGames: async () => ({ complete: true, pagesFetched: 1, games: [] }),
+			getUserTitles: async () => ({ complete: true, pagesFetched: 1, titles: [{ npServiceName: 'trophy', npCommunicationId: 'NPWR00001_00', trophyTitleName: 'Shared Game' }] }),
+			getTitleTrophies: async () => { trophyCalls += 1; return { complete: true, pagesFetched: 1, npServiceName: 'trophy', trophies: [{ trophyId: 1, trophyType: 'bronze', trophyName: 'One' }] }; },
+			getUserTrophiesEarnedForTitle: async () => ({ complete: true, pagesFetched: 1, trophies: [{ trophyId: 1, trophyType: 'bronze', earned: true }] }),
+		};
+		const previousAchievements = { earned: 1, total: 1, progress: 100, achievements: [{ id: 'old', unlocked: true, hidden: false }] };
+		const previous: ProviderGame = {
+			provider: 'playstation', providerGameId: '12345', title: 'Shared Game', developers: [], publishers: [], genres: [], platforms: ['ps4'], playtimeMinutes: 15,
+			achievements: previousAchievements, freshness: { metadata: true, ownership: true, playtime: true, achievements: true },
+			identity: { provider: 'playstation', conceptId: '12345', titleIds: ['CUSA00001_00'], npCommunicationIds: ['NPWR00001_00'] },
+		};
+		const secretStore: SecretStore = { get: () => null, set: () => undefined, delete: () => undefined };
+		const snapshot = await createPlayStationAdapter({ secretStore, api }).fetchLibrary({
+			now: '2026-09-12T12:00:00.000Z',
+			previousGames: [previous],
+			achievementCache: { '12345': { fetchedAt: '2026-09-01T00:00:00.000Z', playtimeMinutes: 15, achievements: previousAchievements } },
+			achievementCacheTtlMs: 1_000_000_000,
+		});
+
+		expect(trophyCalls).toBe(0);
+		expect(snapshot.achievementProvenance?.['12345']).toEqual({ source: 'cache', fetchedAt: '2026-09-01T00:00:00.000Z' });
+	});
+
+	it('marks achievements stale when a PlayStation game has no communication IDs', async () => {
+		const api: PlayStationApi = {
+			getUserPlayedGames: async () => ({ complete: true, pagesFetched: 1, titles: [{ titleId: 'CUSA00001_00', name: 'Shared Game', category: 'ps4_game', playDuration: 'PT2H', concept: { id: '12345', titleIds: ['CUSA00001_00'], name: 'Shared Game' } }] }),
+			getPurchasedGames: async () => ({ complete: true, pagesFetched: 1, games: [] }),
+			getRecentlyPlayedGames: async () => ({ complete: true, pagesFetched: 1, games: [] }),
+			getUserTitles: async () => ({ complete: true, pagesFetched: 1, titles: [] }),
+			getTitleTrophies: async () => { throw new Error('must not fetch trophies'); },
+			getUserTrophiesEarnedForTitle: async () => { throw new Error('must not fetch earned trophies'); },
+		};
+		const previousAchievements = { earned: 1, total: 1, progress: 100, achievements: [{ id: 'old', unlocked: true, hidden: false }] };
+		const previous: ProviderGame = {
+			provider: 'playstation', providerGameId: '12345', title: 'Shared Game', developers: [], publishers: [], genres: [], platforms: ['ps4'], playtimeMinutes: 15,
+			achievements: previousAchievements, freshness: { metadata: true, ownership: true, playtime: true, achievements: true },
+			identity: { provider: 'playstation', conceptId: '12345', titleIds: ['CUSA00001_00'], npCommunicationIds: [] },
+		};
+		const secretStore: SecretStore = { get: () => null, set: () => undefined, delete: () => undefined };
+		const snapshot = await createPlayStationAdapter({ secretStore, api }).fetchLibrary({ now: '2026-09-12T12:00:00.000Z', previousGames: [previous] });
+
+		expect(snapshot.games[0]?.achievements).toEqual(previousAchievements);
+		expect(snapshot.games[0]?.freshness.achievements).toBe(false);
+		expect(snapshot.achievementProvenance).toBeUndefined();
 	});
 });

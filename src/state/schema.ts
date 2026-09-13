@@ -1,6 +1,8 @@
 import type { GameIdentity, IdentityMapping } from '../model/identity';
-import type { GameProvider, ProviderSnapshotStatus } from '../model/provider';
+import type { GameProvider, ProviderGame, ProviderSnapshotStatus } from '../model/provider';
+import type { Operation } from '../model/operations';
 import type { GameSyncSettings } from '../model/settings';
+import type { NormalizedGame } from '../model/game';
 
 export interface NegativeIdentityMapping {
 	leftCanonicalId: string;
@@ -39,6 +41,16 @@ export interface ActivityEntry {
 	data?: Record<string, unknown>;
 }
 
+export interface OperationJournalEntry {
+	operation: Operation;
+	game?: NormalizedGame;
+	noteApplied: boolean;
+	noteFingerprintAfter?: string;
+	providerStateApplied: boolean;
+	historyApplied: boolean;
+	cacheApplied: boolean;
+}
+
 export interface GameSyncData {
 	schemaVersion: 1;
 	settings: GameSyncSettings;
@@ -49,6 +61,9 @@ export interface GameSyncData {
 	presence: ProviderPresenceState[];
 	providerCursors: Partial<Record<GameProvider, ProviderCursorState>>;
 	lastSuccessfulProviderStates: Partial<Record<GameProvider, LastSuccessfulProviderState>>;
+	lastSuccessfulProviderSnapshots: Partial<Record<GameProvider, ProviderGame[]>>;
+	lastAppliedProviderSnapshots: Partial<Record<GameProvider, ProviderGame[]>>;
+	operationJournal: OperationJournalEntry[];
 	recentActivity: ActivityEntry[];
 	identityIndex: GameIdentity[];
 }
