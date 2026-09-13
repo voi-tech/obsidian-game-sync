@@ -8,7 +8,7 @@ export interface IgnoredGameEntry {
 	kind: IgnoredGameKind;
 	id: string;
 	label: string;
-	provider: GameProvider;
+	provider?: GameProvider;
 }
 
 export interface IgnoredGamesAdapter {
@@ -104,7 +104,8 @@ export class IgnoredGamesModal extends Modal {
 			const row = this.element('section', parent);
 			row.dataset.ignoredGameRow = entry.id;
 			row.dataset.ignoredGameKind = entry.kind;
-			const setting = new Setting(row).setName(entry.label).setDesc(`${entry.provider}: ${entry.id}`);
+			const description = entry.provider === undefined ? entry.kind : `${entry.provider}: ${entry.id}`;
+			const setting = new Setting(row).setName(entry.label).setDesc(description);
 			setting.addToggle((toggle) => {
 				toggle.toggleEl.dataset.ignoredGameCheckbox = entry.id;
 				toggle.setValue(this.selected.has(entry.id));
@@ -128,7 +129,7 @@ export class IgnoredGamesModal extends Modal {
 	private updateVisibility(): void {
 		const query = this.search.trim().toLocaleLowerCase();
 		for (const { entry, element } of this.rows) {
-			const values = [entry.id, entry.label, entry.provider, entry.kind];
+			const values = [entry.id, entry.label, entry.provider, entry.kind].filter((value): value is string => value !== undefined);
 			element.hidden = query.length > 0 && !values.some((value) => value.toLocaleLowerCase().includes(query));
 		}
 	}

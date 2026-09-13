@@ -16,6 +16,7 @@ import { BackgroundSyncScheduler, type BackgroundSyncService } from './sync/sche
 import type { PreparedSync, SyncApplyResult, SyncService } from './sync/service';
 import { PlayStationConnectModal } from './ui/playstation-connect-modal';
 import { PreviewModal } from './ui/preview-modal';
+import { IgnoredGamesModal } from './ui/ignored-games-modal';
 import { LibrarySummaryModal } from './ui/library-summary-modal';
 import { SetupModal } from './ui/setup/setup-modal';
 import { SteamConnectModal } from './ui/steam-connect-modal';
@@ -170,8 +171,29 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 				onSyncNow: () => Promise.resolve(onSyncNow()).then(() => undefined),
 			}).open();
 		},
-		openIgnoredGames: () => {
-			new Notice('Game sync: ignored games are unavailable.');
+		openIgnoredGames: async () => {
+			const state = await stateStore.load();
+			const entries = [
+				...state.ignoredCanonicalIds.map((id) => ({ kind: 'canonical' as const, id, label: id })),
+				...state.ignoredProviderRefs.flatMap((id) => {
+					const separator = id.indexOf(':');
+					const providerName = id.slice(0, separator);
+					if (separator <= 0 || (providerName !== 'steam' && providerName !== 'playstation')) return [];
+					const provider: GameProvider = providerName === 'steam' ? 'steam' : 'playstation';
+					return [{ kind: 'providerRef' as const, id, label: id, provider }];
+				}),
+			];
+			new IgnoredGamesModal(host.app, {
+				adapter: {
+					entries,
+					restore: async (ids) => {
+						const next = await stateStore.load();
+						next.ignoredCanonicalIds = next.ignoredCanonicalIds.filter((id) => !ids.includes(id));
+						next.ignoredProviderRefs = next.ignoredProviderRefs.filter((id) => !ids.includes(id));
+						await stateStore.save(next);
+					},
+				},
+			}).open();
 		},
 		openSetupWizard: () => {
 			new SetupModal(host.app, {
