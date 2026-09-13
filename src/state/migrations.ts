@@ -4,6 +4,7 @@ import type { GameProvider, ProviderGame, ProviderSnapshotStatus } from '../mode
 import { createOperation, type Operation, type OperationRisk } from '../model/operations';
 import type { ProviderAchievement, ProviderAchievementSet } from '../model/achievement';
 import type { NormalizedGame, NormalizedProviderGame } from '../model/game';
+import { isSupportedBackgroundIntervalMinutes } from '../model/settings';
 import { DEFAULT_SETTINGS } from './defaults';
 import type {
 	ActivityEntry,
@@ -90,13 +91,9 @@ function requiredBoolean(value: unknown, label: string): boolean {
 	return value;
 }
 
-function optionalNumber(value: unknown, fallback: number, label: string): number {
-	if (value === undefined) {
-		return fallback;
-	}
-	if (typeof value !== 'number' || !Number.isFinite(value)) {
-		throw new StateMigrationError(`Invalid ${label}.`);
-	}
+function backgroundIntervalMinutes(value: unknown): number {
+	if (value === undefined) return DEFAULT_SETTINGS.backgroundIntervalMinutes;
+	if (!isSupportedBackgroundIntervalMinutes(value)) throw new StateMigrationError('Invalid backgroundIntervalMinutes.');
 	return value;
 }
 
@@ -163,11 +160,7 @@ function readSettings(raw: unknown): GameSyncData['settings'] {
 							throw new StateMigrationError('Invalid previewMode.');
 					  })(),
 		backgroundSync: optionalBoolean(raw.backgroundSync, DEFAULT_SETTINGS.backgroundSync, 'backgroundSync'),
-		backgroundIntervalMinutes: optionalNumber(
-			raw.backgroundIntervalMinutes,
-			DEFAULT_SETTINGS.backgroundIntervalMinutes,
-			'backgroundIntervalMinutes',
-		),
+		backgroundIntervalMinutes: backgroundIntervalMinutes(raw.backgroundIntervalMinutes),
 		metadataLanguage:
 			raw.metadataLanguage === undefined
 				? DEFAULT_SETTINGS.metadataLanguage

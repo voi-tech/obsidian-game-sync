@@ -10,7 +10,7 @@ import { migrateState } from '../src/state/migrations';
 import { createStateStore } from '../src/state/store';
 import { createCacheStore } from '../src/sync/cache';
 import { VaultConflictError } from '../src/network/errors';
-import { createNormalizedGame } from '../src/model/operations';
+import { createNormalizedGame, createOperation, createSyncPlan } from '../src/model/operations';
 
 function providerGame(id: string, playtimeMinutes = 60, achievements?: ProviderGame['achievements']): ProviderGame {
 	return {
@@ -140,6 +140,108 @@ describe('provider-isolated SyncService', () => {
 		const applied = await service.applySelection(prepared, prepared.plan.operations.map((operation) => operation.id), { explicit: true });
 		expect(applied.operationsApplied).toBe(1);
 		expect((await service.getState()).settings.firstSyncCompleted).toBe(true);
+	});
+
+	it('blocks background apply during the first sync without saving or invoking the executor', async () => {
+		const gateway = new FakeVaultGateway();
+		let rawState: unknown;
+		let saves = 0;
+		const stateStore = createStateStore(async () => rawState, async (value) => { saves += 1; rawState = value; });
+		const steam = adapter(async () => snapshot('complete', [providerGame('1')]));
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const service = new SyncService({ adapters: [steam], planner, writer: new VaultWriter(gateway), stateStore });
+		const prepared = await service.prepareAll();
+
+		const result = await service.applySelection(prepared, prepared.plan.operations.map((operation) => operation.id), { background: true });
+
+		expect(result.operationsApplied).toBe(0);
+		expect(result.pendingOperationIds).toEqual(prepared.plan.operations.map((operation) => operation.id));
+		expect(result.warnings.some((warning) => warning.includes('preview'))).toBe(true);
+		expect(saves).toBe(0);
+		expect(await gateway.exists('Games/Example Game.md')).toBe(false);
+	});
+
+	it('background applies safe operations while queuing review operations and ignoring unknown IDs', async () => {
+		const gateway = new FakeVaultGateway();
+		let next = snapshot('complete', [providerGame('1', 60)]);
+		const steam = adapter(async () => next);
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const service = new SyncService({ adapters: [steam], planner, writer: new VaultWriter(gateway) });
+		const initial = await service.prepareAll();
+		await service.applySelection(initial, initial.plan.operations.map((operation) => operation.id), { explicit: true });
+
+		next = snapshot('complete', [providerGame('1', 90)]);
+		const prepared = await service.prepareAll();
+		const safeOperation = prepared.plan.operations[0];
+		if (safeOperation === undefined || prepared.games[0] === undefined) throw new Error('Expected a safe operation.');
+		const reviewOperation = createOperation({
+			canonicalGameId: prepared.games[0].canonicalId,
+			kind: 'create-note',
+			path: 'Games/Review.md',
+			risk: 'review',
+			summary: 'Review operation.',
+			planRevision: prepared.plan.planRevision,
+			expectedNoteFingerprint: null,
+		});
+		prepared.plan = {
+			...createSyncPlan(prepared.plan.planRevision, [safeOperation, reviewOperation]),
+			statuses: [...prepared.plan.statuses, { canonicalGameId: prepared.games[0].canonicalId, status: 'review', path: 'Games/Review.md' }],
+			games: prepared.games,
+		};
+		prepared.operationsCreated = prepared.plan.operations.length;
+		prepared.reviewRequiredCount = 1;
+
+		const result = await service.applySelection(prepared, [safeOperation.id, reviewOperation.id, 'operation:unknown'], { background: true });
+
+		expect(result.operationsAppliedIds).toEqual([safeOperation.id]);
+		expect(result.pendingOperationIds).toContain(reviewOperation.id);
+		expect(result.deselectedOperationIds).toContain(reviewOperation.id);
+		expect(result.warnings.some((warning) => warning.includes('review'))).toBe(true);
+		expect(result.warnings.some((warning) => warning.includes('unknown'))).toBe(true);
+		expect(await gateway.exists('Games/Review.md')).toBe(false);
+		expect((await service.getState()).lastAppliedProviderSnapshots.steam?.[0]?.playtimeMinutes).toBe(90);
+	});
+
+	it('does not recover a review operation from the journal in background mode', async () => {
+		const gateway = new FakeVaultGateway();
+		const canonicalId = 'game-sync:review';
+		const game = createNormalizedGame([providerGame('1')], canonicalId);
+		const writer = new VaultWriter(gateway);
+		await writer.createNote({ path: 'Games/Example Game.md', game, expectedNoteFingerprint: null });
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const fingerprints = await planner.currentNoteFingerprints();
+		const fingerprint = fingerprints['Games/Example Game.md'];
+		if (fingerprint === undefined || fingerprint === null) throw new Error('Expected a note fingerprint.');
+		const reviewOperation = createOperation({
+			canonicalGameId: canonicalId,
+			kind: 'update-properties',
+			path: 'Games/Example Game.md',
+			risk: 'review',
+			summary: 'Review operation.',
+			planRevision: 'revision:old',
+			expectedNoteFingerprint: fingerprint,
+		});
+		const state = migrateState({
+			settings: { firstSyncCompleted: true },
+			identityMappings: [{ canonicalId, provider: 'steam', providerGameId: '1' }],
+			operationJournal: [{
+				operation: reviewOperation,
+				game,
+				noteApplied: true,
+				noteFingerprintAfter: fingerprint,
+				providerStateApplied: false,
+				historyApplied: false,
+				cacheApplied: false,
+			}],
+		});
+		const service = new SyncService({ adapters: [adapter(async () => snapshot('complete', [providerGame('1')]))], planner, writer, state });
+		const prepared = await service.prepareAll();
+		const result = await service.applySelection(prepared, [], { background: true });
+
+		expect(result.operationsApplied).toBe(0);
+		expect(result.pendingOperationIds).toContain(reviewOperation.id);
+		expect(result.warnings.some((warning) => warning.includes('review'))).toBe(true);
+		expect((await service.getState()).operationJournal[0]?.operation.risk).toBe('review');
 	});
 
 	it('marks an explicit zero-operation first sync complete and preserves it after restart', async () => {

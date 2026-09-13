@@ -5,6 +5,7 @@ import { createStateStore } from '../src/state/store';
 import { StateMigrationError } from '../src/network/errors';
 import type { GameSyncData } from '../src/state/schema';
 import { createOperation } from '../src/model/operations';
+import { isSupportedBackgroundIntervalMinutes, SUPPORTED_BACKGROUND_INTERVAL_MINUTES } from '../src/model/settings';
 
 const stateSecrets = [
 	'STEAM_TEST_SECRET_123',
@@ -21,6 +22,16 @@ describe('versioned plugin state', () => {
 		expect(state.settings).toEqual(DEFAULT_SETTINGS);
 		expect(state.identityMappings).toEqual([]);
 		expect(state.recentActivity).toEqual([]);
+	});
+
+	it('accepts only the supported background intervals and keeps the 360-minute default', () => {
+		expect(SUPPORTED_BACKGROUND_INTERVAL_MINUTES).toEqual([30, 60, 360, 720, 1440]);
+		for (const interval of SUPPORTED_BACKGROUND_INTERVAL_MINUTES) expect(isSupportedBackgroundIntervalMinutes(interval)).toBe(true);
+		expect(isSupportedBackgroundIntervalMinutes(15)).toBe(false);
+		expect(migrateState(undefined).settings.backgroundIntervalMinutes).toBe(360);
+		for (const interval of [15, 90, 180, 2880]) {
+			expect(() => migrateState({ settings: { backgroundIntervalMinutes: interval } })).toThrow(StateMigrationError);
+		}
 	});
 
 	it('ignores unknown settings fields and does not persist secrets', () => {

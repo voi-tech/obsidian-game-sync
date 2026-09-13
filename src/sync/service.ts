@@ -108,6 +108,11 @@ interface ProviderFetchRecord {
 	achievements?: ProviderGame['achievements'];
 }
 
+interface RecoveryOperationsResult {
+	operations: Array<{ operation: Operation; progress: ExecutorProgress }>;
+	rejectedOperationIds: string[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -794,11 +799,15 @@ export class SyncService {
 		await this.saveState();
 	}
 
-	private async recoveryOperations(prepared: PreparedSync, state: GameSyncData): Promise<Array<{ operation: Operation; progress: ExecutorProgress }>> {
+	private async recoveryOperations(prepared: PreparedSync, state: GameSyncData, background = false): Promise<RecoveryOperationsResult> {
 		const plannedIds = new Set(prepared.plan.operations.map((operation) => operation.id));
 		const fingerprints = await this.planner.currentNoteFingerprints();
-		return state.operationJournal
-			.filter((entry) => !plannedIds.has(entry.operation.id) && entry.game !== undefined)
+		const candidates = state.operationJournal.filter((entry) => !plannedIds.has(entry.operation.id) && entry.game !== undefined);
+		const rejectedOperationIds = background
+			? candidates.filter((entry) => entry.operation.risk !== 'safe').map((entry) => entry.operation.id)
+			: [];
+		const operations = candidates
+			.filter((entry) => !background || entry.operation.risk === 'safe')
 			.flatMap((entry) => {
 				const currentGame = prepared.games.find((game) => game.canonicalId === entry.operation.canonicalGameId);
 				const path = entry.operation.path;
@@ -816,6 +825,7 @@ export class SyncService {
 					},
 				}];
 			});
+		return { operations, rejectedOperationIds };
 	}
 
 	private async cacheHook(game: NormalizedGame, operation: Operation): Promise<void> {
@@ -912,8 +922,8 @@ export class SyncService {
 		return events;
 	}
 
-	private async commitPrepared(prepared: PreparedSync): Promise<boolean> {
-		if (prepared.plan.planRevision !== this.currentSourceRevision || prepared.plan.statuses.some((status) => status.status === 'review' || status.status === 'conflict')) {
+	private async commitPrepared(prepared: PreparedSync, allowUnresolvedStatuses = false): Promise<boolean> {
+		if (prepared.plan.planRevision !== this.currentSourceRevision || (!allowUnresolvedStatuses && prepared.plan.statuses.some((status) => status.status === 'review' || status.status === 'conflict'))) {
 			return false;
 		}
 		const state = await this.loadState();
@@ -936,10 +946,44 @@ export class SyncService {
 	async applySelection(
 		prepared: PreparedSync,
 		selectedOperationIds: readonly string[],
-		options: { explicit?: boolean } = {},
+		options: { explicit?: boolean; background?: boolean } = {},
 	): Promise<SyncApplyResult> {
+		const background = options.background === true;
 		const explicit = options.explicit === true;
-		if (!explicit) {
+		const planOperations = prepared.plan.operations;
+		const selected = new Set(selectedOperationIds);
+		const knownOperationIds = new Set(planOperations.map((operation) => operation.id));
+		const unknownOperationIds = selectedOperationIds.filter((id) => !knownOperationIds.has(id));
+		const selectedUnsafeOperationIds = planOperations
+			.filter((operation) => selected.has(operation.id) && operation.risk !== 'safe')
+			.map((operation) => operation.id);
+		const backgroundSelectedOperationIds = planOperations
+			.filter((operation) => operation.risk === 'safe' && selected.has(operation.id))
+			.map((operation) => operation.id);
+		const backgroundDeselectedOperationIds = planOperations
+			.filter((operation) => !backgroundSelectedOperationIds.includes(operation.id))
+			.map((operation) => operation.id);
+		const backgroundWarnings = [...prepared.warnings];
+		if (unknownOperationIds.length > 0) backgroundWarnings.push(`${unknownOperationIds.length} unknown operation ID(s) were ignored by background sync.`);
+		if (selectedUnsafeOperationIds.length > 0) backgroundWarnings.push('Review operation(s) were queued for explicit review and ignored by background sync.');
+		if (prepared.plan.statuses.some((status) => status.status === 'review' || status.status === 'conflict')) backgroundWarnings.push('Review/conflict items were queued for explicit review by background sync.');
+		if (background && prepared.previewRequired) {
+			return {
+				plan: prepared.plan,
+				providerStatuses: prepared.providerStatuses,
+				gamesFetched: prepared.gamesFetched,
+				operationsCreated: prepared.operationsCreated,
+				operationsApplied: 0,
+				operationsAppliedIds: [],
+				pendingOperationIds: planOperations.map((operation) => operation.id),
+				deselectedOperationIds: backgroundDeselectedOperationIds,
+				deselected: backgroundDeselectedOperationIds.length,
+				ignored: prepared.ignored,
+				warnings: [...backgroundWarnings, 'Background sync is blocked until the first sync preview is explicitly approved.'],
+				reviewRequiredCount: prepared.reviewRequiredCount,
+			};
+		}
+		if (!explicit && !background) {
 			return {
 				plan: prepared.plan,
 				providerStatuses: prepared.providerStatuses,
@@ -980,9 +1024,11 @@ export class SyncService {
 			executor = createExecutor(initialProgress);
 			this.executors.set(prepared.plan.id, executor);
 		}
-		const applied: ApplyResult = await executor.apply(prepared.plan, selectedOperationIds);
+		const executorSelection = background ? backgroundSelectedOperationIds : selectedOperationIds;
+		const applied: ApplyResult = await executor.apply(prepared.plan, executorSelection);
 		const recoveryState = await this.loadState();
-		const recovery = await this.recoveryOperations(prepared, recoveryState);
+		const recoveryResult = await this.recoveryOperations(prepared, recoveryState, background);
+		const recovery = recoveryResult.operations;
 		const recoveryProgress: Record<string, ExecutorProgress> = Object.fromEntries(Object.entries(initialProgress).map(([id, progress]) => [id, { ...progress }]));
 		for (const recovered of recovery) {
 			recoveryProgress[recovered.operation.id] = { ...recovered.progress };
@@ -992,13 +1038,21 @@ export class SyncService {
 			: await createExecutor(recoveryProgress).apply(createSyncPlan(prepared.plan.planRevision, recovery.map(({ operation }) => operation)), recovery.map(({ operation }) => operation.id));
 		const appliedResult: ApplyResult = {
 			appliedOperationIds: [...new Set([...applied.appliedOperationIds, ...recovered.appliedOperationIds])],
-			pendingOperationIds: [...new Set([...applied.pendingOperationIds, ...recovered.pendingOperationIds])].filter((id) => !recovered.appliedOperationIds.includes(id)),
-			deselectedOperationIds: applied.deselectedOperationIds,
+			pendingOperationIds: [...new Set([...applied.pendingOperationIds, ...recovered.pendingOperationIds, ...recoveryResult.rejectedOperationIds])].filter((id) => !recovered.appliedOperationIds.includes(id)),
+			deselectedOperationIds: background
+				? [...new Set([...applied.deselectedOperationIds, ...selectedUnsafeOperationIds])]
+				: applied.deselectedOperationIds,
 			failedOperationIds: [...new Set([...applied.failedOperationIds, ...recovered.failedOperationIds])],
 		};
-		const warnings = [...prepared.warnings];
-		const executorSucceeded = appliedResult.failedOperationIds.length === 0 && appliedResult.pendingOperationIds.length === 0;
-		const committed = executorSucceeded ? await this.commitPrepared(prepared) : false;
+		const warnings = background ? backgroundWarnings : [...prepared.warnings];
+		if (background && recoveryResult.rejectedOperationIds.length > 0) warnings.push('Review operation(s) from the journal were queued for explicit review and not recovered by background sync.');
+		const safeOperationIds = new Set(planOperations.filter((operation) => operation.risk === 'safe').map((operation) => operation.id));
+		for (const recovered of recovery) if (recovered.operation.risk === 'safe') safeOperationIds.add(recovered.operation.id);
+		const pendingSafeOperationIds = appliedResult.pendingOperationIds.filter((id) => safeOperationIds.has(id));
+		const backgroundSafeApplied = background && appliedResult.appliedOperationIds.some((id) => safeOperationIds.has(id));
+		const unresolvedStatuses = prepared.plan.statuses.some((status) => status.status === 'review' || status.status === 'conflict');
+		const executorSucceeded = appliedResult.failedOperationIds.length === 0 && pendingSafeOperationIds.length === 0 && (!background || !unresolvedStatuses || backgroundSafeApplied);
+		const committed = executorSucceeded ? await this.commitPrepared(prepared, background && backgroundSafeApplied) : false;
 		if (committed) this.executors.delete(prepared.plan.id);
 		if (executorSucceeded && !committed) warnings.push('Sync plan was not committed; review/conflict or stale source state remains pending.');
 		if (committed) await this.cachePreparedFreshData(prepared);

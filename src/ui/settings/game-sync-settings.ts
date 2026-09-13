@@ -2,7 +2,7 @@ import { PluginSettingTab, Setting, type App, type Plugin } from 'obsidian';
 import { t, type TranslationKey } from '../../i18n';
 import type { GameProvider } from '../../model/provider';
 import type { PropertyMapping } from '../../model/property-mapping';
-import type { GameSyncSettings, MetadataLanguage, MetadataPreference } from '../../model/settings';
+import { isSupportedBackgroundIntervalMinutes, type GameSyncSettings, type MetadataLanguage, type MetadataPreference } from '../../model/settings';
 import type { ProviderConnectionStatus } from '../../providers/provider';
 import { PropertySettings } from './property-settings';
 
@@ -42,7 +42,7 @@ function validateSettings(settings: GameSyncSettings): string | undefined {
 	if (settings.notesFolder.trim().length === 0 || settings.filenamePattern.trim().length === 0 || settings.basePath.trim().length === 0 || settings.historyPath.trim().length === 0) {
 		return translation('settings.common.saveError');
 	}
-	if (!Number.isFinite(settings.backgroundIntervalMinutes) || settings.backgroundIntervalMinutes <= 0) {
+	if (!isSupportedBackgroundIntervalMinutes(settings.backgroundIntervalMinutes)) {
 		return translation('settings.common.saveError');
 	}
 	return undefined;
