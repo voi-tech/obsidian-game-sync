@@ -53,6 +53,15 @@ export function addNegativeMapping(state: IdentityMappingState, leftCanonicalId:
 	return exists ? { ...state, negativeMappings: [...state.negativeMappings] } : { ...state, negativeMappings: [...state.negativeMappings, mapping] };
 }
 
+export function removeNegativeMapping(state: IdentityMappingState, leftCanonicalId: string, rightCanonicalId: string): IdentityMappingState {
+	const mapping = negativePair(leftCanonicalId, rightCanonicalId);
+	const index = state.negativeMappings.findIndex(
+		(entry) => entry.leftCanonicalId === mapping.leftCanonicalId && entry.rightCanonicalId === mapping.rightCanonicalId,
+	);
+	if (index === -1) return { ...state, negativeMappings: [...state.negativeMappings] };
+	return { ...state, negativeMappings: [...state.negativeMappings.slice(0, index), ...state.negativeMappings.slice(index + 1)] };
+}
+
 export function areKeptSeparate(state: IdentityMappingState, leftCanonicalId: string, rightCanonicalId: string): boolean {
 	const mapping = negativePair(leftCanonicalId, rightCanonicalId);
 	return state.negativeMappings.some(

@@ -517,7 +517,12 @@ export class SyncService {
 	private async makeProviderPlan(games: readonly NormalizedGame[], statuses: Readonly<Record<GameProvider, ProviderStatusSummary>>): Promise<PlannedSyncPlan> {
 		const planRevision = revisionFor(games, statuses);
 		this.currentSourceRevision = planRevision;
-		return this.planner.plan(games, planRevision);
+		const state = await this.loadState();
+		return this.planner.plan(games, planRevision, {
+			identityMappings: state.identityMappings,
+			ignoredCanonicalIds: state.ignoredCanonicalIds,
+			ignoredProviderRefs: state.ignoredProviderRefs,
+		});
 	}
 
 	private failedPreparation(provider: GameProvider, message: string, error?: { code: string; message: string }): ProviderPreparation {
@@ -726,7 +731,11 @@ export class SyncService {
 		const games = [...grouped.values()].map(mergeProviderStates).sort((left, right) => left.canonicalId.localeCompare(right.canonicalId));
 		const planRevision = revisionFor(games, providerStatuses);
 		this.currentSourceRevision = planRevision;
-		const plan = await this.planner.plan(games, planRevision);
+		const plan = await this.planner.plan(games, planRevision, {
+			identityMappings: state.identityMappings,
+			ignoredCanonicalIds: state.ignoredCanonicalIds,
+			ignoredProviderRefs: state.ignoredProviderRefs,
+		});
 		const presence = Object.values(providerResults).flatMap((result) => result?.presence ?? []).map(clonePresence);
 		const prepared: PreparedSync = {
 			plan,

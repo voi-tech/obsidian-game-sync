@@ -26,6 +26,28 @@ describe('deterministic sync planner', () => {
 		expect(plan.operations[0]?.path).toBe('Games/Example Game.md');
 	});
 
+	it('keeps games ignored by canonical ID or explicit provider reference out of the plan', async () => {
+		const gateway = new FakeVaultGateway();
+		const second = {
+			...game(),
+			canonicalId: 'game-sync:two',
+			identity: { canonicalId: 'game-sync:two', steamAppId: 2 },
+			providers: { steam: { ...game().providers.steam!, providerGameId: '2' } },
+		};
+		const planner = createSyncPlanner({
+			gateway,
+			noteIndex: await buildNoteIndex(gateway),
+			notesFolder: 'Games',
+			ignoredCanonicalIds: ['game-sync:one'],
+			ignoredProviderRefs: ['steam:2'],
+		});
+
+		const plan = await planner.plan([game(), second], 'revision-ignored');
+
+		expect(plan.statuses.map((status) => status.status)).toEqual(['ignored', 'ignored']);
+		expect(plan.operations).toHaveLength(0);
+	});
+
 	it('adopts an existing provider note without treating it as a rename', async () => {
 		const gateway = new FakeVaultGateway({ 'Games/Old.md': '---\nsteam-id: "1"\ncustom: keep\n---\n# User body' });
 		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games', filenamePattern: '{{title}}' });

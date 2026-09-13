@@ -30,7 +30,14 @@ export interface SyncPlannerOptions {
 	filenamePattern?: string;
 	mappings?: readonly IdentityMapping[];
 	ignoredCanonicalIds?: readonly string[];
+	ignoredProviderRefs?: readonly string[];
 	propertyMapping?: PropertyMapping;
+}
+
+export interface SyncPlannerState {
+	identityMappings?: readonly IdentityMapping[];
+	ignoredCanonicalIds?: readonly string[];
+	ignoredProviderRefs?: readonly string[];
 }
 
 function deterministicRevision(games: readonly NormalizedGame[]): string {
@@ -64,9 +71,16 @@ export class SyncPlanner {
 		return result;
 	}
 
-	async plan(games: readonly NormalizedGame[], planRevision = deterministicRevision(games)): Promise<PlannedSyncPlan> {
+	async plan(
+		games: readonly NormalizedGame[],
+		planRevision = deterministicRevision(games),
+		state: SyncPlannerState = {},
+	): Promise<PlannedSyncPlan> {
 		const noteIndex = await buildNoteIndex(this.options.gateway, this.options.propertyMapping);
 		const gameSyncIdKey = resolvePropertyMapping(this.options.propertyMapping).gameSyncId;
+		const ignoredCanonicalIds = state.ignoredCanonicalIds ?? this.options.ignoredCanonicalIds;
+		const ignoredProviderRefs = new Set(state.ignoredProviderRefs ?? this.options.ignoredProviderRefs);
+		const mappings = state.identityMappings ?? this.options.mappings;
 		type PathAssignment = { canonicalGameId: string; path: string; statusIndex: number; operationInput?: OperationInput };
 		const pathAssignments: PathAssignment[] = [];
 		const statuses: PlannedGame[] = [];
@@ -74,13 +88,15 @@ export class SyncPlanner {
 		const createCandidates: Array<{ game: NormalizedGame; targetPath: string; match: VaultMatch }> = [];
 		for (const game of orderedGames) {
 			const targetPath = notePath(game, this.options);
-			if (this.options.ignoredCanonicalIds?.includes(game.canonicalId)) {
+			const hasIgnoredProviderRef = Object.entries(game.providers).some(([provider, providerGame]) => providerGame !== undefined
+				&& ignoredProviderRefs.has(`${provider}:${providerGame.providerGameId}`));
+			if (ignoredCanonicalIds?.includes(game.canonicalId) || hasIgnoredProviderRef) {
 				statuses.push({ canonicalGameId: game.canonicalId, status: 'ignored', path: targetPath });
 				continue;
 			}
 			const match = matchVaultNote(game, noteIndex, {
 				targetPath,
-				mappings: this.options.mappings,
+				mappings,
 				propertyMapping: this.options.propertyMapping,
 			});
 			if (match.status === 'conflict') {

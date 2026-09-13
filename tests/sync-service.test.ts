@@ -52,6 +52,28 @@ describe('provider-isolated SyncService', () => {
 		expect(result.warnings.some((warning) => warning.includes('Steam'))).toBe(true);
 	});
 
+	it('passes current ignored canonical IDs, provider references and identity mappings to provider and all plans', async () => {
+		const gateway = new FakeVaultGateway();
+		const state = migrateState({
+			identityMappings: [
+				{ canonicalId: 'game-sync:one', provider: 'steam', providerGameId: '1' },
+				{ canonicalId: 'game-sync:two', provider: 'steam', providerGameId: '2' },
+			],
+			ignoredCanonicalIds: ['game-sync:one'],
+			ignoredProviderRefs: ['steam:2'],
+		});
+		const steam = adapter(async () => snapshot('complete', [providerGame('1'), providerGame('2')]));
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const service = new SyncService({ adapters: [steam], planner, writer: new VaultWriter(gateway), state });
+
+		const providerPlan = await service.prepareProvider('steam');
+		expect(providerPlan.plan.statuses.map((status) => status.status)).toEqual(['ignored', 'ignored']);
+
+		const allPlan = await service.prepareAll();
+		expect(allPlan.plan.statuses.map((status) => status.status)).toEqual(['ignored', 'ignored']);
+		expect(allPlan.plan.operations).toHaveLength(0);
+	});
+
 	it('retains previous achievements when the next provider snapshot is partial', async () => {
 		const gateway = new FakeVaultGateway();
 		const earned = { earned: 1, total: 1, progress: 100, achievements: [{ id: 'a', name: 'A', unlocked: true, hidden: false }] };

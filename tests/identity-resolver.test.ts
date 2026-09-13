@@ -6,6 +6,7 @@ import {
 	createKeepSeparateOperation,
 	createPositiveMappingOperation,
 	findCanonicalId,
+	removeNegativeMapping,
 	type IdentityMappingState,
 } from '../src/identity/mappings';
 import { createCanonicalGameId, createIdentityResolver } from '../src/identity/resolver';
@@ -36,6 +37,17 @@ describe('durable identity resolver', () => {
 			kind: 'keep-separate',
 			mapping: { leftCanonicalId: 'canonical-a', rightCanonicalId: 'canonical-b' },
 		});
+	});
+
+	it('removes one Keep separate pair symmetrically without mutating the state', () => {
+		const state = addNegativeMapping(addNegativeMapping(emptyState, 'canonical-a', 'canonical-b'), 'canonical-c', 'canonical-d');
+		const next = removeNegativeMapping(state, 'canonical-b', 'canonical-a');
+
+		expect(next.negativeMappings).toEqual([{ leftCanonicalId: 'canonical-c', rightCanonicalId: 'canonical-d' }]);
+		expect(state.negativeMappings).toHaveLength(2);
+		expect(next).not.toBe(state);
+		expect(next.negativeMappings).not.toBe(state.negativeMappings);
+		expect(() => removeNegativeMapping(state, 'canonical-a', 'canonical-a')).toThrow('A game cannot be kept separate from itself.');
 	});
 
 	it('suppresses future suggestions for a previously separated pair', () => {
