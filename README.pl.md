@@ -1,11 +1,12 @@
 # Game Sync
 
-Game Sync synchronizuje dane gier ze Steam i PlayStation do zwykłych notatek Markdown w Obsidianie.
+Game Sync synchronizuje eksporty GameTrack oraz dane Steam i PlayStation do zwykłych notatek Markdown w Obsidianie.
 
 ## Funkcje
 
 - biblioteka Steam, czas gry, osiągnięcia i metadane;
 - biblioteka PlayStation, czas gry i trofea;
+- wieloplatformowa biblioteka GameTrack przez oficjalny eksport ZIP (import ręczny);
 - jedna notatka dla jednej logicznej gry, także gdy występuje na obu platformach;
 - ostrożne dopasowanie z podglądem przed pierwszym zapisem;
 - adopcja istniejących notatek bez przepisywania ręcznej treści;
@@ -17,17 +18,24 @@ Game Sync synchronizuje dane gier ze Steam i PlayStation do zwykłych notatek Ma
 
 ### Steam
 
-Steam wymaga SteamID64 i oficjalnego Steam Web API key. Widoczność profilu i Game Details musi pozwalać na odczyt biblioteki.
+Steam wymaga oficjalnego Steam Web API key i publicznego profilu Steam. Okno połączenia przyjmuje adres profilu, nazwę albo SteamID64. Widoczność profilu i Game Details musi pozwalać na odczyt biblioteki.
 
 ### PlayStation
 
 Obsługa PlayStation jest nieoficjalna. Korzysta z bootstrapu NPSSO i pakietu `psn-api` do aktualnych przepływów PlayStation Network. Przeczytaj ostrzeżenie przed włączeniem tej funkcji.
 
+### GameTrack
+
+GameTrack jest źródłem dla połączonej biblioteki z wielu platform. Wyeksportuj
+bibliotekę z GameTrack, a następnie wybierz oficjalny plik ZIP w Game Sync.
+Import jest ręczny i tylko do odczytu: plugin nie korzysta z prywatnej bazy
+GameTrack, nie wymaga Full Disk Access i nie modyfikuje eksportu.
+
 ## Instalacja
 
 ### Community Plugins
 
-Po zatwierdzeniu w katalogu zainstaluj **Game Sync** przez Community Plugins w Obsidianie. Włącz plugin i uruchom **Game Sync: Run setup wizard**.
+Po zatwierdzeniu w katalogu zainstaluj **Game Sync** przez Community Plugins w Obsidianie. Włącz plugin i otwórz **Game Sync: Open Quick Setup**.
 
 ### BRAT
 
@@ -45,27 +53,42 @@ Umieść zgodne pliki wydania w `.obsidian/plugins/game-sync/`:
 - `manifest.json`
 - `styles.css`
 
-Przeładuj Obsidiana, włącz **Game Sync** i uruchom kreator konfiguracji.
+Przeładuj Obsidiana, włącz **Game Sync** i otwórz Quick Setup.
 
 ## Pierwsza konfiguracja
 
-1. Otwórz paletę poleceń i uruchom **Game Sync: Run setup wizard**.
-2. Włącz co najmniej jednego providera.
-3. Połącz Steam i/lub PlayStation.
-4. Wybierz folder notatek, wzorzec nazwy, opcjonalny szablon i opcjonalny plik `Games.base`.
-5. Ustaw filtry biblioteki oraz zachowanie synchronizacji.
-6. Pobierz pierwszą bibliotekę i obejrzyj pełny podgląd.
-7. Zastosuj tylko zaakceptowane zmiany.
+1. Otwórz paletę poleceń i uruchom **Game Sync: Open Quick Setup**.
+2. Wybierz źródło biblioteki. Dla GameTrack wyeksportuj bibliotekę z GameTrack
+   i wybierz ZIP, gdy plugin o to poprosi.
+3. Obejrzyj **Podgląd pierwszej synchronizacji**.
+4. Zastosuj zaakceptowane zmiany.
 
-Pierwsza synchronizacja nie może zostać zastosowana po cichu. Późniejsze synchronizacje również mogą wymagać ręcznej decyzji, gdy dopasowanie jest niepewne.
+Domyślnym miejscem zapisu jest `Games/`; zmień je tylko wtedy, gdy chcesz użyć innego folderu. Okna providerów prowadzą przez wymagane kroki, a podgląd pojawia się przed każdym zapisem.
+
+Pierwsza synchronizacja nie może zostać zastosowana po cichu. Późniejsze synchronizacje również mogą wymagać ręcznej decyzji, gdy dopasowanie jest niepewne. Jeśli credentials są nadal dostępne, otwarcie połączenia najpierw próbuje połączenia jednym kliknięciem, a dialog providera otwiera dopiero przy potrzebie naprawy.
+
+## Konfiguracja GameTrack
+
+1. W GameTrack użyj oficjalnej funkcji eksportu biblioteki.
+2. W ustawieniach Game Sync wybierz **GameTrack** jako źródło biblioteki.
+3. Wybierz wyeksportowany plik ZIP.
+4. Uruchom **Podgląd synchronizacji**, sprawdź plan i wykonaj synchronizację.
+
+Import GameTrack jest jawny i ręczny. Samo wybranie eksportu nie uruchamia
+synchronizacji w tle, a scheduler nie importuje po cichu starego pliku.
+
+Dla wcześniej zaimportowanej biblioteki GameTrack można w Dodatkowych
+ustawieniach włączyć opcjonalne odświeżanie aktywności i osiągnięć Steam oraz
+aktywności i trofeów PlayStation. Enrichery aktualizują tylko dopasowane gry i
+nie dodają gier, których nie ma w wybranej bibliotece GameTrack.
 
 ## Konfiguracja Steam
 
-Utwórz oficjalny Steam Web API key, podaj go razem ze SteamID64 w oknie połączenia Steam i ustaw widoczność profilu oraz Game Details tak, aby wybrane dane były dostępne. Klucz jest przechowywany przez Obsidian SecretStorage; nie trafia do danych sejfu ani stanu pluginu.
+Utwórz oficjalny Steam Web API key na [stronie klucza Steam](https://steamcommunity.com/dev/apikey), a następnie podaj go razem z adresem profilu, nazwą vanity albo SteamID64 w oknie połączenia Steam. Przy kolejnych połączeniach zostaw pole API key puste, aby użyć klucza z Obsidian SecretStorage. Ustaw widoczność profilu oraz Game Details tak, aby wybrane dane były dostępne. Klucz nigdy nie trafia do danych sejfu ani stanu pluginu.
 
 ## Konfiguracja PlayStation
 
-Okno połączenia otwiera oficjalne strony PlayStation i NPSSO. Wklej jednorazową wartość NPSSO do pola typu hasło i zatwierdź. Game Sync wymienia ją na sesję i przechowuje refresh token w Obsidian SecretStorage. NPSSO nie jest przechowywane po bootstrapie.
+Okno połączenia otwiera oficjalną stronę logowania PlayStation oraz stronę z kodem połączenia. Zaloguj się, pobierz kod, wklej go w oknie i połącz konto. Game Sync wymienia go na ponownie używaną sesję i przechowuje credentials w Obsidian SecretStorage; jednorazowy kod nie jest zapisywany.
 
 Obsługa PlayStation jest nieoficjalna. Sony nie udostępnia publicznego konsumenckiego API do tego zastosowania. Integracja zależy od nieudokumentowanego zachowania PlayStation Network i może przestać działać po zmianach po stronie Sony.
 
@@ -87,9 +110,9 @@ Czas gry jest zapisywany w minutach. Postęp ma wartość liczbową `0–100`. D
 
 ## Szablony
 
-Ustaw ścieżkę szablonu w Settings albo w kreatorze. Klucze obejmują `title`, `released`, `description`, `cover`, `providers`, `owned`, `playtime`, `lastPlayed`, `steamId`, `steamAchievements`, `playstationId` i `playstationTrophies`.
+Ustaw ścieżkę szablonu w Settings. Klucze obejmują `title`, `released`, `description`, `cover`, `providers`, `owned`, `playtime`, `lastPlayed`, `steamId`, `steamAchievements`, `playstationId` i `playstationTrophies`.
 
-Dostępne helpery to `join`, `hours`, `percent` i `date`. Partiale obejmują `achievements`, `steamAchievements` i `playstationTrophies`. Akcja **Template keys** w Settings pokazuje pełną aktualną listę.
+Dostępne helpery to `join`, `hours`, `percent` i `date`. Partiale obejmują `achievements`, `steamAchievements` i `playstationTrophies`.
 
 ## Osiągnięcia i trofea
 
@@ -130,7 +153,8 @@ Obsługa PlayStation jest nieoficjalna. Sony nie udostępnia publicznego konsume
 - Synchronizacja działa wyłącznie provider → Obsidian; nie ma zapisu zwrotnego.
 - Game Sync nigdy automatycznie nie usuwa, nie przenosi, nie zmienia nazw ani nie scala istniejących notatek.
 - Na jeden sejf przypada jedno konto Steam i jedno konto PlayStation.
-- Historia zakupów, IGDB/RAWG i providerzy inni niż Steam oraz PlayStation są poza tym wydaniem.
+- Historia zakupów, RAWG i providerzy inni niż GameTrack, Steam oraz PlayStation są poza tym wydaniem.
+- GameTrack wymaga oficjalnego eksportu ZIP; import jest jawny i ręczny.
 - Pełne connect/sync/background jest gwarantowane na desktopie; ładowanie bundle, ustawienia i dostęp do Markdown działają na mobile, ale synchronizacja w tle jest wyłączona.
 - Niepewne dopasowania pozostają elementami review/conflict. Polecenie match managera pozostaje niedostępne do czasu bezpiecznej implementacji split/unmerge.
 
@@ -140,7 +164,7 @@ Obsługa PlayStation jest nieoficjalna. Sony nie udostępnia publicznego konsume
 
 Sprawdź SteamID64, API key oraz widoczność profilu i Game Details. Po poprawieniu konta uruchom **Force refresh all data**.
 
-### PlayStation ponownie prosi o NPSSO
+### PlayStation ponownie prosi o połączenie
 
 Sesja odświeżania mogła wygasnąć albo zostać unieważniona. Połącz konto ponownie przez okno PlayStation. Istniejące notatki Markdown nie są usuwane przez rozłączenie.
 

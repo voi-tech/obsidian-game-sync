@@ -1,4 +1,5 @@
 import type { IdentityMapping } from '../model/identity';
+import type { NegativeIdentityMapping } from '../state/schema';
 import type { NormalizedGame } from '../model/game';
 import { createOperation, createSyncPlan, type OperationInput, type SyncPlan } from '../model/operations';
 import { resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
@@ -29,6 +30,7 @@ export interface SyncPlannerOptions {
 	notesFolder?: string;
 	filenamePattern?: string;
 	mappings?: readonly IdentityMapping[];
+	negativeMappings?: readonly NegativeIdentityMapping[];
 	ignoredCanonicalIds?: readonly string[];
 	ignoredProviderRefs?: readonly string[];
 	propertyMapping?: PropertyMapping;
@@ -36,6 +38,7 @@ export interface SyncPlannerOptions {
 
 export interface SyncPlannerState {
 	identityMappings?: readonly IdentityMapping[];
+	negativeMappings?: readonly NegativeIdentityMapping[];
 	ignoredCanonicalIds?: readonly string[];
 	ignoredProviderRefs?: readonly string[];
 }
@@ -59,11 +62,16 @@ function notePath(game: NormalizedGame, options: SyncPlannerOptions): string {
 function createPlannedOperation(input: OperationInput) {
 	if (input.kind === 'create-note') return createOperation(input);
 	if (input.kind === 'create-base') return createOperation(input);
+	if (input.kind === 'unmerge') return createOperation(input);
 	return createOperation(input);
 }
 
 export class SyncPlanner {
-	constructor(private readonly options: SyncPlannerOptions) {}
+	readonly gateway: VaultGateway;
+
+	constructor(private readonly options: SyncPlannerOptions) {
+		this.gateway = options.gateway;
+	}
 
 	async currentNoteFingerprints(): Promise<Readonly<Record<string, string | null>>> {
 		const result: Record<string, string | null> = {};
@@ -97,6 +105,7 @@ export class SyncPlanner {
 			const match = matchVaultNote(game, noteIndex, {
 				targetPath,
 				mappings,
+				negativeMappings: state.negativeMappings ?? this.options.negativeMappings,
 				propertyMapping: this.options.propertyMapping,
 			});
 			if (match.status === 'conflict') {

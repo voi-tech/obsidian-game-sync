@@ -1,6 +1,7 @@
 import type { GameIdentity } from './identity';
 import type { NormalizedGame } from './game';
 import type { ProviderGame } from './provider';
+import type { GameProvider } from './provider';
 
 export { createCanonicalGameId, resolveCanonicalGameId } from './identity';
 
@@ -12,6 +13,7 @@ export type GameOperationKind =
 	| 'update-achievement-block'
 	| 'link-providers'
 	| 'unlink-providers'
+	| 'unmerge'
 	| 'create-base';
 
 export type OperationRisk = 'safe' | 'review';
@@ -36,14 +38,26 @@ export type CreateOperationInput =
 	| (OperationBase & {
 			kind: 'create-base';
 			expectedNoteFingerprint?: null;
-	  });
+		});
+
+export type UnmergeOperationInput = NoteOperationBase & {
+	kind: 'unmerge';
+	expectedNoteFingerprint: string;
+	newPath: string;
+	expectedNewNoteFingerprint: null;
+	providerToKeep: GameProvider;
+	providerToSplit: GameProvider;
+	providerToKeepId: string;
+	providerToSplitId: string;
+	removeManagedProperties: string[];
+};
 
 export type ExistingNoteOperationInput = NoteOperationBase & {
-	kind: Exclude<GameOperationKind, 'create-note' | 'create-base'>;
+	kind: Exclude<GameOperationKind, 'create-note' | 'create-base' | 'unmerge'>;
 	expectedNoteFingerprint: string;
 };
 
-export type OperationInput = CreateOperationInput | ExistingNoteOperationInput;
+export type OperationInput = CreateOperationInput | ExistingNoteOperationInput | UnmergeOperationInput;
 
 export type CreateOperation = CreateOperationInput & {
 	id: string;
@@ -54,7 +68,9 @@ export type ExistingNoteOperation = ExistingNoteOperationInput & {
 	id: string;
 };
 
-export type Operation = CreateOperation | ExistingNoteOperation;
+export type UnmergeOperation = UnmergeOperationInput & { id: string };
+
+export type Operation = CreateOperation | ExistingNoteOperation | UnmergeOperation;
 
 export interface SyncPlan {
 	id: string;
@@ -161,6 +177,7 @@ export function createNormalizedGame(games: readonly ProviderGame[], canonicalId
 
 export function createOperation(input: CreateOperationInput): CreateOperation;
 export function createOperation(input: ExistingNoteOperationInput): ExistingNoteOperation;
+export function createOperation(input: UnmergeOperationInput): UnmergeOperation;
 export function createOperation(input: OperationInput): Operation {
 	const isCreate = input.kind === 'create-note' || input.kind === 'create-base';
 	if (input.kind !== 'create-base' && (typeof input.path !== 'string' || input.path.trim().length === 0)) {
@@ -172,6 +189,11 @@ export function createOperation(input: OperationInput): Operation {
 	if (!isCreate && (typeof input.expectedNoteFingerprint !== 'string' || input.expectedNoteFingerprint.trim().length === 0)) {
 		throw new Error(`${input.kind} requires a non-empty note fingerprint.`);
 	}
+	if (input.kind === 'unmerge') {
+		if (input.providerToKeep === input.providerToSplit) throw new Error('Unmerge providers must be different.');
+		if (input.newPath.trim().length === 0 || input.expectedNewNoteFingerprint !== null) throw new Error('Unmerge requires an absent new note.');
+		if (input.providerToKeepId.trim().length === 0 || input.providerToSplitId.trim().length === 0) throw new Error('Unmerge provider IDs must not be empty.');
+	}
 	const expectedNoteFingerprint = input.expectedNoteFingerprint ?? null;
 	const payload = {
 		canonicalGameId: input.canonicalGameId,
@@ -181,6 +203,15 @@ export function createOperation(input: OperationInput): Operation {
 		summary: input.summary,
 		expectedNoteFingerprint,
 		planRevision: input.planRevision,
+		...(input.kind === 'unmerge' ? {
+			newPath: input.newPath,
+			expectedNewNoteFingerprint: input.expectedNewNoteFingerprint,
+			providerToKeep: input.providerToKeep,
+			providerToSplit: input.providerToSplit,
+			providerToKeepId: input.providerToKeepId,
+			providerToSplitId: input.providerToSplitId,
+			removeManagedProperties: input.removeManagedProperties,
+		} : {}),
 	};
 	if (isCreate) {
 		return { ...input, expectedNoteFingerprint: null, id: `operation:${deterministicHash(stableStringify(payload))}` };
@@ -211,6 +242,7 @@ export function createSyncPlan(planRevision: string, operations: readonly Operat
 				throw new Error(`Conflicting note fingerprints for ${path}.`);
 			}
 			expectedNoteFingerprints[path] = operation.expectedNoteFingerprint;
+			if (operation.kind === 'unmerge') expectedNoteFingerprints[operation.newPath] = operation.expectedNewNoteFingerprint;
 		}
 	}
 	const planPayload = { planRevision, operations, expectedNoteFingerprints };

@@ -1,4 +1,4 @@
-import { Modal, Setting, type App } from 'obsidian';
+import { Modal, Setting, type App, type ButtonComponent } from 'obsidian';
 import { t } from '../../i18n';
 import type { GameProvider } from '../../model/provider';
 import type { GameSyncSettings } from '../../model/settings';
@@ -7,43 +7,55 @@ import type { GameSyncData } from '../../state/schema';
 import type { StateStore } from '../../state/store';
 import type { PreparedSync } from '../../sync/service';
 import type { ProviderConnectionStatus } from '../../providers/provider';
-import { renderTemplate } from '../../vault/template';
-import { getSetupResume, nextSetupStep, previousSetupStep, SETUP_STEP_IDS, type SetupStepId } from './steps';
+import { renderConnectionStatus } from '../status';
+import type { GameTrackRuntimeStatus } from '../../model/library-provider';
+import type { CanonicalPreviewResult } from '../../sync/canonical-service';
+import type { GameTrackCsvSelection } from '../../providers/gametrack/csv/gametrack-csv-provider';
 
 export interface SetupModalOptions {
 	stateStore: StateStore;
 	save: (state: GameSyncData) => Promise<void>;
-	openConnection: (provider: GameProvider) => void;
+	openConnection: (provider: GameProvider, onConnected?: () => void) => void | Promise<void>;
+	disconnect?: (provider: GameProvider) => void | Promise<void>;
+	confirm?: (message: string) => boolean | Promise<boolean>;
 	getConnectionStatus: (provider: GameProvider) => Promise<ProviderConnectionStatus>;
-	openTemplate: () => void;
-	fixTemplate: () => void;
-	validateTemplate?: (templatePath: string) => void | Promise<void>;
 	prepareAll: () => Promise<PreparedSync>;
 	onPreparedSync: (prepared: PreparedSync) => void | Promise<void>;
+	getGameTrackStatus?: () => GameTrackRuntimeStatus | Promise<GameTrackRuntimeStatus>;
+	prepareGameTrack?: () => Promise<CanonicalPreviewResult>;
+	onGameTrackPreview?: (preview: CanonicalPreviewResult) => void | Promise<void>;
+	/** Canonical preview hook shared by GameTrack, Steam and PlayStation library sources. */
+	prepareCanonical?: () => Promise<CanonicalPreviewResult>;
+	onCanonicalPreview?: (preview: CanonicalPreviewResult) => void | Promise<void>;
+	chooseGameTrackExport?: () => GameTrackCsvSelection | undefined | Promise<GameTrackCsvSelection | undefined>;
 }
 
-type SetupButton = { buttonEl: HTMLButtonElement; setButtonText(value: string): unknown; setCta(): unknown; setDisabled(value: boolean): unknown; onClick(handler: () => unknown): unknown };
+type SetupButton = Pick<ButtonComponent, 'setButtonText' | 'setCta' | 'setDisabled'> & { buttonEl: HTMLButtonElement };
+type Provider = 'steam' | 'playstation';
 
-function safeTemplateValidation(templatePath: string): void {
-	if (templatePath.trim().length === 0) return;
-	renderTemplate(templatePath, { title: 'Game Sync' } as never);
+const PROVIDERS: readonly Provider[] = ['steam', 'playstation'];
+
+function providerLabel(provider: Provider): string {
+	return t(`sync.providers.${provider}`);
 }
 
-function safeConnectionLabel(status: ProviderConnectionStatus): string {
-	if (status.state === 'connected') return t('setup.connections.statusConnected');
-	if (status.state === 'needs-auth') return t('setup.connections.statusNeedsAuth');
-	if (status.state === 'error') return t('setup.connections.statusError');
-	return t('setup.connections.statusDisconnected');
+function providerDescription(provider: Provider): string {
+	return provider === 'steam' ? t('setup.providers.steamDescription') : `${t('setup.providers.playstationDescription')} ${t('connect.playstation.unofficial')}.`;
+}
+
+function isConnected(status: ProviderConnectionStatus | undefined): boolean {
+	return status?.state === 'connected' && status.connected;
 }
 
 export class SetupModal extends Modal {
 	private state?: GameSyncData;
-	private currentStep: SetupStepId = SETUP_STEP_IDS[0];
+	private readonly statuses = new Map<Provider, ProviderConnectionStatus>();
+	private gameTrackStatus?: GameTrackRuntimeStatus;
 	private lifecycle = 0;
 	private isOpen = false;
-	private validationEl?: HTMLElement;
 	private pending = false;
-	private stepEl?: HTMLElement;
+	private statusEl?: HTMLElement;
+	private previewButton?: SetupButton;
 
 	constructor(app: App, private readonly options: SetupModalOptions) {
 		super(app);
@@ -52,7 +64,9 @@ export class SetupModal extends Modal {
 	override onOpen(): void {
 		this.isOpen = true;
 		const version = ++this.lifecycle;
-		this.setTitle(t('setup.welcome.title'));
+		this.statuses.clear();
+		this.gameTrackStatus = undefined;
+		this.setTitle(t('setup.title'));
 		this.contentEl.replaceChildren();
 		void this.load(version);
 	}
@@ -61,6 +75,7 @@ export class SetupModal extends Modal {
 		this.isOpen = false;
 		this.lifecycle += 1;
 		this.pending = false;
+		this.previewButton = undefined;
 	}
 
 	private isCurrent(version: number): boolean {
@@ -73,9 +88,10 @@ export class SetupModal extends Modal {
 		} catch {
 			this.state = migrateState(undefined);
 		}
-		if (!this.isCurrent(version) || this.state === undefined) return;
-		this.currentStep = getSetupResume(this.state.settings).step;
-		this.renderStep();
+		if (!this.isCurrent(version)) return;
+		this.renderQuickSetup();
+		await Promise.all(PROVIDERS.map((provider) => this.refreshProvider(provider, version)));
+		if (this.options.getGameTrackStatus !== undefined) await this.refreshGameTrack(version);
 	}
 
 	private settings(): GameSyncSettings {
@@ -83,244 +99,198 @@ export class SetupModal extends Modal {
 		return this.state.settings;
 	}
 
-	private get viewEl(): HTMLElement {
-		return this.stepEl ?? this.contentEl;
+	private renderQuickSetup(): void {
+		if (!this.isOpen || this.state === undefined) return;
+		this.contentEl.replaceChildren();
+		this.contentEl.dataset.quickSetup = 'true';
+		this.previewButton = undefined;
+		this.statusEl = undefined;
+
+		const description = this.contentEl.createEl('p');
+		description.dataset.quickSetupDescription = 'true';
+		description.textContent = t('setup.description');
+		for (const provider of PROVIDERS) this.renderProviderSetting(provider);
+		this.renderGameTrackSetting();
+		this.renderFolder();
+
+		const actions = new Setting(this.contentEl).setName(t('setup.preview')).setDesc(t('setup.previewNote'));
+		actions.settingEl.dataset.quickSetupActions = 'true';
+		actions.settingEl.dataset.gameSyncActionRow = 'true';
+		actions.addButton((button) => {
+			this.previewButton = button.setButtonText(t('setup.preview')).setCta();
+			this.previewButton.buttonEl.dataset.quickSetupPreview = 'true';
+			this.previewButton.setDisabled(!this.hasSelectedProvider());
+			button.onClick(() => void this.prepareInitialSync());
+		});
+
+		this.statusEl = this.contentEl.createEl('p');
+		this.statusEl.dataset.quickSetupStatus = 'true';
+		this.statusEl.setAttribute('aria-live', 'polite');
 	}
 
-	private element<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
-		return this.viewEl.createEl(tag);
+	private renderGameTrackSetting(): void {
+		if (this.options.getGameTrackStatus === undefined) return;
+		if (this.gameTrackStatus?.code === 'UNSUPPORTED_OS') return;
+		const setting = new Setting(this.contentEl).setName(t('sync.providers.gametrack'));
+		setting.settingEl.dataset.providerSetting = 'gametrack';
+		const status = this.gameTrackStatus;
+		setting.setDesc(status?.code === 'READY' ? t('setup.gametrack.detected', { count: status.games }) : t('settings.library.exportDescription'));
+		if (status?.code === 'READY') setting.addButton((button) => {
+			button.setButtonText(this.settings().libraryProvider === 'gametrack' ? t('setup.gametrack.selected') : t('setup.gametrack.use'));
+			button.buttonEl.dataset.providerAction = 'select:gametrack';
+			button.setDisabled(this.settings().libraryProvider === 'gametrack');
+			button.onClick(() => void this.selectGameTrack());
+		});
+		if (this.options.chooseGameTrackExport !== undefined) setting.addButton((button) => {
+			button.setButtonText(status?.code === 'READY' ? t('settings.library.chooseAnotherExport') : t('settings.library.chooseExport'));
+			button.buttonEl.dataset.providerAction = 'choose-export:gametrack';
+			button.onClick(() => void this.chooseGameTrackExport());
+		});
 	}
 
-	private heading(title: string, description?: string): void {
-		this.setTitle(title);
-		const heading = this.element('h3');
-		heading.textContent = title;
-		if (description !== undefined) {
-			const paragraph = this.element('p');
-			paragraph.textContent = description;
+	private renderProviderSetting(provider: Provider): void {
+		const setting = new Setting(this.contentEl).setName(providerLabel(provider));
+		setting.settingEl.dataset.providerSetting = provider;
+		setting.settingEl.dataset.gameSyncActionRow = 'true';
+		const connection = this.statuses.get(provider);
+		const status = renderConnectionStatus(setting, providerDescription(provider), connection);
+		if (connection?.account?.gameCount !== undefined) status.append(document.createTextNode(` · ${t('setup.provider.gamesFound', { count: connection.account.gameCount })}`));
+		if (isConnected(connection)) {
+			this.providerAction(setting, provider, 'reconnect', false, () => void this.options.openConnection(provider, () => void this.refreshProvider(provider)));
+			this.providerAction(setting, provider, 'disconnect', false, () => void this.disconnect(provider));
+		} else {
+			this.providerAction(setting, provider, 'connect', true, () => void this.options.openConnection(provider, () => void this.refreshProvider(provider)));
 		}
 	}
 
-	private status(message: string): void {
-		if (this.validationEl === undefined) this.validationEl = this.element('p');
-		this.validationEl.textContent = message;
-	}
-
-	private textSetting(name: string, value: string, field: keyof GameSyncSettings): void {
-		new Setting(this.viewEl).setName(name).addText((component) => {
-			component.inputEl.value = value;
-			component.inputEl.dataset.setupField = field;
-			component.inputEl.addEventListener('input', () => {
-				const next = component.inputEl.value;
-				if (field === 'notesFolder') this.settings().notesFolder = next;
-				if (field === 'filenamePattern') this.settings().filenamePattern = next;
-				if (field === 'templatePath') this.settings().templatePath = next;
-				if (field === 'basePath') this.settings().basePath = next;
-				if (field === 'historyPath') this.settings().historyPath = next;
-				if (field === 'backgroundIntervalMinutes') this.settings().backgroundIntervalMinutes = Number(next);
-			});
-		});
-	}
-
-	private toggleSetting(name: string, value: boolean, onChange: (next: boolean) => void): void {
-		new Setting(this.viewEl).setName(name).addToggle((component) => {
-			component.setValue(value);
-			component.onChange(onChange);
-		});
-	}
-
-	private action(name: string, callback: () => void): void {
-		new Setting(this.viewEl).addButton((button) => {
-			button.setButtonText(name);
+	private providerAction(setting: Setting, provider: Provider, action: 'connect' | 'reconnect' | 'disconnect', cta: boolean, callback: () => void): void {
+		setting.addButton((button) => {
+			button.setButtonText(action === 'connect' ? `${t('setup.provider.connect')} ${providerLabel(provider)}` : t(`setup.provider.${action}`));
+			if (cta) button.setCta();
+			button.buttonEl.dataset.providerAction = `${action}:${provider}`;
 			button.onClick(callback);
 		});
 	}
 
-	private navigation(): void {
-		const navigation = new Setting(this.viewEl);
-		const previous = previousSetupStep(this.currentStep);
-		if (previous !== undefined) {
-			navigation.addButton((button) => {
-				button.setButtonText(t('setup.common.back'));
-				button.onClick(() => {
-					this.currentStep = previous;
-					this.renderStep();
-				});
-			});
-		}
-		if (this.currentStep !== SETUP_STEP_IDS[6]) {
-			navigation.addButton((button) => {
-				button.setButtonText(t('setup.common.continue'));
-				button.setCta();
-				button.onClick(() => void this.advance());
-			});
-		}
+	private renderFolder(): void {
+		new Setting(this.contentEl).setName(t('setup.folder.title')).setDesc(t('setup.folder.description')).addText((component) => {
+			component.inputEl.dataset.settingsField = 'notesFolder';
+			component.inputEl.value = this.settings().notesFolder;
+			component.setPlaceholder(t('setup.folder.placeholder'));
+			component.onChange((value) => { this.settings().notesFolder = value.trim() || 'Games'; });
+		});
 	}
 
-	private async advance(): Promise<void> {
-		if (this.currentStep === 'providers' && !this.hasProvider()) {
-			this.status(t('setup.providers.required'));
-			return;
-		}
-		if (this.currentStep === 'vault') {
-			const valid = await this.validateVault();
-			if (!valid) return;
-		}
-		const next = nextSetupStep(this.currentStep);
-		if (next === undefined) return;
-		this.currentStep = next;
-		this.renderStep();
-	}
-
-	private hasProvider(): boolean {
-		const providers = this.settings().enabledProviders;
-		return providers.steam || providers.playstation;
-	}
-
-	private async validateVault(): Promise<boolean> {
-		try {
-			await (this.options.validateTemplate ?? safeTemplateValidation)(this.settings().templatePath);
-			return true;
-		} catch {
-			this.status(t('setup.vault.templateInvalid'));
-			this.action(t('setup.vault.openTemplate'), this.options.openTemplate);
-			this.action(t('setup.vault.fixTemplate'), this.options.fixTemplate);
-			return false;
-		}
-	}
-
-	private renderStep(): void {
-		if (!this.isOpen || this.state === undefined) return;
-		this.contentEl.replaceChildren();
-		this.stepEl = this.contentEl.createDiv();
-		this.stepEl.dataset.setupStepId = this.currentStep;
-		this.contentEl.dataset.setupStepId = this.currentStep;
-		this.validationEl = undefined;
-		switch (this.currentStep) {
-			case 'welcome-privacy': this.renderWelcome(); break;
-			case 'providers': this.renderProviders(); break;
-			case 'connections': this.renderConnections(); break;
-			case 'vault': this.renderVault(); break;
-			case 'library-filters': this.renderFilters(); break;
-			case 'sync-behavior-history': this.renderBehavior(); break;
-			case 'initial-fetch-preview': this.renderInitialFetch(); break;
-		}
-	}
-
-	private renderWelcome(): void {
-		this.heading(t('setup.welcome.title'));
-		const privacy = this.element('p');
-		privacy.textContent = t('setup.welcome.privacy');
-		const secrets = this.element('p');
-		secrets.textContent = t('setup.welcome.secrets');
-		this.navigation();
-	}
-
-	private renderProviders(): void {
-		this.heading(t('setup.providers.title'), t('setup.providers.description'));
-		this.toggleSetting(t('setup.providers.steam'), this.settings().enabledProviders.steam, (value) => { this.settings().enabledProviders.steam = value; });
-		this.toggleSetting(t('setup.providers.playstation'), this.settings().enabledProviders.playstation, (value) => { this.settings().enabledProviders.playstation = value; });
-		this.validationEl = this.element('p');
-		this.navigation();
-	}
-
-	private renderConnections(): void {
-		this.heading(t('setup.connections.title'), t('setup.connections.description'));
-		for (const provider of ['steam', 'playstation'] as const) {
-			const key = provider === 'steam' ? 'setup.connections.openSteam' : 'setup.connections.openPlayStation';
-			this.action(t(key), () => this.options.openConnection(provider));
-			const status = this.element('p');
-			status.dataset.setupProviderStatus = provider;
-			status.textContent = t('setup.connections.statusUnknown');
-			void this.loadConnectionStatus(provider, status, this.lifecycle);
-		}
-		this.navigation();
-	}
-
-	private async loadConnectionStatus(provider: GameProvider, statusEl: HTMLElement, version: number): Promise<void> {
+	private async refreshProvider(provider: Provider, version = this.lifecycle): Promise<void> {
 		try {
 			const status = await this.options.getConnectionStatus(provider);
-			if (this.isCurrent(version)) statusEl.textContent = safeConnectionLabel(status);
+			if (!this.isCurrent(version)) return;
+			this.statuses.set(provider, status);
+			this.renderQuickSetup();
 		} catch {
-			if (this.isCurrent(version)) statusEl.textContent = t('setup.connections.statusUnknown');
+			if (!this.isCurrent(version)) return;
+			this.statuses.set(provider, { provider, state: 'error', connected: false });
+			this.renderQuickSetup();
 		}
 	}
 
-	private renderVault(): void {
-		this.heading(t('setup.vault.title'));
-		this.textSetting(t('setup.vault.folder'), this.settings().notesFolder, 'notesFolder');
-		this.textSetting(t('setup.vault.pattern'), this.settings().filenamePattern, 'filenamePattern');
-		this.textSetting(t('setup.vault.template'), this.settings().templatePath, 'templatePath');
-		this.textSetting(t('setup.vault.base'), this.settings().basePath, 'basePath');
-		this.toggleSetting(t('setup.vault.createBase'), this.settings().createBase, (value) => { this.settings().createBase = value; });
-		this.validationEl = this.element('p');
-		this.navigation();
+	private async refreshGameTrack(version = this.lifecycle): Promise<void> {
+		try { this.gameTrackStatus = await this.options.getGameTrackStatus?.(); }
+		catch { this.gameTrackStatus = { code: 'EXPORT_NOT_FOUND', supported: true, database: 'unavailable', schema: 'unknown', games: 0, platforms: [] }; }
+		if (this.isCurrent(version)) this.renderQuickSetup();
 	}
 
-	private renderFilters(): void {
-		this.heading(t('setup.filters.title'));
-		this.toggleSetting(t('setup.filters.includeUnplayed'), this.settings().includeUnplayed, (value) => { this.settings().includeUnplayed = value; });
-		this.toggleSetting(t('setup.filters.includeFreeToPlay'), this.settings().includeFreeToPlay, (value) => { this.settings().includeFreeToPlay = value; });
-		this.toggleSetting(t('setup.filters.includePreviouslyPlayedNoLongerOwned'), this.settings().includePreviouslyPlayedNoLongerOwned, (value) => { this.settings().includePreviouslyPlayedNoLongerOwned = value; });
-		this.toggleSetting(t('setup.filters.includeDemosTrials'), this.settings().includeDemosTrials, (value) => { this.settings().includeDemosTrials = value; });
-		this.toggleSetting(t('setup.filters.includeBetasTestApps'), this.settings().includeBetasTestApps, (value) => { this.settings().includeBetasTestApps = value; });
-		this.navigation();
+	private async selectGameTrack(): Promise<void> {
+		if (this.gameTrackStatus?.code !== 'READY' || this.state === undefined) return;
+		this.settings().libraryProvider = 'gametrack';
+		try { await this.options.save(migrateState(this.state)); this.renderQuickSetup(); }
+		catch { this.setStatus(t('setup.prepareFailed')); }
 	}
 
-	private renderBehavior(): void {
-		this.heading(t('setup.behavior.title'));
-		new Setting(this.viewEl).setName(t('setup.behavior.previewMode')).addDropdown((component) => {
-			component.addOption('always', t('setup.behavior.previewAlways'));
-			component.addOption('first-and-review', t('setup.behavior.previewFirst'));
-			component.addOption('review-only', t('setup.behavior.previewReview'));
-			component.setValue(this.settings().previewMode);
-			component.onChange((value) => { this.settings().previewMode = value as GameSyncSettings['previewMode']; });
-		});
-		this.toggleSetting(t('setup.behavior.backgroundSync'), this.settings().backgroundSync, (value) => { this.settings().backgroundSync = value; });
-		this.toggleSetting(t('setup.behavior.recordHistory'), this.settings().recordHistory, (value) => { this.settings().recordHistory = value; });
-		this.textSetting(t('setup.behavior.backgroundInterval'), String(this.settings().backgroundIntervalMinutes), 'backgroundIntervalMinutes');
-		this.textSetting(t('setup.behavior.historyPath'), this.settings().historyPath, 'historyPath');
-		this.navigation();
+	private async chooseGameTrackExport(): Promise<void> {
+		try {
+			const selection = await this.options.chooseGameTrackExport?.();
+			if (selection === undefined || this.state === undefined) return;
+			this.settings().libraryProvider = 'gametrack';
+			this.settings().gametrackExportPath = selection.path;
+			this.settings().gametrackExportName = selection.name;
+			this.settings().gametrackExportSize = selection.size;
+			this.settings().gametrackExportModifiedAt = selection.modifiedAt;
+			await this.options.save(migrateState(this.state));
+			await this.refreshGameTrack();
+		} catch {
+			this.setStatus(t('settings.library.exportError'));
+		}
 	}
 
-	private renderInitialFetch(): void {
-		this.heading(t('setup.initialFetch.title'), t('setup.initialFetch.description'));
-		new Setting(this.viewEl).addButton((button) => {
-			button.setButtonText(t('setup.initialFetch.fetch')).setCta();
-			button.onClick(() => void this.prepareInitialSync(button));
-		});
+	private hasConnectedProvider(): boolean {
+		return PROVIDERS.some((provider) => isConnected(this.statuses.get(provider)));
 	}
 
-	private async prepareInitialSync(button: SetupButton): Promise<void> {
-		if (this.pending || !this.isOpen || this.state === undefined) return;
+	private hasSelectedProvider(): boolean {
+		return this.settings().libraryProvider === 'gametrack'
+			? this.gameTrackStatus?.code === 'READY'
+			: this.hasConnectedProvider();
+	}
+
+	private async disconnect(provider: Provider): Promise<void> {
+		if (this.options.disconnect === undefined) return;
+		const confirmed = await Promise.resolve(this.options.confirm?.(t('settings.accounts.disconnectConfirm')) ?? true);
+		if (!confirmed || !this.isOpen) return;
+		try {
+			await this.options.disconnect(provider);
+			await this.refreshProvider(provider);
+		} catch {
+			this.setStatus(t('setup.provider.disconnectFailed'));
+		}
+	}
+
+	private setStatus(message: string): void {
+		if (this.statusEl !== undefined) this.statusEl.textContent = message;
+	}
+
+	private async prepareInitialSync(): Promise<void> {
+		if (this.pending || !this.isOpen || this.state === undefined || this.previewButton === undefined) return;
 		const version = this.lifecycle;
 		this.pending = true;
-		button.setDisabled(true);
-		this.status(t('setup.initialFetch.preparing'));
+		this.previewButton.setDisabled(true);
+		this.previewButton.setButtonText(t('setup.preparing'));
+		this.setStatus(t('setup.preparing'));
 		const nextState = migrateState(this.state);
-		nextState.settings.setupCompleted = true;
-		try {
-			await this.options.save(nextState);
-		} catch {
-			if (this.isCurrent(version)) {
-				this.status(t('setup.initialFetch.saveFailed'));
-				this.pending = false;
-				button.setDisabled(false);
+		if (nextState.settings.libraryProvider !== undefined && (this.options.prepareCanonical !== undefined || nextState.settings.libraryProvider === 'gametrack')) {
+			try {
+				await this.options.save(nextState);
+				const preview = await (this.options.prepareCanonical ?? this.options.prepareGameTrack)?.();
+				if (preview !== undefined) await (this.options.onCanonicalPreview ?? this.options.onGameTrackPreview)?.(preview);
+				if (this.isCurrent(version)) this.close();
+			} catch {
+				if (this.isCurrent(version)) this.setStatus(t('setup.prepareFailed'));
+			} finally {
+				if (this.isCurrent(version)) {
+					this.pending = false;
+					this.previewButton?.setButtonText(t('setup.preview'));
+					this.previewButton?.setDisabled(!this.hasSelectedProvider());
+				}
 			}
 			return;
 		}
-		if (!this.isCurrent(version)) return;
-		this.state = nextState;
+		for (const provider of PROVIDERS) nextState.settings.enabledProviders[provider] = isConnected(this.statuses.get(provider));
+		nextState.settings.setupCompleted = false;
 		try {
+			await this.options.save(nextState);
+			if (!this.isCurrent(version)) return;
+			this.state = nextState;
 			const prepared = await this.options.prepareAll();
 			if (!this.isCurrent(version)) return;
 			await this.options.onPreparedSync(prepared);
+			if (this.isCurrent(version)) this.close();
 		} catch {
-			if (this.isCurrent(version)) this.status(t('setup.initialFetch.prepareFailed'));
+			if (this.isCurrent(version)) this.setStatus(t('setup.prepareFailed'));
 		} finally {
 			if (this.isCurrent(version)) {
 				this.pending = false;
-				button.setDisabled(false);
+				this.previewButton?.setButtonText(t('setup.preview'));
+				this.previewButton?.setDisabled(!this.hasSelectedProvider());
 			}
 		}
 	}

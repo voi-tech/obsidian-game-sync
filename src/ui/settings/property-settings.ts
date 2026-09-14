@@ -14,6 +14,10 @@ export interface PropertySettingsOptions {
 
 type PropertySettingsCallback = PropertySettingsOptions['writeMapping'];
 
+const USER_FACING_PROPERTY_KEYS: readonly ManagedPropertyKey[] = [
+	'title', 'released', 'developers', 'publishers', 'genres', 'cover', 'platforms', 'providers', 'owned', 'acquisitionType', 'playtime', 'lastPlayed',
+];
+
 function translation(key: string, params?: Record<string, string | number>): string {
 	return t(key as TranslationKey, params as never);
 }
@@ -32,19 +36,9 @@ export class PropertySettings {
 	private readonly destinationInputs = new Map<ManagedPropertyKey, HTMLInputElement>();
 	private statusEl?: HTMLElement;
 
-	constructor(
-		private readonly containerEl: HTMLElement,
-		mappingOrOptions: PropertyMapping | PropertySettingsOptions,
-		writeMapping?: PropertySettingsCallback,
-	) {
-		if ('mapping' in mappingOrOptions && 'writeMapping' in mappingOrOptions) {
-			this.mapping = { ...mappingOrOptions.mapping };
-			this.writeMapping = mappingOrOptions.writeMapping;
-		} else {
-			this.mapping = { ...mappingOrOptions };
-			if (writeMapping === undefined) throw new Error('Property mapping write callback is required.');
-			this.writeMapping = writeMapping;
-		}
+	constructor(private readonly containerEl: HTMLElement, options: PropertySettingsOptions) {
+		this.mapping = { ...options.mapping };
+		this.writeMapping = options.writeMapping;
 	}
 
 	private readonly writeMapping: PropertySettingsCallback;
@@ -56,18 +50,19 @@ export class PropertySettings {
 		this.statusEl.dataset.propertyMappingStatus = 'true';
 		this.containerEl.append(this.statusEl);
 
-		for (const key of Object.keys(DEFAULT_PROPERTY_MAPPING) as ManagedPropertyKey[]) {
+		for (const key of USER_FACING_PROPERTY_KEYS) {
 			const raw = this.mapping[key];
 			const enabled = raw !== null && raw !== false;
 			const destination = typeof raw === 'string' ? raw : DEFAULT_PROPERTY_MAPPING[key];
 			this.previousDestinations.set(key, typeof raw === 'string' ? raw : undefined);
 			const setting = new Setting(this.containerEl)
 				.setName(translation(`settings.properties.fields.${key}`))
-				.setDesc(translation('settings.properties.destination'));
+				.setDesc(translation('settings.properties.destinationDescription'));
 			setting.addText((component) => {
 				const input = component.inputEl;
 				input.dataset.propertyDestination = key;
 				input.value = destination;
+				component.setPlaceholder?.(destination);
 				input.disabled = !enabled;
 				input.addEventListener('input', () => {
 					this.mapping[key] = input.value;
@@ -98,8 +93,7 @@ export class PropertySettings {
 					}
 					void this.persist();
 				});
-				});
-			if (key === 'gameSyncId') setting.setDesc(`${translation('settings.properties.destination')} — ${translation('settings.properties.gameSyncIdWarning')}`);
+			});
 		}
 	}
 
@@ -122,5 +116,3 @@ export class PropertySettings {
 		}
 	}
 }
-
-export { PropertySettings as PropertySettingsView };

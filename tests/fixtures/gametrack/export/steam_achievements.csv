@@ -1,0 +1,4 @@
+steam_game_appid,name,display_name,description,achieved,unlock_time,icon_url,icon_gray_url,hidden,rarity
+440,ACH_ONE,First,First achievement,1,2024-03-01T00:00:00.000Z,,,0,10
+440,ACH_TWO,Second,Second achievement,0,0,,,0,50
+550,ACH_THREE,Third,Third achievement,1,2024-03-02T00:00:00.000Z,,,0,20

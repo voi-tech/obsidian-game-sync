@@ -78,4 +78,19 @@ describe('diagnostic report', () => {
 			expect(report).not.toContain(value);
 		}
 	});
+
+	it('includes sanitized GameTrack readiness without exposing its database path or library data', () => {
+		const report = buildDiagnosticReport({
+			gameSyncVersion: '26.9.0', obsidianVersion: '1.13.7', osPlatform: 'macOS / desktop',
+			providers: {
+				gametrack: { enabled: true, status: 'READY', readiness: 'READY', games: 207, warnings: 2, errorCodes: ['DECODE_WARNING'] },
+			},
+			gametrackDatabasePath: '/Users/private/Library/Containers/com.joekw.gametrack/GameData.sqlite',
+			library: [{ title: 'Private game' }],
+		});
+
+		expect(report).toContain('gametrack: enabled=true; status=READY; readiness=READY; games=207; warnings=2; errors=DECODE_WARNING');
+		expect(report).not.toContain('/Users/private');
+		expect(report).not.toContain('Private game');
+	});
 });

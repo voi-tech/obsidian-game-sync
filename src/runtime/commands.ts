@@ -12,11 +12,7 @@ export type GameSyncCommandAction = () => void | PromiseLike<void>;
 
 export interface GameSyncCommandActions {
 	syncAll: GameSyncCommandAction;
-	syncSteam: GameSyncCommandAction;
-	syncPlayStation: GameSyncCommandAction;
 	previewAllChanges: GameSyncCommandAction;
-	previewSteamChanges: GameSyncCommandAction;
-	previewPlayStationChanges: GameSyncCommandAction;
 	reviewPendingMatches: GameSyncCommandAction;
 	manageGameMatches: GameSyncCommandAction;
 	manageIgnoredGames: GameSyncCommandAction;
@@ -38,19 +34,15 @@ type CommandDefinition = {
 };
 
 const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
-	{ id: 'sync-all', name: 'Sync all', action: 'syncAll' },
-	{ id: 'sync-steam', name: 'Sync Steam', action: 'syncSteam' },
-	{ id: 'sync-playstation', name: 'Sync PlayStation', action: 'syncPlayStation' },
-	{ id: 'preview-all-changes', name: 'Preview all changes', action: 'previewAllChanges' },
-	{ id: 'preview-steam-changes', name: 'Preview Steam changes', action: 'previewSteamChanges' },
-	{ id: 'preview-playstation-changes', name: 'Preview PlayStation changes', action: 'previewPlayStationChanges' },
+	{ id: 'sync-all', name: 'Sync games', action: 'syncAll' },
+	{ id: 'preview-all-changes', name: 'Preview sync', action: 'previewAllChanges' },
 	{ id: 'review-pending-matches', name: 'Review pending matches', action: 'reviewPendingMatches' },
 	{ id: 'manage-game-matches', name: 'Manage game matches', action: 'manageGameMatches' },
 	{ id: 'manage-ignored-games', name: 'Manage ignored games', action: 'manageIgnoredGames' },
 	{ id: 'open-library-summary', name: 'Open library summary', action: 'openLibrarySummary' },
 	{ id: 'force-refresh-all-data', name: 'Force refresh all data', action: 'forceRefreshAllData' },
 	{ id: 'copy-diagnostic-information', name: 'Copy diagnostic information', action: 'copyDiagnosticInformation' },
-	{ id: 'run-setup-wizard', name: 'Run setup wizard', action: 'runSetupWizard' },
+	{ id: 'run-setup-wizard', name: 'Open Quick Setup', action: 'runSetupWizard' },
 ];
 
 function reportCommandError(onError: CommandErrorHandler | undefined): void {

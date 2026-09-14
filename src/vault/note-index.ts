@@ -1,4 +1,5 @@
 import { DEFAULT_PROPERTY_MAPPING, resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
+import { resolveCanonicalPropertyMapping, type CanonicalPropertyMapping } from './canonical-projection';
 import { parseFrontmatter } from './frontmatter';
 import type { VaultGateway, VaultNoteRef } from './gateway';
 
@@ -24,13 +25,18 @@ function valuesFor(properties: Record<string, unknown>, names: readonly (string 
 
 export class NoteIndex {
 	private readonly gameSyncIds = new Map<string, IndexedNote[]>();
+	private readonly igdbIds = new Map<string, IndexedNote[]>();
+	private readonly gameTrackIds = new Map<string, IndexedNote[]>();
 	private readonly steamIds = new Map<string, IndexedNote[]>();
 	private readonly playstationIds = new Map<string, IndexedNote[]>();
 
-	constructor(readonly notes: readonly IndexedNote[], mapping: PropertyMapping = {}) {
+	constructor(readonly notes: readonly IndexedNote[], mapping: PropertyMapping = {}, canonicalMapping: CanonicalPropertyMapping = {}) {
 		const resolved = resolvePropertyMapping(mapping);
+		const canonical = resolveCanonicalPropertyMapping(canonicalMapping);
 		for (const note of notes) {
 			this.add(this.gameSyncIds, note, valuesFor(note.properties, [resolved.gameSyncId]));
+			this.add(this.igdbIds, note, valuesFor(note.properties, [canonical.igdbId]));
+			this.add(this.gameTrackIds, note, valuesFor(note.properties, [canonical.gametrackId]));
 			this.add(this.steamIds, note, valuesFor(note.properties, [resolved.steamId]));
 			this.add(this.playstationIds, note, valuesFor(note.properties, [
 				resolved.playstationId, 'playstation-concept-id', 'playstation-title-ids', 'playstation-communication-ids', 'psn-title-ids', 'psn-communication-ids',
@@ -51,6 +57,8 @@ export class NoteIndex {
 	}
 
 	findByGameSyncId(value: string): IndexedNote[] { return this.all(this.gameSyncIds, value); }
+	findByIgdbId(value: number | string): IndexedNote[] { return this.all(this.igdbIds, String(value)); }
+	findByGameTrackId(value: string): IndexedNote[] { return this.all(this.gameTrackIds, value); }
 	findBySteamId(value: string): IndexedNote[] { return this.all(this.steamIds, value); }
 	findByPlayStationIdentifier(value: string): IndexedNote[] { return this.all(this.playstationIds, value); }
 	findCandidates(title: string): IndexedNote[] {
@@ -59,7 +67,11 @@ export class NoteIndex {
 	}
 }
 
-export async function buildNoteIndex(gateway: VaultGateway, mapping: PropertyMapping = DEFAULT_PROPERTY_MAPPING): Promise<NoteIndex> {
+export async function buildNoteIndex(
+	gateway: VaultGateway,
+	mapping: PropertyMapping = DEFAULT_PROPERTY_MAPPING,
+	canonicalMapping: CanonicalPropertyMapping = {},
+): Promise<NoteIndex> {
 	const refs = await gateway.listMarkdownFiles();
 	const notes: IndexedNote[] = [];
 	const resolved = resolvePropertyMapping(mapping);
@@ -77,5 +89,5 @@ export async function buildNoteIndex(gateway: VaultGateway, mapping: PropertyMap
 			normalizedFilename: normalize(fileTitle),
 		});
 	}
-	return new NoteIndex(notes, mapping);
+	return new NoteIndex(notes, mapping, canonicalMapping);
 }

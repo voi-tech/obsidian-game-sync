@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { expectNoBodyHeadingMatchingModalTitle } from './ui-helpers';
 
 const obsidianMock = vi.hoisted(() => {
 	class Modal {
@@ -72,7 +73,7 @@ const obsidianMock = vi.hoisted(() => {
 vi.mock('obsidian', () => obsidianMock);
 
 const { MatchManagerModal } = await import('../src/ui/match-manager');
-import type { MatchManagerAdapter, MatchManagerRow } from '../src/ui/match-manager';
+import type { MatchManagerAdapter, MatchManagerRow, PreparedUnmerge } from '../src/ui/match-manager';
 
 function rows(): MatchManagerRow[] {
 	return [
@@ -99,6 +100,7 @@ function rows(): MatchManagerRow[] {
 			canonicalId: 'canonical:unresolved',
 			title: 'Unresolved game',
 			existingPath: 'Games/Unresolved.md',
+			candidatePath: 'Games/Unresolved.md',
 			providers: [],
 		},
 	];
@@ -107,9 +109,24 @@ function rows(): MatchManagerRow[] {
 function adapter(overrides: Partial<MatchManagerAdapter> = {}): MatchManagerAdapter {
 	return {
 		rows: rows(),
-		prepareUnmerge: vi.fn().mockResolvedValue({ planId: 'plan:prepared', preview: { safe: true } }),
+		prepareUnmerge: vi.fn().mockResolvedValue({
+			planId: 'plan:prepared',
+			plan: { id: 'plan:prepared', planRevision: 'revision:prepared', expectedNoteFingerprints: {}, operations: [{ risk: 'review', kind: 'unmerge' } as never] },
+			preview: {
+				existingPath: 'Games/Merged.md',
+				newPath: 'Games/Merged (PlayStation).md',
+				providerToKeep: 'steam',
+				providerToSplit: 'playstation',
+				providerToKeepId: '10',
+				providerToSplitId: '20',
+				providerIds: { steam: '10', playstation: '20' },
+				propertiesRemoved: [{ name: 'playstation-id' }],
+				propertiesAdded: [{ name: 'playstation-id' }],
+			},
+		} satisfies PreparedUnmerge),
+		applyUnmerge: vi.fn().mockResolvedValue(undefined),
 		allowMatchingAgain: vi.fn().mockResolvedValue(undefined),
-		onPreparedUnmerge: vi.fn().mockResolvedValue(undefined),
+		resolveUnresolved: vi.fn().mockResolvedValue(undefined),
 		...overrides,
 	};
 }
@@ -123,6 +140,7 @@ describe('MatchManagerModal', () => {
 	it('renders exactly the three tabs, searchable rows, and explicit provider choices', () => {
 		const modal = new MatchManagerModal({} as never, { adapter: adapter() });
 		modal.onOpen();
+		expectNoBodyHeadingMatchingModalTitle(modal.contentEl, 'Match manager');
 
 		expect(Array.from(modal.contentEl.querySelectorAll<HTMLElement>('[data-match-manager-tab]')).map((element) => element.textContent)).toEqual(['Merged', 'Kept separate', 'Unresolved']);
 		expect(modal.contentEl.querySelectorAll('[data-match-manager-row]')).toHaveLength(3);
@@ -136,10 +154,20 @@ describe('MatchManagerModal', () => {
 		expect(modal.contentEl.querySelector<HTMLElement>('[data-match-manager-row="canonical:unresolved"]')!.hidden).toBe(false);
 	});
 
-	it('requires provider selection, prepares only through the callback, and forwards the prepared result', async () => {
+	it('requires provider selection, shows the review preview, and applies only after explicit Apply', async () => {
 		const prepareUnmerge = vi.fn().mockResolvedValue({ planId: 'plan:prepared', preview: { safe: true } });
-		const onPreparedUnmerge = vi.fn().mockResolvedValue(undefined);
-		const modal = new MatchManagerModal({} as never, { adapter: adapter({ prepareUnmerge, onPreparedUnmerge }) });
+		const applyUnmerge = vi.fn().mockResolvedValue(undefined);
+		const prepared = {
+			planId: 'plan:prepared',
+			plan: { operations: [{ risk: 'review', kind: 'unmerge' }] },
+			preview: {
+				existingPath: 'Games/Merged.md', newPath: 'Games/Merged (PlayStation).md', providerToKeep: 'steam', providerToSplit: 'playstation',
+				providerToKeepId: '10', providerToSplitId: '20', providerIds: { steam: '10', playstation: '20' },
+				propertiesRemoved: [{ name: 'playstation-id' }], propertiesAdded: [{ name: 'playstation-id' }],
+			},
+		} as unknown as PreparedUnmerge;
+		prepareUnmerge.mockResolvedValue(prepared);
+		const modal = new MatchManagerModal({} as never, { adapter: adapter({ prepareUnmerge, applyUnmerge }) });
 		modal.onOpen();
 
 		const prepare = modal.contentEl.querySelector<HTMLButtonElement>('[data-match-manager-prepare]')!;
@@ -153,8 +181,11 @@ describe('MatchManagerModal', () => {
 		select.dispatchEvent(new Event('change'));
 		prepare.click();
 		await vi.waitFor(() => expect(prepareUnmerge).toHaveBeenCalledWith('canonical:merged', 'playstation'));
-		await vi.waitFor(() => expect(onPreparedUnmerge).toHaveBeenCalledWith({ planId: 'plan:prepared', preview: { safe: true } }));
-		expect(modal.contentEl.querySelector('[data-match-manager-apply]')).toBeNull();
+		expect(modal.contentEl.querySelector('[data-match-manager-preview]')?.textContent).toContain('Games/Merged (PlayStation).md');
+		const apply = modal.contentEl.querySelector<HTMLButtonElement>('[data-match-manager-apply]');
+		expect(apply).not.toBeNull();
+		apply?.click();
+		await vi.waitFor(() => expect(applyUnmerge).toHaveBeenCalledWith(prepared));
 		await vi.waitFor(() => expect(modal.contentEl.querySelector('[data-match-manager-prepared]')?.textContent).toContain('plan:prepared'));
 	});
 
@@ -167,9 +198,22 @@ describe('MatchManagerModal', () => {
 		await vi.waitFor(() => expect(allowMatchingAgain).toHaveBeenCalledWith('canonical:left', 'canonical:right'));
 	});
 
+	it('offers explicit resolution choices for unresolved candidates', async () => {
+		const resolveUnresolved = vi.fn().mockResolvedValue(undefined);
+		const modal = new MatchManagerModal({} as never, { adapter: adapter({ resolveUnresolved }) });
+		modal.onOpen();
+		modal.contentEl.querySelector<HTMLButtonElement>('[data-match-manager-tab="unresolved"]')!.click();
+
+		expect(modal.contentEl.querySelector('[data-match-manager-resolution="merge:canonical:unresolved"]')).not.toBeNull();
+		expect(modal.contentEl.querySelector('[data-match-manager-resolution="keep-separate:canonical:unresolved"]')).not.toBeNull();
+		expect(modal.contentEl.querySelector('[data-match-manager-resolution="skip:canonical:unresolved"]')).not.toBeNull();
+		modal.contentEl.querySelector<HTMLButtonElement>('[data-match-manager-resolution="keep-separate:canonical:unresolved"]')!.click();
+		await vi.waitFor(() => expect(resolveUnresolved).toHaveBeenCalledWith('canonical:unresolved', 'keep-separate', 'Games/Unresolved.md'));
+	});
+
 	it('localizes both languages, hides raw errors, and ignores late prepare callbacks after close', async () => {
-		let resolvePrepare!: (value: { planId: string; preview: unknown }) => void;
-		const prepareUnmerge = vi.fn(() => new Promise<{ planId: string; preview: unknown }>((resolve) => { resolvePrepare = resolve; }));
+		let resolvePrepare!: (value: PreparedUnmerge) => void;
+		const prepareUnmerge = vi.fn(() => new Promise<PreparedUnmerge>((resolve) => { resolvePrepare = resolve; }));
 		const modal = new MatchManagerModal({} as never, { adapter: adapter({ prepareUnmerge }) });
 		modal.onOpen();
 		const select = modal.contentEl.querySelector<HTMLSelectElement>('[data-match-manager-provider-select]')!;
@@ -177,7 +221,15 @@ describe('MatchManagerModal', () => {
 		select.dispatchEvent(new Event('change'));
 		modal.contentEl.querySelector<HTMLButtonElement>('[data-match-manager-prepare]')!.click();
 		modal.onClose();
-		resolvePrepare({ planId: 'plan:late', preview: 'SECRET_PREVIEW' });
+		resolvePrepare({
+			planId: 'plan:late',
+			plan: { id: 'plan:late', planRevision: 'revision:late', expectedNoteFingerprints: {}, operations: [{ risk: 'review', kind: 'unmerge' } as never] },
+			preview: {
+				existingPath: 'Games/Merged.md', newPath: 'Games/Merged (PlayStation).md', providerToKeep: 'steam', providerToSplit: 'playstation',
+				providerToKeepId: '10', providerToSplitId: '20', providerIds: { steam: '10', playstation: '20' },
+				propertiesRemoved: [], propertiesAdded: [],
+			},
+		} satisfies PreparedUnmerge);
 		await Promise.resolve();
 		expect(modal.contentEl.textContent).not.toContain('SECRET_PREVIEW');
 

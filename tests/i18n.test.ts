@@ -72,4 +72,18 @@ describe('typed Game Sync translations', () => {
 		expect(t('sync.summary.gamesFetched', { count: 3 })).toBe('Games fetched: 3');
 		expect(t('sync.messages.providerFailed', { provider: '<Steam>' })).toBe('The <Steam> provider failed.');
 	});
+
+	it('translates runtime fallback notices', () => {
+		language.mockReturnValue('en');
+		expect(t('sync.messages.clipboardUnavailable')).toBe('Game Sync: Clipboard is unavailable.');
+		expect(t('sync.messages.gametrackUnavailable')).toBe('GameTrack is not ready. Check Game Sync settings.');
+		expect(t('sync.messages.commandUnavailable')).toBe('Game Sync: This command is unavailable.');
+		expect(t('sync.messages.commandFailed')).toBe('Game Sync command failed.');
+
+		language.mockReturnValue('pl');
+		expect(t('sync.messages.clipboardUnavailable')).toBe('Game Sync: Schowek jest niedostępny.');
+		expect(t('sync.messages.gametrackUnavailable')).toBe('GameTrack nie jest gotowy. Sprawdź ustawienia Game Sync.');
+		expect(t('sync.messages.commandUnavailable')).toBe('Game Sync: Ta komenda jest niedostępna.');
+		expect(t('sync.messages.commandFailed')).toBe('Nie udało się wykonać polecenia Game Sync.');
+	});
 });

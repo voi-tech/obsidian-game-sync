@@ -1,0 +1,8 @@
+uuid,igdb_id,title,summary,developer,publisher,poster_url,banner_url,release_date,release_year,platforms,owned_platform,additional_platforms,status,game_state,completion_state,completion,priority,format,user_rating,critic_rating,hours_played,additional_playtime,start_date,finish_date,added_date,notes,review,review_spoilers,time_to_beat_story,time_to_beat_extras,time_to_beat_complete,time_to_beat_type,steam_deck_status,genres
+00112233-4455-6677-8899-aabbccddeeff,1001,Steam Fixture,"Summary, with comma
+and newline",Studio,Publisher,https://example.test/cover.jpg,,2024-01-02T00:00:00.000Z,2024,PC|Steam,PC,,Collection,3,0,0,-1,0,0,80,2.5,0.25,,,2024-01-03T00:00:00.000Z,"Note, with comma
+and newline",,false,0,0,0,0,-1,😎 Indie|⚔️ RPG
+11112222-3333-4444-5555-666677778888,1002,PlayStation Fixture,,Studio,Publisher,, ,2023-02-03T00:00:00.000Z,2023,PS5,PS5,,Completed,4,1,0,100,0,0,0,1.0,0.0,,,2024-01-04T00:00:00.000Z,,,false,0,0,0,0,-1,Action
+99990000-aaaa-bbbb-cccc-ddddeeeeffff,1003,Multi Platform Fixture,,Studio,Publisher,,,2022-03-04T00:00:00.000Z,2022,PC|PS5|XBOX,PS5,Switch,,3,0,0,-1,0,0,0,4.0,0.0,,,2024-01-05T00:00:00.000Z,,,false,0,0,0,0,-1,
+aaaa0000-bbbb-cccc-dddd-eeeeffff0000,1004,Achievement Fixture,,Studio,Publisher,,,2021-04-05T00:00:00.000Z,2021,PC|XONE,PC,,Playing,2,1,0,35,0,0,0,0.5,0.0,,,2024-01-06T00:00:00.000Z,,,false,0,0,0,0,-1,Action
+bbbb0000-cccc-dddd-eeee-ffff00001111,,Missing IGDB,,Studio,Publisher,,,2020-05-06T00:00:00.000Z,2020,PC,PC,,Collection,3,0,0,-1,0,0,0,0.0,0.0,,,2024-01-07T00:00:00.000Z,,,false,0,0,0,0,-1,

@@ -6,6 +6,7 @@ import { migrateState } from '../src/state/migrations';
 import type { GameSyncData } from '../src/state/schema';
 import type { StateStore } from '../src/state/store';
 import type { GameSyncRuntimeComposition } from '../src/runtime/composition';
+import type { MatchManagerAdapter } from '../src/ui/match-manager';
 import {
 	createGameSyncCommandActions,
 	type RuntimeUiPort,
@@ -156,6 +157,8 @@ function fixture() {
 	const openSetupWizard = vi.fn();
 	const copyDiagnostics = vi.fn();
 	const showUnavailable = vi.fn();
+	const openMatchManager = vi.fn();
+	const createMatchManager = vi.fn(async () => ({ rows: [] }) as unknown as MatchManagerAdapter);
 	const ui: RuntimeUiPort = {
 		openPreview: (value, onApply, onReviewDecision) => { previews.push({ prepared: value, onApply, onReviewDecision }); },
 		openSummary: (value) => { summaries.push(value); },
@@ -163,19 +166,16 @@ function fixture() {
 		openSetupWizard,
 		copyDiagnostics,
 		showUnavailable,
+		openMatchManager,
 	};
-	const actions = createGameSyncCommandActions({ composition, ui });
-	return { actions, composition, createService, services, previews, summaries, ui, openIgnoredGames, openSetupWizard, copyDiagnostics, showUnavailable };
+	const actions = createGameSyncCommandActions({ composition: { ...composition, createMatchManager } as unknown as GameSyncRuntimeComposition, ui });
+	return { actions, composition, createService, createMatchManager, services, previews, summaries, ui, openIgnoredGames, openSetupWizard, copyDiagnostics, showUnavailable, openMatchManager };
 }
 
 describe('createGameSyncCommandActions', () => {
 	it.each([
 		['syncAll', undefined],
-		['syncSteam', ['steam']],
-		['syncPlayStation', ['playstation']],
 		['previewAllChanges', undefined],
-		['previewSteamChanges', ['steam']],
-		['previewPlayStationChanges', ['playstation']],
 	] as const)('prepares %s with the expected provider scope', async (actionName, expectedScope) => {
 		const fixtureValue = fixture();
 
@@ -242,7 +242,7 @@ describe('createGameSyncCommandActions', () => {
 		expect(fixtureValue.summaries).toEqual([buildLibrarySummary(currentState)]);
 	});
 
-	it('routes unavailable and auxiliary commands through the UI port', async () => {
+	it('opens the local match manager and routes auxiliary commands through the UI port', async () => {
 		const fixtureValue = fixture();
 
 		await fixtureValue.actions.manageGameMatches();
@@ -250,7 +250,9 @@ describe('createGameSyncCommandActions', () => {
 		await fixtureValue.actions.copyDiagnosticInformation();
 		await fixtureValue.actions.runSetupWizard();
 
-		expect(fixtureValue.showUnavailable).toHaveBeenCalledWith('manage-game-matches');
+		expect(fixtureValue.createMatchManager).toHaveBeenCalledOnce();
+		expect(fixtureValue.openMatchManager).toHaveBeenCalledWith({ rows: [] });
+		expect(fixtureValue.showUnavailable).not.toHaveBeenCalled();
 		expect(fixtureValue.openIgnoredGames).toHaveBeenCalledOnce();
 		expect(fixtureValue.copyDiagnostics).toHaveBeenCalledOnce();
 		expect(fixtureValue.openSetupWizard).toHaveBeenCalledOnce();
@@ -277,12 +279,13 @@ describe('createGameSyncCommandActions', () => {
 			openSetupWizard: vi.fn(),
 			copyDiagnostics: vi.fn(),
 			showUnavailable: vi.fn(),
+			openMatchManager: vi.fn(),
 		};
 		const actions = createGameSyncCommandActions({ composition: { createService } as unknown as GameSyncRuntimeComposition, ui });
 
 		const first = actions.syncAll();
 		await started;
-		const second = actions.syncSteam();
+		const second = actions.syncAll();
 		await Promise.resolve();
 		expect(createService).toHaveBeenCalledTimes(1);
 

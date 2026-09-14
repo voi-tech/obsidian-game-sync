@@ -1,37 +1,9 @@
 import { Modal, Setting, type App } from 'obsidian';
 import { t, type TranslationKey } from '../i18n';
 import type { GameProvider } from '../model/provider';
+import type { MatchManagerAdapter, MatchManagerCategory, MatchManagerRow, MatchResolutionAction, PreparedUnmerge, UnmergePreview } from '../model/match-manager';
 
-export type MatchManagerCategory = 'merged' | 'kept-separate' | 'unresolved';
-
-export interface MatchManagerProvider {
-	provider: GameProvider;
-	providerRef: string;
-	providerName: string;
-}
-
-interface MatchManagerRowBase {
-	title?: string;
-	existingPath?: string;
-	providers: readonly MatchManagerProvider[];
-}
-
-export type MatchManagerRow =
-	| (MatchManagerRowBase & { category: 'merged'; canonicalId: string })
-	| (MatchManagerRowBase & { category: 'kept-separate'; leftCanonicalId: string; rightCanonicalId: string })
-	| (MatchManagerRowBase & { category: 'unresolved'; canonicalId: string });
-
-export interface PreparedUnmerge {
-	planId: string;
-	preview: unknown;
-}
-
-export interface MatchManagerAdapter {
-	rows: readonly MatchManagerRow[];
-	prepareUnmerge(existingCanonicalId: string, providerToKeep: GameProvider): Promise<PreparedUnmerge>;
-	allowMatchingAgain(leftCanonicalId: string, rightCanonicalId: string): Promise<void>;
-	onPreparedUnmerge(prepared: PreparedUnmerge): void | Promise<void>;
-}
+export type { MatchManagerAdapter, MatchManagerCategory, MatchManagerProvider, MatchManagerRow, MatchResolutionAction, PreparedUnmerge, UnmergePlan, UnmergePreview, UnmergePropertyChange } from '../model/match-manager';
 
 export interface MatchManagerModalOptions {
 	adapter: MatchManagerAdapter;
@@ -56,6 +28,7 @@ function rowLabel(row: MatchManagerRow): string {
 
 export class MatchManagerModal extends Modal {
 	private readonly selectedProviders = new Map<string, GameProvider>();
+	private readonly selectedCandidates = new Map<string, string>();
 	private lifecycle = 0;
 	private isOpen = false;
 	private category: MatchManagerCategory = 'merged';
@@ -73,6 +46,7 @@ export class MatchManagerModal extends Modal {
 		this.category = 'merged';
 		this.search = '';
 		this.selectedProviders.clear();
+		this.selectedCandidates.clear();
 		this.rows = [];
 		this.setTitle(translation('matchManager.title'));
 		this.contentEl.replaceChildren();
@@ -89,10 +63,13 @@ export class MatchManagerModal extends Modal {
 	}
 
 	private render(): void {
-		const search = new Setting(this.contentEl).setName(translation('matchManager.search'));
+		const search = new Setting(this.contentEl)
+			.setName(translation('matchManager.search'))
+			.setDesc(translation('matchManager.searchDescription'));
 		search.addText((component) => {
 			component.inputEl.type = 'search';
 			component.inputEl.dataset.matchManagerSearch = 'true';
+			component.inputEl.placeholder = translation('matchManager.searchPlaceholder');
 			component.inputEl.addEventListener('input', () => {
 				this.search = component.inputEl.value;
 				this.updateVisibility();
@@ -150,9 +127,51 @@ export class MatchManagerModal extends Modal {
 		if (row.category === 'merged') this.renderMergedActions(row, section);
 		if (row.category === 'kept-separate') this.renderKeptSeparateActions(row, section);
 		if (row.category === 'unresolved') {
-			const status = this.element('p', section);
-			status.dataset.matchManagerReview = rowKey(row);
-			status.textContent = translation('matchManager.reviewStatus');
+			this.renderUnresolvedActions(row, section);
+		}
+	}
+
+	private renderUnresolvedActions(row: Extract<MatchManagerRow, { category: 'unresolved' }>, parent: HTMLElement): void {
+		const action = new Setting(parent).setName(translation('matchManager.reviewStatus'));
+		const candidates = row.candidatePaths ?? (row.candidatePath === undefined ? [] : [row.candidatePath]);
+		if (candidates.length > 1) {
+			const candidateSelect = new Setting(parent).setName(translation('matchManager.candidate'));
+			candidateSelect.addDropdown((dropdown) => {
+				dropdown.selectEl.dataset.matchManagerCandidateSelect = rowKey(row);
+				dropdown.addOption('', translation('matchManager.chooseCandidate'));
+				for (const path of candidates) dropdown.addOption(path, path);
+				dropdown.setValue('');
+				dropdown.onChange((value) => {
+					if (value === '') this.selectedCandidates.delete(rowKey(row));
+					else this.selectedCandidates.set(rowKey(row), value);
+					this.updateUnresolvedButtons(row);
+				});
+			});
+		} else if (candidates.length === 1) {
+			action.setDesc(candidates[0]);
+		} else if (row.reason !== undefined) {
+			action.setDesc(row.reason);
+		}
+		for (const resolution of ['merge', 'keep-separate', 'skip'] as const) {
+			action.addButton((button) => {
+				button.setButtonText(translation(`sync.preview.actions.${resolution}`));
+				button.buttonEl.dataset.matchManagerResolution = `${resolution}:${rowKey(row)}`;
+				button.setDisabled(resolution !== 'skip' && this.unresolvedCandidate(row) === undefined);
+				button.onClick(() => void this.resolveUnresolved(row, resolution, button.buttonEl));
+			});
+		}
+	}
+
+	private unresolvedCandidate(row: Extract<MatchManagerRow, { category: 'unresolved' }>): string | undefined {
+		const candidates = row.candidatePaths ?? (row.candidatePath === undefined ? [] : [row.candidatePath]);
+		return this.selectedCandidates.get(rowKey(row)) ?? (candidates.length === 1 ? candidates[0] : undefined);
+	}
+
+	private updateUnresolvedButtons(row: Extract<MatchManagerRow, { category: 'unresolved' }>): void {
+		const candidate = this.unresolvedCandidate(row);
+		for (const resolution of ['merge', 'keep-separate'] as const) {
+			const button = this.contentEl.querySelector<HTMLButtonElement>(`[data-match-manager-resolution="${resolution}:${rowKey(row)}"]`);
+			if (button !== null) button.disabled = candidate === undefined;
 		}
 	}
 
@@ -225,13 +244,49 @@ export class MatchManagerModal extends Modal {
 		try {
 			const prepared = await this.options.adapter.prepareUnmerge(row.canonicalId, providerToKeep);
 			if (!this.isCurrent(version)) return;
-			await this.options.adapter.onPreparedUnmerge(prepared);
-			if (!this.isCurrent(version)) return;
-			const result = this.element('p', button.parentElement?.parentElement ?? this.contentEl);
-			result.dataset.matchManagerPrepared = row.canonicalId;
-			result.textContent = `${translation('matchManager.prepared', { planId: prepared.planId })} ${translation('matchManager.preparedReady')}`;
+			this.renderPrepared(row, button.parentElement?.parentElement ?? this.contentEl, prepared);
 		} catch {
 			if (this.isCurrent(version)) this.setStatus(translation('matchManager.prepareFailed'));
+		} finally {
+			if (this.isCurrent(version)) button.disabled = false;
+		}
+	}
+
+	private renderPrepared(row: Extract<MatchManagerRow, { category: 'merged' }>, parent: HTMLElement, prepared: PreparedUnmerge): void {
+		parent.querySelector('[data-match-manager-preview]')?.remove();
+		const preview = this.element('div', parent);
+		preview.dataset.matchManagerPreview = row.canonicalId;
+		const details: UnmergePreview = prepared.preview;
+		if (prepared.conflict !== undefined) {
+			preview.textContent = translation('matchManager.conflict');
+			return;
+		}
+		preview.textContent = [
+			`${details.existingPath} -> ${details.newPath}`,
+			`${details.providerToKeep}: ${details.providerToKeepId}; ${details.providerToSplit}: ${details.providerToSplitId}`,
+			`${translation('matchManager.propertiesRemoved')}: ${details.propertiesRemoved.map((property) => property.name).join(', ')}`,
+			`${translation('matchManager.propertiesAdded')}: ${details.propertiesAdded.map((property) => property.name).join(', ')}`,
+		].join(' | ');
+		const action = new Setting(parent);
+		action.addButton((button) => {
+			button.setButtonText(translation('matchManager.applyUnmerge'));
+			button.buttonEl.dataset.matchManagerApply = row.canonicalId;
+			button.onClick(() => void this.applyPrepared(row, prepared, button.buttonEl, preview));
+		});
+	}
+
+	private async applyPrepared(row: Extract<MatchManagerRow, { category: 'merged' }>, prepared: PreparedUnmerge, button: HTMLButtonElement, preview: HTMLElement): Promise<void> {
+		if (!this.isOpen) return;
+		const version = this.lifecycle;
+		button.disabled = true;
+		try {
+			await this.options.adapter.applyUnmerge(prepared);
+			if (this.isCurrent(version)) {
+				preview.dataset.matchManagerPrepared = row.canonicalId;
+				preview.textContent = `${translation('matchManager.prepared', { planId: prepared.planId })} ${translation('matchManager.applied')}`;
+			}
+		} catch {
+			if (this.isCurrent(version)) this.setStatus(translation('matchManager.applyFailed'));
 		} finally {
 			if (this.isCurrent(version)) button.disabled = false;
 		}
@@ -248,6 +303,14 @@ export class MatchManagerModal extends Modal {
 		} finally {
 			if (this.isCurrent(version)) button.disabled = false;
 		}
+	}
+
+	private async resolveUnresolved(row: Extract<MatchManagerRow, { category: 'unresolved' }>, resolution: MatchResolutionAction, button: HTMLButtonElement): Promise<void> {
+		if (!this.isOpen) return;
+		const version = this.lifecycle;
+		button.disabled = true;
+		try { await this.options.adapter.resolveUnresolved(row.canonicalId, resolution, this.unresolvedCandidate(row)); } catch { if (this.isCurrent(version)) this.setStatus(translation('matchManager.resolveFailed')); }
+		finally { if (this.isCurrent(version)) button.disabled = false; }
 	}
 }
 

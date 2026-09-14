@@ -1,4 +1,4 @@
-import type { RequestUrlResponse } from 'obsidian';
+import { requestUrl, type RequestUrlResponse } from 'obsidian';
 import type { ZodType } from 'zod';
 import {
 	ProviderAuthError,
@@ -67,12 +67,31 @@ function mapStatus(response: HttpTransportResponse): never | undefined {
 	return undefined;
 }
 
+function responseJson(response: RequestUrlResponse): unknown {
+	try {
+		return response.json;
+	} catch {
+		try {
+			return JSON.parse(response.text);
+		} catch {
+			return undefined;
+		}
+	}
+}
+
+function statusFromError(error: unknown): number | undefined {
+	if (typeof error !== 'object' || error === null || !('status' in error)) return undefined;
+	const status = error.status;
+	return typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
+}
+
 async function defaultTransport(request: HttpRequest): Promise<HttpTransportResponse> {
 	try {
-		const { requestUrl } = await import('obsidian');
 		const response: RequestUrlResponse = await requestUrl({ ...request, throw: false });
-		return { status: response.status, headers: response.headers, json: response.json };
+		return { status: response.status, headers: response.headers, json: responseJson(response) };
 	} catch (error) {
+		const status = statusFromError(error);
+		if (status !== undefined) mapStatus({ status, headers: {}, json: undefined });
 		throw new ProviderNetworkError('Provider request failed.', { cause: error });
 	}
 }

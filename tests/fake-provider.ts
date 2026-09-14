@@ -2,6 +2,7 @@ import type { GameProvider, ProviderGame, ProviderSnapshot, ProviderSnapshotStat
 import type { IdentityMapping } from '../src/model/identity';
 import type { GameProviderAdapter } from '../src/providers/provider';
 import { migrateState } from '../src/state/migrations';
+import type { StateStore } from '../src/state/store';
 import { createSyncPlanner } from '../src/sync/planner';
 import { SyncService } from '../src/sync/service';
 import { buildNoteIndex } from '../src/vault/note-index';
@@ -96,6 +97,7 @@ export async function createIntegrationHarness(options: {
 	initialFiles?: Record<string, string>;
 	providers: readonly FakeProvider[];
 	state?: unknown;
+	stateStore?: StateStore;
 }): Promise<IntegrationHarness> {
 	const gateway = new FakeVaultGateway(options.initialFiles);
 	const planner = createSyncPlanner({
@@ -107,6 +109,7 @@ export async function createIntegrationHarness(options: {
 		adapters: options.providers.map((provider) => provider.adapter()),
 		planner,
 		writer: new VaultWriter(gateway),
+		stateStore: options.stateStore,
 		state: migrateState(options.state),
 		now: () => INTEGRATION_FETCHED_AT,
 	});

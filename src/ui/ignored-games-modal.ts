@@ -60,10 +60,13 @@ export class IgnoredGamesModal extends Modal {
 	}
 
 	private render(): void {
-		const search = new Setting(this.contentEl).setName(translation('ignoredGames.search'));
+		const search = new Setting(this.contentEl)
+			.setName(translation('ignoredGames.search'))
+			.setDesc(translation('ignoredGames.searchDescription'));
 		search.addText((component) => {
 			component.inputEl.type = 'search';
 			component.inputEl.dataset.ignoredGamesSearch = 'true';
+			component.inputEl.placeholder = translation('ignoredGames.searchPlaceholder');
 			component.inputEl.addEventListener('input', () => {
 				this.search = component.inputEl.value;
 				this.updateVisibility();

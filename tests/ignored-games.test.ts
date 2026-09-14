@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { expectNoBodyHeadingMatchingModalTitle } from './ui-helpers';
 
 const obsidianMock = vi.hoisted(() => {
 	class Modal {
@@ -93,6 +94,7 @@ describe('IgnoredGamesModal', () => {
 		const adapter: IgnoredGamesAdapter = { entries: current, list, restore };
 		const modal = new IgnoredGamesModal({} as never, { adapter });
 		modal.onOpen();
+		expectNoBodyHeadingMatchingModalTitle(modal.contentEl, 'Ignored games');
 
 		const search = modal.contentEl.querySelector<HTMLInputElement>('[data-ignored-games-search]')!;
 		search.value = 'playstation';

@@ -6,6 +6,7 @@ import type { ProviderAchievement, ProviderAchievementSet } from '../model/achie
 import type { NormalizedGame, NormalizedProviderGame } from '../model/game';
 import { DEFAULT_PROPERTY_MAPPING, validatePropertyMapping, type ManagedPropertyKey, type PropertyMapping } from '../model/property-mapping';
 import { isSupportedBackgroundIntervalMinutes } from '../model/settings';
+import { isLibraryProviderId, type LibraryProviderId } from '../model/library-provider';
 import { DEFAULT_SETTINGS } from './defaults';
 import type {
 	ActivityEntry,
@@ -44,6 +45,16 @@ const SETTINGS_KEYS = [
 	'recordHistory',
 	'historyPath',
 	'backgroundNotifications',
+	'steamEnricherEnabled',
+	'playstationEnricherEnabled',
+	'libraryProvider',
+	// Accepted only for one-way migration from the experimental SQLite transport.
+	'gametrackDatabasePath',
+	'gametrackExportPath',
+	'gametrackExportName',
+	'gametrackExportSize',
+	'gametrackExportModifiedAt',
+	'gametrackLastImportedAt',
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -69,6 +80,17 @@ function optionalString(value: unknown, label: string): string | undefined {
 		return undefined;
 	}
 	return requiredString(value, label);
+}
+
+function optionalPath(value: unknown, label: string): string | undefined {
+	if (value === undefined || value === '') return undefined;
+	return requiredString(value, label);
+}
+
+function optionalNumber(value: unknown, label: string): number | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new StateMigrationError(`Invalid ${label}.`);
+	return value;
 }
 
 function textValue(value: unknown, label: string): string {
@@ -106,6 +128,12 @@ function providerValue(value: unknown, label: string): GameProvider {
 	return value;
 }
 
+function libraryProviderValue(value: unknown): LibraryProviderId | undefined {
+	if (value === undefined) return undefined;
+	if (!isLibraryProviderId(value)) throw new StateMigrationError('Invalid libraryProvider.');
+	return value;
+}
+
 function snapshotStatus(value: unknown, label: string): ProviderSnapshotStatus {
 	if (value !== 'complete' && value !== 'partial' && value !== 'failed') {
 		throw new StateMigrationError(`Invalid ${label}.`);
@@ -126,6 +154,9 @@ function readSettings(raw: unknown): GameSyncData['settings'] {
 	}
 	const enabledProviders = raw.enabledProviders === undefined ? {} : raw.enabledProviders;
 	rejectUnknownFields(enabledProviders, ['steam', 'playstation'], 'enabled provider');
+	const explicitLibraryProvider = libraryProviderValue(raw.libraryProvider);
+	const migratedLibraryProvider = explicitLibraryProvider
+		?? (enabledProviders.steam === true && enabledProviders.playstation !== true ? 'steam' : enabledProviders.playstation === true && enabledProviders.steam !== true ? 'playstation' : undefined);
 	return {
 		setupCompleted: optionalBoolean(raw.setupCompleted, DEFAULT_SETTINGS.setupCompleted, 'setupCompleted'),
 		firstSyncCompleted: optionalBoolean(raw.firstSyncCompleted, DEFAULT_SETTINGS.firstSyncCompleted, 'firstSyncCompleted'),
@@ -197,6 +228,14 @@ function readSettings(raw: unknown): GameSyncData['settings'] {
 					: (() => {
 							throw new StateMigrationError('Invalid backgroundNotifications.');
 					  })(),
+		steamEnricherEnabled: optionalBoolean(raw.steamEnricherEnabled, DEFAULT_SETTINGS.steamEnricherEnabled, 'steamEnricherEnabled'),
+		playstationEnricherEnabled: optionalBoolean(raw.playstationEnricherEnabled, DEFAULT_SETTINGS.playstationEnricherEnabled, 'playstationEnricherEnabled'),
+		libraryProvider: migratedLibraryProvider,
+		gametrackExportPath: optionalPath(raw.gametrackExportPath, 'gametrackExportPath'),
+		gametrackExportName: optionalString(raw.gametrackExportName, 'gametrackExportName'),
+		gametrackExportSize: optionalNumber(raw.gametrackExportSize, 'gametrackExportSize'),
+		gametrackExportModifiedAt: optionalNumber(raw.gametrackExportModifiedAt, 'gametrackExportModifiedAt'),
+		gametrackLastImportedAt: optionalString(raw.gametrackLastImportedAt, 'gametrackLastImportedAt'),
 	};
 }
 

@@ -1,0 +1,2 @@
+xbox_game_title_id,id,name,description,locked_description,icon_url,is_secret,score,progress_state,time_unlocked,rarity,product_id,service_config_id
+xbox-1,1,Achievement,Description,, ,0,100,Achieved,2024-03-01T00:00:00.000Z,10,,

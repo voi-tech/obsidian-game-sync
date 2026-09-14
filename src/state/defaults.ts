@@ -30,4 +30,6 @@ export const DEFAULT_SETTINGS: GameSyncSettings = {
 	recordHistory: false,
 	historyPath: 'archive/game-sync/game-events.jsonl',
 	backgroundNotifications: 'problems-only',
+	steamEnricherEnabled: false,
+	playstationEnricherEnabled: false,
 };

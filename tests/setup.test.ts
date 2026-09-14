@@ -4,31 +4,25 @@ import { migrateState } from '../src/state/migrations';
 import type { GameSyncData } from '../src/state/schema';
 import type { ProviderConnectionStatus } from '../src/providers/provider';
 import type { PreparedSync } from '../src/sync/service';
+import type { CanonicalPreviewResult } from '../src/sync/canonical-service';
+import { expectNoBodyHeadingMatchingModalTitle } from './ui-helpers';
 
 const obsidianMock = vi.hoisted(() => {
+	function decorate(element: HTMLElement): HTMLElement {
+		Object.defineProperties(element, {
+			createEl: { value: (tag: string) => { const child = decorate(document.createElement(tag)); element.append(child); return child; } },
+			createDiv: { value: () => { const child = decorate(document.createElement('div')); element.append(child); return child; } },
+			createSpan: { value: () => { const child = decorate(document.createElement('span')); element.append(child); return child; } },
+		});
+		return element;
+	}
+
 	class Modal {
 		app: unknown;
 		contentEl: HTMLElement;
 		titleEl: HTMLElement;
-		constructor(app: unknown) {
-			this.app = app;
-			this.contentEl = document.createElement('div');
-			const attachCreateEl = (container: HTMLElement): void => {
-				Object.defineProperty(container, 'createEl', { value: (tag: string): HTMLElement => {
-					const element = document.createElement(tag);
-					attachCreateEl(element);
-					container.append(element);
-					return element;
-				} });
-				Object.defineProperty(container, 'createDiv', { value: (): HTMLElement => container.createEl('div') });
-			};
-			attachCreateEl(this.contentEl);
-			this.titleEl = document.createElement('h2');
-		}
-		setTitle(title: string): this {
-			this.titleEl.textContent = title;
-			return this;
-		}
+		constructor(app: unknown) { this.app = app; this.contentEl = decorate(document.createElement('div')); this.titleEl = document.createElement('h2'); }
+		setTitle(title: string): this { this.titleEl.textContent = title; return this; }
 		close(): void { this.onClose(); }
 		onOpen(): void {}
 		onClose(): void {}
@@ -40,55 +34,20 @@ const obsidianMock = vi.hoisted(() => {
 		descEl: HTMLElement;
 		controlEl: HTMLElement;
 		constructor(containerEl: HTMLElement) {
-			this.settingEl = document.createElement('div');
-			this.nameEl = document.createElement('span');
-			this.descEl = document.createElement('span');
-			this.controlEl = document.createElement('div');
-			this.settingEl.append(this.nameEl, this.descEl, this.controlEl);
-			containerEl.append(this.settingEl);
+			this.settingEl = document.createElement('div'); this.nameEl = document.createElement('span'); this.descEl = decorate(document.createElement('span')); this.controlEl = document.createElement('div');
+			this.settingEl.append(this.nameEl, this.descEl, this.controlEl); containerEl.append(this.settingEl);
 		}
 		setName(name: string): this { this.nameEl.textContent = name; return this; }
 		setDesc(desc: string): this { this.descEl.textContent = desc; return this; }
-		addText(callback: (component: { inputEl: HTMLInputElement; setPlaceholder(value: string): unknown }) => unknown): this {
-			const inputEl = document.createElement('input');
-			this.controlEl.append(inputEl);
-			callback({ inputEl, setPlaceholder: (value: string) => { inputEl.placeholder = value; } });
-			return this;
-		}
-		addToggle(callback: (component: { toggleEl: HTMLInputElement; setValue(value: boolean): unknown; onChange(handler: (value: boolean) => unknown): unknown }) => unknown): this {
-			const toggleEl = document.createElement('input');
-			toggleEl.type = 'checkbox';
-			this.controlEl.append(toggleEl);
-			callback({
-				toggleEl,
-				setValue: (value: boolean) => { toggleEl.checked = value; },
-				onChange: (handler: (value: boolean) => unknown) => { toggleEl.addEventListener('change', () => void handler(toggleEl.checked)); },
-			});
-			return this;
-		}
-		addDropdown(callback: (component: { selectEl: HTMLSelectElement; addOption(value: string, label: string): unknown; setValue(value: string): unknown; onChange(handler: (value: string) => unknown): unknown }) => unknown): this {
-			const selectEl = document.createElement('select');
-			this.controlEl.append(selectEl);
-			callback({
-				selectEl,
-				addOption: (value: string, label: string) => { selectEl.add(new Option(label, value)); },
-				setValue: (value: string) => { selectEl.value = value; },
-				onChange: (handler: (value: string) => unknown) => { selectEl.addEventListener('change', () => void handler(selectEl.value)); },
-			});
-			return this;
+		addText(callback: (component: { inputEl: HTMLInputElement; setPlaceholder(value: string): unknown; onChange(handler: (value: string) => unknown): unknown }) => unknown): this {
+			const inputEl = document.createElement('input'); this.controlEl.append(inputEl);
+			const component = { inputEl, setPlaceholder: (value: string) => { inputEl.placeholder = value; return component; }, onChange: (handler: (value: string) => unknown) => { inputEl.addEventListener('change', () => void handler(inputEl.value)); return component; } };
+			callback(component); return this;
 		}
 		addButton(callback: (component: { buttonEl: HTMLButtonElement; setButtonText(value: string): unknown; setCta(): unknown; setDisabled(value: boolean): unknown; onClick(handler: () => unknown): unknown }) => unknown): this {
-			const buttonEl = document.createElement('button');
-			this.controlEl.append(buttonEl);
-			const component = {
-				buttonEl,
-				setButtonText: (value: string) => { buttonEl.textContent = value; return component; },
-				setCta: () => component,
-				setDisabled: (value: boolean) => { buttonEl.disabled = value; return component; },
-				onClick: (handler: () => unknown) => { buttonEl.addEventListener('click', () => void handler()); return component; },
-			};
-			callback(component);
-			return this;
+			const buttonEl = document.createElement('button'); this.controlEl.append(buttonEl);
+			const component = { buttonEl, setButtonText: (value: string) => { buttonEl.textContent = value; return component; }, setCta: () => component, setDisabled: (value: boolean) => { buttonEl.disabled = value; return component; }, onClick: (handler: () => unknown) => { buttonEl.addEventListener('click', () => void handler()); return component; } };
+			callback(component); return this;
 		}
 	}
 
@@ -97,11 +56,10 @@ const obsidianMock = vi.hoisted(() => {
 
 vi.mock('obsidian', () => obsidianMock);
 
-const { SETUP_STEP_IDS, canAdvanceSetupStep, getSetupResume, nextSetupStep } = await import('../src/ui/setup/steps');
 const { SetupModal } = await import('../src/ui/setup/setup-modal');
 
 function connection(provider: 'steam' | 'playstation', state: ProviderConnectionStatus['state'] = 'connected'): ProviderConnectionStatus {
-	return { provider, state, connected: state === 'connected' };
+	return { provider, state, connected: state === 'connected', ...(state === 'connected' ? { account: { provider, displayName: 'voitech', accountId: `${provider}-account`, ...(provider === 'steam' ? { gameCount: 327 } : {}) } } : {}) };
 }
 
 function setupFixture(overrides: Partial<ConstructorParameters<typeof SetupModal>[1]> = {}) {
@@ -112,144 +70,120 @@ function setupFixture(overrides: Partial<ConstructorParameters<typeof SetupModal
 	const options = {
 		stateStore: { load: vi.fn(async () => state), save: vi.fn(async (next: GameSyncData) => { state = next; }) },
 		save: vi.fn(async (next: GameSyncData) => { state = next; saved.push(next); }),
-		openConnection: vi.fn(),
-		getConnectionStatus: vi.fn(async (provider: 'steam' | 'playstation') => connection(provider)),
-		openTemplate: vi.fn(),
-		fixTemplate: vi.fn(),
-		validateTemplate: vi.fn((template: string) => { if (template.includes('INVALID')) throw new Error('raw-template-error'); }),
-		prepareAll,
-		onPreparedSync: vi.fn(),
-		...overrides,
+		openConnection: vi.fn(), disconnect: vi.fn(async () => undefined), confirm: vi.fn(async () => true),
+		getConnectionStatus: vi.fn(async (provider: 'steam' | 'playstation') => connection(provider)), prepareAll, onPreparedSync: vi.fn(), ...overrides,
 	};
 	return { options, saved, getState: () => state, resolvePrepare: (value: PreparedSync) => resolvePrepare(value), modal: new SetupModal({} as never, options) };
 }
 
-function buttons(modal: InstanceType<typeof SetupModal>): HTMLButtonElement[] {
-	return Array.from(modal.contentEl.querySelectorAll('button'));
-}
-
+function buttons(modal: InstanceType<typeof SetupModal>): HTMLButtonElement[] { return Array.from(modal.contentEl.querySelectorAll('button')); }
 function buttonWithText(modal: InstanceType<typeof SetupModal>, text: string): HTMLButtonElement {
 	const button = buttons(modal).find((candidate) => candidate.textContent === text);
 	if (button === undefined) throw new Error(`Missing button ${text}`);
 	return button;
 }
-
-async function continueStep(modal: InstanceType<typeof SetupModal>): Promise<void> {
-	buttonWithText(modal, 'Continue').click();
-	await Promise.resolve();
-	await Promise.resolve();
+async function openAndWait(modal: InstanceType<typeof SetupModal>): Promise<void> {
+	modal.onOpen(); await vi.waitFor(() => expect(modal.contentEl.dataset.quickSetup).toBe('true'));
 }
 
-function enableSteam(modal: InstanceType<typeof SetupModal>): void {
-	const toggle = modal.contentEl.querySelector('input[type="checkbox"]') as HTMLInputElement;
-	toggle.checked = true;
-	toggle.dispatchEvent(new Event('change'));
-}
+describe('Quick Setup', () => {
+	beforeEach(() => { document.body.replaceChildren(); vi.clearAllMocks(); obsidianMock.getLanguage.mockReturnValue('en'); });
 
-describe('setup wizard', () => {
-	beforeEach(() => {
-		document.body.replaceChildren();
-		vi.clearAllMocks();
-		obsidianMock.getLanguage.mockReturnValue('en');
+	it('renders one Game Sync title and only the four quick setup decisions', async () => {
+		const fixture = setupFixture(); await openAndWait(fixture.modal);
+		expect(fixture.modal.titleEl.textContent).toBe('Game Sync');
+		expectNoBodyHeadingMatchingModalTitle(fixture.modal.contentEl, 'Game Sync');
+		expect(fixture.modal.contentEl.textContent).toContain('Connect at least one account');
+		expect(fixture.modal.contentEl.textContent).not.toMatch(/filename|template|property mapping|metadata|history|background/i);
+		expect(fixture.modal.contentEl.querySelectorAll('[data-provider-setting]')).toHaveLength(2);
+		expect(fixture.modal.contentEl.querySelector('[data-settings-field="notesFolder"]')).not.toBeNull();
 	});
 
-	it('defines exactly seven typed steps and deterministic transitions', () => {
-		expect(SETUP_STEP_IDS).toHaveLength(7);
-		expect(nextSetupStep(SETUP_STEP_IDS[0])).toBe(SETUP_STEP_IDS[1]);
-		expect(nextSetupStep(SETUP_STEP_IDS[5])).toBe(SETUP_STEP_IDS[6]);
-		expect(nextSetupStep(SETUP_STEP_IDS[6])).toBeUndefined();
-		expect(canAdvanceSetupStep('providers', { hasProvider: false, templateValid: true })).toBe(false);
-		expect(canAdvanceSetupStep('providers', { hasProvider: true, templateValid: true })).toBe(true);
-		expect(canAdvanceSetupStep('vault', { hasProvider: true, templateValid: false })).toBe(false);
+	it('has one disabled preview action until at least one provider is connected', async () => {
+		const fixture = setupFixture({ getConnectionStatus: vi.fn(async (provider: 'steam' | 'playstation') => connection(provider, 'disconnected')) }); await openAndWait(fixture.modal);
+		const preview = fixture.modal.contentEl.querySelector<HTMLButtonElement>('[data-quick-setup-preview]');
+		expect(preview?.textContent).toBe('Preview first sync'); expect(preview?.disabled).toBe(true);
+		expect(buttons(fixture.modal).filter((button) => button.textContent?.includes('Connect'))).toHaveLength(2);
 	});
 
-	it('resumes initial fetch only after configuration save and opens editing after first sync', () => {
-		expect(getSetupResume({ setupCompleted: false, firstSyncCompleted: false })).toEqual({ mode: 'setup', step: 'welcome-privacy' });
-		expect(getSetupResume({ setupCompleted: true, firstSyncCompleted: false })).toEqual({ mode: 'initial-fetch-preview', step: 'initial-fetch-preview' });
-		expect(getSetupResume({ setupCompleted: true, firstSyncCompleted: true })).toEqual({ mode: 'edit', step: 'welcome-privacy' });
+	it('shows connected account details and only reconnect/disconnect actions', async () => {
+		const fixture = setupFixture(); await openAndWait(fixture.modal);
+		const steam = fixture.modal.contentEl.querySelector<HTMLElement>('[data-provider-setting="steam"]')!;
+		expect(steam.textContent).toContain('✓ Connected as voitech'); expect(steam.textContent).toContain('327 games found');
+		expect(Array.from(steam.querySelectorAll('button')).map((button) => button.textContent)).toEqual(['Reconnect', 'Disconnect']);
+		expect(fixture.modal.contentEl.querySelector<HTMLButtonElement>('[data-quick-setup-preview]')?.disabled).toBe(false);
 	});
 
-	it('validates providers and does not expose connection credentials in the wizard', async () => {
-		const fixture = setupFixture();
-		vi.spyOn(fixture.options, 'getConnectionStatus').mockRejectedValue(new Error('NPSSO_TEST_SECRET'));
-		fixture.modal.onOpen();
-		await vi.waitFor(() => expect(fixture.modal.contentEl.querySelector('[data-setup-step-id]')).not.toBeNull());
-		await continueStep(fixture.modal);
-		await continueStep(fixture.modal);
-		expect(fixture.modal.contentEl.textContent).toContain('Select at least one provider.');
-		const steamToggle = fixture.modal.contentEl.querySelector('input[type="checkbox"]') as HTMLInputElement;
-		steamToggle.checked = true;
-		steamToggle.dispatchEvent(new Event('change'));
-		await continueStep(fixture.modal);
-		expect(fixture.modal.contentEl.dataset.setupStepId).toBe('connections');
-		await vi.waitFor(() => expect(fixture.modal.contentEl.textContent).toContain('Status unavailable'));
-		expect(fixture.modal.contentEl.querySelectorAll('input[type="password"]')).toHaveLength(0);
-		expect(fixture.modal.contentEl.textContent).not.toMatch(/api.key|npsso|refresh.token|NPSSO_TEST_SECRET/i);
+	it('refreshes the provider card after the shared connect callback', async () => {
+		const statuses = new Map([['steam', connection('steam', 'disconnected')], ['playstation', connection('playstation', 'disconnected')]]);
+		const fixture = setupFixture({ getConnectionStatus: vi.fn(async (provider: 'steam' | 'playstation') => statuses.get(provider)!) }); await openAndWait(fixture.modal);
+		buttonWithText(fixture.modal, 'Connect Steam').click();
+		const callback = (fixture.options.openConnection as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (() => void) | undefined;
+		expect(callback).toBeDefined(); statuses.set('steam', connection('steam')); callback?.();
+		await vi.waitFor(() => expect(fixture.modal.contentEl.textContent).toContain('✓ Connected as voitech'));
 	});
 
-	it('shows a localized template warning and uses injected open/fix actions without raw errors', async () => {
-		const fixture = setupFixture();
-		fixture.modal.onOpen();
-		await vi.waitFor(() => expect(fixture.modal.contentEl.dataset.setupStepId).toBe('welcome-privacy'));
-		for (let index = 0; index < 3; index += 1) {
-			if (fixture.modal.contentEl.dataset.setupStepId === 'providers') enableSteam(fixture.modal);
-			await continueStep(fixture.modal);
-		}
-		const templateInput = fixture.modal.contentEl.querySelector('[data-setup-field="templatePath"]') as HTMLInputElement;
-		templateInput.value = 'INVALID';
-		templateInput.dispatchEvent(new Event('input'));
-		await continueStep(fixture.modal);
-		expect(fixture.modal.contentEl.textContent).toContain('The template could not be validated.');
-		expect(fixture.modal.contentEl.textContent).not.toContain('raw-template-error');
-		buttonWithText(fixture.modal, 'Open template').click();
-		buttonWithText(fixture.modal, 'Fix template').click();
-		expect(fixture.options.openTemplate).toHaveBeenCalledTimes(1);
-		expect(fixture.options.fixTemplate).toHaveBeenCalledTimes(1);
+	it('uses a native folder setting with a useful placeholder', async () => {
+		const fixture = setupFixture(); await openAndWait(fixture.modal);
+		const input = fixture.modal.contentEl.querySelector<HTMLInputElement>('[data-settings-field="notesFolder"]')!;
+		expect(input.placeholder).toBe('Games');
+		input.value = 'My Games'; input.dispatchEvent(new Event('change'));
+		fixture.modal.contentEl.querySelector<HTMLButtonElement>('[data-quick-setup-preview]')!.click();
+		await vi.waitFor(() => expect(fixture.options.save).toHaveBeenCalled());
+		expect(fixture.saved.at(-1)?.settings.notesFolder).toBe('My Games');
 	});
 
-	it('saves setupCompleted before preparing the initial preview and never auto-applies', async () => {
-		const fixture = setupFixture();
-		fixture.modal.onOpen();
-		await vi.waitFor(() => expect(fixture.modal.contentEl.dataset.setupStepId).toBe('welcome-privacy'));
-		for (let index = 0; index < 6; index += 1) {
-			if (fixture.modal.contentEl.dataset.setupStepId === 'providers') enableSteam(fixture.modal);
-			await continueStep(fixture.modal);
-		}
-		expect(fixture.modal.contentEl.dataset.setupStepId).toBe('initial-fetch-preview');
-		buttonWithText(fixture.modal, 'Fetch and preview').click();
-		await vi.waitFor(() => expect(fixture.options.save).toHaveBeenCalledTimes(1));
-		expect(fixture.getState().settings.setupCompleted).toBe(true);
-		await vi.waitFor(() => expect(fixture.options.prepareAll).toHaveBeenCalledTimes(1));
-		fixture.resolvePrepare({ plan: { operations: [] } } as unknown as PreparedSync);
-		await vi.waitFor(() => expect(fixture.options.onPreparedSync).toHaveBeenCalledTimes(1));
-		expect(fixture.options).not.toHaveProperty('applySelection');
+	it('saves setup completion, prepares the preview, and prevents duplicate submission', async () => {
+		const fixture = setupFixture(); await openAndWait(fixture.modal); const preview = fixture.modal.contentEl.querySelector<HTMLButtonElement>('[data-quick-setup-preview]')!;
+		preview.click(); preview.click(); await vi.waitFor(() => expect(fixture.options.save).toHaveBeenCalledTimes(1));
+		expect(fixture.getState().settings.setupCompleted).toBe(false); expect(fixture.options.prepareAll).toHaveBeenCalledOnce(); expect(preview.disabled).toBe(true);
+		fixture.resolvePrepare({} as PreparedSync); await vi.waitFor(() => expect(fixture.options.onPreparedSync).toHaveBeenCalledWith({}));
 	});
 
-	it('ignores a late prepared result after close', async () => {
-		const fixture = setupFixture();
-		fixture.modal.onOpen();
-		await vi.waitFor(() => expect(fixture.modal.contentEl.dataset.setupStepId).toBe('welcome-privacy'));
-		for (let index = 0; index < 6; index += 1) {
-			if (fixture.modal.contentEl.dataset.setupStepId === 'providers') enableSteam(fixture.modal);
-			await continueStep(fixture.modal);
-		}
-		buttonWithText(fixture.modal, 'Fetch and preview').click();
-		await vi.waitFor(() => expect(fixture.options.prepareAll).toHaveBeenCalledTimes(1));
-		fixture.modal.onClose();
-		fixture.resolvePrepare({ plan: { operations: [] } } as unknown as PreparedSync);
-		await Promise.resolve();
-		await Promise.resolve();
-		expect(fixture.options.onPreparedSync).not.toHaveBeenCalled();
+	it('shows a safe retry message when preview preparation fails', async () => {
+		const fixture = setupFixture({ prepareAll: vi.fn(async () => { throw new Error('raw backend details'); }) }); await openAndWait(fixture.modal);
+		buttonWithText(fixture.modal, 'Preview first sync').click(); await vi.waitFor(() => expect(fixture.modal.contentEl.textContent).toContain('first sync preview could not be prepared'));
+		expect(fixture.modal.contentEl.textContent).not.toContain('raw backend details');
 	});
 
-	it('renders both supported languages', async () => {
-		for (const language of ['en', 'pl']) {
-			obsidianMock.getLanguage.mockReturnValue(language);
-			const fixture = setupFixture();
-			fixture.modal.onOpen();
-			await vi.waitFor(() => expect(fixture.modal.contentEl.dataset.setupStepId).toBe('welcome-privacy'));
-			expect(fixture.modal.contentEl.textContent).not.toContain('setup.welcome.title');
-			fixture.modal.onClose();
-		}
+	it('renders the same simple model in Polish', async () => {
+		obsidianMock.getLanguage.mockReturnValue('pl'); const fixture = setupFixture(); await openAndWait(fixture.modal);
+		expect(fixture.modal.titleEl.textContent).toBe('Game Sync'); expect(fixture.modal.contentEl.textContent).toContain('Połącz co najmniej jedno konto');
+		expect(fixture.modal.contentEl.textContent).not.toContain('setup.welcome');
+	});
+
+	it('lets a new user explicitly choose ready GameTrack before previewing', async () => {
+		const preview: CanonicalPreviewResult = {
+			snapshot: { status: 'complete', games: [], diagnostics: { provider: 'gametrack', database: 'found', schema: 'supported', gamesRead: 0, gamesNormalized: 0, diagnostics: [] } },
+			plan: { id: 'plan', planRevision: 'revision', operations: [], statuses: [], games: [] },
+		};
+		const fixture = setupFixture({
+			getGameTrackStatus: vi.fn(async () => ({ code: 'READY' as const, supported: true, database: 'found' as const, schema: 'supported' as const, games: 207, platforms: ['steam', 'playstation'] })),
+			prepareGameTrack: vi.fn(async () => preview),
+			onGameTrackPreview: vi.fn(),
+		});
+		await openAndWait(fixture.modal);
+		await vi.waitFor(() => expect(fixture.modal.contentEl.querySelector('[data-provider-setting="gametrack"]')).not.toBeNull());
+		buttonWithText(fixture.modal, 'Use GameTrack').click();
+		await vi.waitFor(() => expect(fixture.getState().settings.libraryProvider).toBe('gametrack'));
+		fixture.modal.contentEl.querySelector<HTMLButtonElement>('[data-quick-setup-preview]')!.click();
+		await vi.waitFor(() => expect(fixture.options.prepareGameTrack).toHaveBeenCalledOnce());
+		expect(fixture.options.onGameTrackPreview).toHaveBeenCalledWith(preview);
+		expect(fixture.getState().settings.enabledProviders.steam).toBe(false);
+	});
+
+	it('offers the official export flow when GameTrack has not been selected yet', async () => {
+		let ready = false;
+		const fixture = setupFixture({
+			getGameTrackStatus: vi.fn(async () => ready
+				? { code: 'READY' as const, supported: true, database: 'found' as const, schema: 'supported' as const, games: 207, platforms: ['steam', 'playstation', 'xbox'] }
+				: { code: 'EXPORT_NOT_SELECTED' as const, supported: true, database: 'unavailable' as const, schema: 'unknown' as const, games: 0, platforms: [] }),
+			chooseGameTrackExport: vi.fn(async () => { ready = true; return { name: 'GameTrack_Export.zip', size: 42, modifiedAt: 100, path: '/tmp/GameTrack_Export.zip' }; }),
+		});
+		await openAndWait(fixture.modal);
+		buttonWithText(fixture.modal, 'Choose export').click();
+		await vi.waitFor(() => expect(fixture.getState().settings.libraryProvider).toBe('gametrack'));
+		expect(fixture.getState().settings.gametrackExportName).toBe('GameTrack_Export.zip');
+		expect(fixture.modal.contentEl.textContent).toContain('207 games');
 	});
 });

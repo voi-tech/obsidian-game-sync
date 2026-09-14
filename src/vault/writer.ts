@@ -27,6 +27,7 @@ export interface ExistingNoteInput {
 	path: string;
 	game: NormalizedGame;
 	expectedNoteFingerprint: string;
+	removeManagedProperties?: readonly string[];
 	updatedAt?: string;
 }
 
@@ -76,9 +77,12 @@ export class VaultWriter {
 			updatedAt,
 			omitAchievementProperties: !achievementsFresh,
 		});
+		const propertiesToRemove = [...new Set(input.removeManagedProperties ?? [])].filter((name) => name.trim().length > 0);
+		const managedSnapshot = { ...managedProperties, ...Object.fromEntries(propertiesToRemove.map((name) => [name, undefined])) };
 		let snapshot: Record<string, ManagedFrontmatterSnapshot> = {};
 		await this.gateway.processFrontMatter(input.path, (frontmatter) => {
-			snapshot = captureManagedFrontmatter(frontmatter, managedProperties);
+			snapshot = captureManagedFrontmatter(frontmatter, managedSnapshot);
+			for (const name of propertiesToRemove) delete frontmatter[name];
 			applyManagedFrontmatter(frontmatter, managedProperties);
 		}, expected);
 		const afterFrontmatter = await this.gateway.read(input.path);

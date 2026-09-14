@@ -2,6 +2,7 @@ export type PreviewMode = 'always' | 'first-and-review' | 'review-only';
 export type MetadataLanguage = 'follow-obsidian' | 'english' | 'polish';
 export type MetadataPreference = 'automatic' | 'english' | 'polish';
 export type BackgroundNotifications = 'problems-only' | 'all' | 'none';
+import type { LibraryProviderId } from './library-provider';
 
 export const SUPPORTED_BACKGROUND_INTERVAL_MINUTES = [30, 60, 360, 720, 1440] as const;
 export type SupportedBackgroundIntervalMinutes = typeof SUPPORTED_BACKGROUND_INTERVAL_MINUTES[number];
@@ -41,4 +42,15 @@ export interface GameSyncSettings {
 	recordHistory: boolean;
 	historyPath: string;
 	backgroundNotifications: BackgroundNotifications;
+	/** Optional platform activity refresh when GameTrack supplies library membership. */
+	steamEnricherEnabled: boolean;
+	playstationEnricherEnabled: boolean;
+	/** Set only after an explicit user choice; absent means legacy behavior. */
+	libraryProvider?: LibraryProviderId;
+	/** User-selected official GameTrack export ZIP. */
+	gametrackExportPath?: string;
+	gametrackExportName?: string;
+	gametrackExportSize?: number;
+	gametrackExportModifiedAt?: number;
+	gametrackLastImportedAt?: string;
 }

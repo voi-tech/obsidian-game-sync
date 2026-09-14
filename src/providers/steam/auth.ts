@@ -34,6 +34,7 @@ export class SteamAccountInputError extends Error {
 function parseSteamAccountInput(value: string): { steamId64?: string; vanity?: string } {
 	const trimmed = value.trim();
 	if (/^\d{17}$/.test(trimmed)) return { steamId64: trimmed };
+	if (/^[A-Za-z0-9_-]+$/.test(trimmed)) return { vanity: trimmed };
 	try {
 		const url = new URL(trimmed);
 		if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'steamcommunity.com') throw new Error('unsupported');

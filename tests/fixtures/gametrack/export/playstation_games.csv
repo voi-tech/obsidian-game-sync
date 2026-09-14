@@ -1,0 +1,3 @@
+game_uuid,np_communication_id,np_service_name,title_id,trophy_title_name,trophy_title_detail,trophy_title_icon_url,trophy_title_platform,trophy_set_version,has_trophy_groups,progress,hidden_flag,first_played,last_played,play_count,play_duration,store_id,last_updated_date_time,defined_bronze,defined_silver,defined_gold,defined_platinum,earned_bronze,earned_silver,earned_gold,earned_platinum
+11112222-3333-4444-5555-666677778888,,,,,,,PS5,,0,100,0,,2024-03-01T00:00:00.000Z,2,2.0,2001,,10,5,2,1,5,2,1,0
+99990000-aaaa-bbbb-cccc-ddddeeeeffff,,,,,,,PS5,,0,10,0,,2024-03-02T00:00:00.000Z,1,1.0,2002,,10,5,2,1,1,0,0,0

@@ -7,28 +7,20 @@ import {
 } from '../src/runtime/commands';
 
 const commandNamesAndIds = [
-	['sync-all', 'Sync all'],
-	['sync-steam', 'Sync Steam'],
-	['sync-playstation', 'Sync PlayStation'],
-	['preview-all-changes', 'Preview all changes'],
-	['preview-steam-changes', 'Preview Steam changes'],
-	['preview-playstation-changes', 'Preview PlayStation changes'],
+		['sync-all', 'Sync games'],
+		['preview-all-changes', 'Preview sync'],
 	['review-pending-matches', 'Review pending matches'],
 	['manage-game-matches', 'Manage game matches'],
 	['manage-ignored-games', 'Manage ignored games'],
 	['open-library-summary', 'Open library summary'],
 	['force-refresh-all-data', 'Force refresh all data'],
 	['copy-diagnostic-information', 'Copy diagnostic information'],
-	['run-setup-wizard', 'Run setup wizard'],
+	['run-setup-wizard', 'Open Quick Setup'],
 ] as const;
 
 const actionNames = [
 	'syncAll',
-	'syncSteam',
-	'syncPlayStation',
 	'previewAllChanges',
-	'previewSteamChanges',
-	'previewPlayStationChanges',
 	'reviewPendingMatches',
 	'manageGameMatches',
 	'manageIgnoredGames',
@@ -61,9 +53,9 @@ describe('registerGameSyncCommands', () => {
 
 		registerGameSyncCommands(registrar, actions);
 
-		expect(commands).toHaveLength(13);
+		expect(commands).toHaveLength(9);
 		expect(commands.map(({ id, name }) => [id, name])).toEqual(commandNamesAndIds);
-		expect(new Set(commands.map(({ id }) => id)).size).toBe(13);
+		expect(new Set(commands.map(({ id }) => id)).size).toBe(9);
 	});
 
 	it('routes every command callback to its matching action', async () => {
@@ -85,7 +77,7 @@ describe('registerGameSyncCommands', () => {
 		const sensitiveMessage = 'secret diagnostic details';
 
 		actions.syncAll.mockImplementation(() => { throw new Error(sensitiveMessage); });
-		actions.syncSteam.mockRejectedValue(new Error(sensitiveMessage));
+		actions.previewAllChanges.mockRejectedValue(new Error(sensitiveMessage));
 		registerGameSyncCommands(registrar, actions, onError);
 
 		await Promise.resolve(commands[0].callback());

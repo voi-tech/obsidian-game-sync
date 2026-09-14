@@ -1,6 +1,36 @@
-import { describe, expect, it, vi } from 'vitest';
+/** @vitest-environment jsdom */
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProviderNetworkError } from '../src/network/errors';
 
 const notices = vi.hoisted(() => [] as string[]);
+const mainTestMocks = vi.hoisted(() => ({
+	steamAdapterFactory: vi.fn(),
+	playStationAdapterFactory: vi.fn(),
+	steamModal: vi.fn(),
+	playStationModal: vi.fn(),
+	setupOptions: undefined as { openConnection: (provider: 'steam' | 'playstation') => void } | undefined,
+}));
+
+vi.mock('../src/providers/steam/adapter', () => ({ createSteamAdapter: mainTestMocks.steamAdapterFactory }));
+vi.mock('../src/providers/playstation/adapter', () => ({ createPlayStationAdapter: mainTestMocks.playStationAdapterFactory }));
+vi.mock('../src/ui/steam-connect-modal', () => ({
+	SteamConnectModal: class {
+		constructor(_app: unknown, options: unknown) { mainTestMocks.steamModal(options); }
+		open(): void {}
+	},
+}));
+vi.mock('../src/ui/playstation-connect-modal', () => ({
+	PlayStationConnectModal: class {
+		constructor(_app: unknown, options: unknown) { mainTestMocks.playStationModal(options); }
+		open(): void {}
+	},
+}));
+vi.mock('../src/ui/setup/setup-modal', () => ({
+	SetupModal: class {
+		constructor(_app: unknown, options: { openConnection: (provider: 'steam' | 'playstation') => void }) { mainTestMocks.setupOptions = options; }
+		open(): void {}
+	},
+}));
 
 vi.mock('obsidian', () => ({
 	Modal: class {
@@ -33,11 +63,12 @@ vi.mock('obsidian', () => ({
 	},
 	Platform: { isMobile: false },
 	apiVersion: '1.0.0',
+	getLanguage: () => 'en',
 }));
 
 import { createGameSyncRuntime, createStaticCommandErrorNotifier } from '../src/main';
 
-function createHost(rawState: unknown) {
+function createHost(rawState: unknown, secrets: Record<string, string> = {}) {
 	const commands: Array<{ id: string; name: string; callback: () => void }> = [];
 	const settingTabs: unknown[] = [];
 	const registeredIntervals: number[] = [];
@@ -49,7 +80,7 @@ function createHost(rawState: unknown) {
 			},
 			fileManager: {},
 			secretStorage: {
-				getSecret: () => null,
+				getSecret: (name: string) => secrets[name] ?? null,
 				setSecret: vi.fn(),
 			},
 			workspace: { openLinkText: vi.fn() },
@@ -68,6 +99,12 @@ function createHost(rawState: unknown) {
 }
 
 describe('main runtime integration', () => {
+	beforeEach(() => {
+		notices.length = 0;
+		mainTestMocks.setupOptions = undefined;
+		vi.clearAllMocks();
+	});
+
 	it('registers exactly 13 commands and stops the scheduler on dispose', async () => {
 		const timer = {
 			setInterval: vi.fn(() => 42),
@@ -78,7 +115,7 @@ describe('main runtime integration', () => {
 
 		await runtime.ready;
 
-		expect(fixture.commands).toHaveLength(13);
+		expect(fixture.commands).toHaveLength(9);
 		expect(fixture.settingTabs).toHaveLength(1);
 		expect(timer.setInterval).toHaveBeenCalledOnce();
 		expect(runtime.scheduler.getState()).toBe('scheduled');
@@ -98,5 +135,81 @@ describe('main runtime integration', () => {
 
 		expect(notices).toEqual(['Game Sync command failed.']);
 		expect(notices.join('\n')).not.toContain(sensitive);
+	});
+
+	it('automatically reconnects with stored credentials before opening repair modal', async () => {
+		const account = { provider: 'steam' as const, displayName: 'Stored Steam', accountId: '76561198000000001' };
+		const steamAdapter = {
+			id: 'steam' as const,
+			testConnection: vi.fn(async () => account),
+			getConnectionStatus: vi.fn(async () => ({ provider: 'steam' as const, state: 'connected' as const, connected: true, account })),
+			fetchLibrary: vi.fn(),
+			disconnect: vi.fn(async () => undefined),
+		};
+		const playStationAdapter = {
+			id: 'playstation' as const,
+			testConnection: vi.fn(async () => ({ provider: 'playstation' as const, displayName: 'PSN', accountId: 'psn-account' })),
+			getConnectionStatus: vi.fn(async () => ({ provider: 'playstation' as const, state: 'connected' as const, connected: true })),
+			fetchLibrary: vi.fn(),
+			disconnect: vi.fn(async () => undefined),
+		};
+		mainTestMocks.steamAdapterFactory.mockReturnValue(steamAdapter);
+		mainTestMocks.playStationAdapterFactory.mockReturnValue(playStationAdapter);
+		const fixture = createHost({ settings: { steamAccountId: account.accountId } }, { 'game-sync-steam-api-key': 'stored-api-key' });
+		const runtime = createGameSyncRuntime(fixture.host, { timer: { setInterval: vi.fn(), clearInterval: vi.fn() }, isMobile: () => false });
+		await runtime.ready;
+		fixture.commands.find((command) => command.id === 'run-setup-wizard')?.callback();
+		mainTestMocks.setupOptions?.openConnection('steam');
+
+		await vi.waitFor(() => expect(steamAdapter.testConnection).toHaveBeenCalledOnce());
+		expect(mainTestMocks.steamModal).not.toHaveBeenCalled();
+		expect(notices.join('\n')).toContain('Reconnected');
+		expect(JSON.stringify(fixture.host.saveData.mock.calls)).not.toContain('stored-api-key');
+	});
+
+	it('opens the repair modal when stored credentials fail', async () => {
+		const steamAdapter = {
+			id: 'steam' as const,
+			testConnection: vi.fn(async () => { throw new Error('raw credential failure'); }),
+			getConnectionStatus: vi.fn(async () => ({ provider: 'steam' as const, state: 'error' as const, connected: false })),
+			fetchLibrary: vi.fn(),
+			disconnect: vi.fn(async () => undefined),
+		};
+		mainTestMocks.steamAdapterFactory.mockReturnValue(steamAdapter);
+		mainTestMocks.playStationAdapterFactory.mockReturnValue({ id: 'playstation', testConnection: vi.fn(), getConnectionStatus: vi.fn(), fetchLibrary: vi.fn(), disconnect: vi.fn() });
+		const fixture = createHost({ settings: { steamAccountId: '76561198000000001' } }, { 'game-sync-steam-api-key': 'stored-api-key' });
+		const runtime = createGameSyncRuntime(fixture.host, { timer: { setInterval: vi.fn(), clearInterval: vi.fn() }, isMobile: () => false });
+		await runtime.ready;
+		fixture.commands.find((command) => command.id === 'run-setup-wizard')?.callback();
+		mainTestMocks.setupOptions?.openConnection('steam');
+
+		await vi.waitFor(() => expect(mainTestMocks.steamModal).toHaveBeenCalledOnce());
+		expect(notices.join('\n')).not.toContain('raw credential failure');
+	});
+
+	it('retries a transient network failure during one-click reconnect', async () => {
+		const account = { provider: 'steam' as const, displayName: 'Stored Steam', accountId: '76561198000000001' };
+		let attempts = 0;
+		const steamAdapter = {
+			id: 'steam' as const,
+			testConnection: vi.fn(async () => {
+				attempts += 1;
+				if (attempts === 1) throw new ProviderNetworkError('temporary network failure');
+				return account;
+			}),
+			getConnectionStatus: vi.fn(async () => ({ provider: 'steam' as const, state: 'connected' as const, connected: true, account })),
+			fetchLibrary: vi.fn(),
+			disconnect: vi.fn(async () => undefined),
+		};
+		mainTestMocks.steamAdapterFactory.mockReturnValue(steamAdapter);
+		mainTestMocks.playStationAdapterFactory.mockReturnValue({ id: 'playstation', testConnection: vi.fn(), getConnectionStatus: vi.fn(), fetchLibrary: vi.fn(), disconnect: vi.fn() });
+		const fixture = createHost({ settings: { steamAccountId: account.accountId } }, { 'game-sync-steam-api-key': 'stored-api-key' });
+		const runtime = createGameSyncRuntime(fixture.host, { timer: { setInterval: vi.fn(), clearInterval: vi.fn() }, isMobile: () => false });
+		await runtime.ready;
+		fixture.commands.find((command) => command.id === 'run-setup-wizard')?.callback();
+		mainTestMocks.setupOptions?.openConnection('steam');
+
+		await vi.waitFor(() => expect(steamAdapter.testConnection).toHaveBeenCalledTimes(2));
+		expect(mainTestMocks.steamModal).not.toHaveBeenCalled();
 	});
 });

@@ -1,0 +1,3 @@
+game_uuid,title_id,modern_title_id,name,display_image,total_achievements,current_achievements,total_gamerscore,current_gamerscore,progress_percentage,last_time_played,last_updated
+99990000-aaaa-bbbb-cccc-ddddeeeeffff,xbox-1,xbox-modern-1,Multi Platform Fixture,,50,10,1000,200,20,2024-03-03T00:00:00.000Z,2024-03-04T00:00:00.000Z
+aaaa0000-bbbb-cccc-dddd-eeeeffff0000,xbox-2,xbox-modern-2,Achievement Fixture,,20,5,500,100,25,2024-03-05T00:00:00.000Z,2024-03-06T00:00:00.000Z

@@ -2,16 +2,20 @@
 
 ## 26.9.0
 
-Initial release scope:
+Initial public release of Game Sync:
 
-- Steam library, metadata, playtime and achievements.
-- Unofficial PlayStation library, playtime and trophy integration.
-- SecretStorage-backed provider credentials and NPSSO bootstrap without NPSSO persistence.
-- Canonical game identity, durable provider mappings and conservative vault matching.
-- Preview-first synchronization with safe writes, adoption, conflict handling and recovery journal.
-- Managed Properties, templates, achievements/trophies block and optional `Games.base`.
-- English and Polish interface, setup wizard, settings, library summary and ignored-games manager.
-- Desktop safe-only background sync with explicit interval and first-sync preview gates.
-- Privacy-safe diagnostics, mobile bundle validation and fake-provider integration coverage.
+- GameTrack library import from the official ZIP export, including multi-platform membership, stable IGDB/GameTrack identity, playtime, platform ownership and reliable achievement summaries.
+- Steam and PlayStation as library sources, with optional Steam activity/achievement and PlayStation activity/trophy enrichment.
+- Provider-neutral canonical synchronization with stable matching, collision-safe note paths and preservation of user-managed and custom data.
+- Preview before synchronization, write blocking for partial or failed snapshots, idempotent updates and automatic target-folder creation.
+- Local processing without telemetry, Full Disk Access or access to GameTrack's private database; source exports remain read-only.
+- English and Polish interface, setup flow, settings, diagnostics, library summary and ignored-games management.
 
-Not included: provider write-back, purchase-history import, extra providers, custom backend, telemetry, multi-account vaults and a split/unmerge backend for the match-manager command.
+Known limitations:
+
+- GameTrack imports are manual; Automatic Backup is not supported.
+- Steam and PlayStation enrichment have limited runtime end-to-end verification in this release.
+- There is no direct Xbox provider.
+- Detailed achievement presentation remains limited to the supported summary projection.
+
+Not included: provider write-back, purchase-history import, extra providers, custom backend, multi-account vaults and a split/unmerge backend for the match-manager command.

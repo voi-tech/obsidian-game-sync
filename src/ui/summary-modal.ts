@@ -1,11 +1,10 @@
 import { Modal, Setting, type App } from 'obsidian';
 import { t, type TranslationKey } from '../i18n';
-import type { GameProvider } from '../model/provider';
 import type { GameOperationKind, Operation } from '../model/operations';
 import type { ProviderStatusSummary, SyncApplyResult } from '../sync/service';
 
 export interface SyncSummaryViewModel {
-	providerStatuses: Readonly<Partial<Record<GameProvider, ProviderStatusSummary>>>;
+	providerStatuses: Readonly<Partial<Record<'steam' | 'playstation', ProviderStatusSummary>>>;
 	gamesFetched?: number;
 	operations: readonly Pick<Operation, 'id' | 'kind'>[];
 	appliedOperationIds: readonly string[];
@@ -14,6 +13,7 @@ export interface SyncSummaryViewModel {
 	ignored: number;
 	warnings: readonly string[];
 	unlockedCount?: number;
+	notesFolder?: string;
 }
 
 export interface SummaryModalInjected {
@@ -23,7 +23,9 @@ export interface SummaryModalInjected {
 export interface SummaryModalOptions {
 	result?: SyncApplyResult;
 	viewModel?: SyncSummaryViewModel;
+	notesFolder?: string;
 	onClose?: () => void | Promise<void>;
+	onOpenGames?: () => void | Promise<void>;
 	injected?: SummaryModalInjected;
 }
 
@@ -41,12 +43,18 @@ function isOptions(input: SummaryInput): input is SummaryModalOptions {
 	return 'result' in input || 'viewModel' in input;
 }
 
-function viewModelFrom(input: SummaryInput): { viewModel: SyncSummaryViewModel; onClose?: () => void | Promise<void>; injected?: SummaryModalInjected } {
+function viewModelFrom(input: SummaryInput): { viewModel: SyncSummaryViewModel; onClose?: () => void | Promise<void>; onOpenGames?: () => void | Promise<void>; injected?: SummaryModalInjected } {
 	if (isOptions(input)) {
-		const options = input;
-		const source = options.result ?? options.viewModel;
+		const source = input.result ?? input.viewModel;
 		if (source === undefined) throw new Error('Summary input is required.');
-		return { viewModel: isApplyResult(source) ? fromResult(source) : source, onClose: options.onClose, injected: options.injected };
+		const viewModel = isApplyResult(source) ? fromResult(source) : { ...source };
+		if (input.notesFolder !== undefined) viewModel.notesFolder = input.notesFolder;
+		return {
+			viewModel,
+			onClose: input.onClose,
+			onOpenGames: input.onOpenGames,
+			injected: input.injected,
+		};
 	}
 	return { viewModel: isApplyResult(input) ? fromResult(input) : input };
 }
@@ -73,6 +81,7 @@ export class SummaryModal extends Modal {
 	private readonly viewModel: SyncSummaryViewModel;
 	private readonly injected?: SummaryModalInjected;
 	private readonly closeCallback?: () => void | Promise<void>;
+	private readonly openGamesCallback?: () => void | Promise<void>;
 	private closeNotified = false;
 
 	constructor(app: App, input: SummaryInput) {
@@ -81,6 +90,7 @@ export class SummaryModal extends Modal {
 		this.viewModel = normalized.viewModel;
 		this.injected = normalized.injected;
 		this.closeCallback = normalized.onClose;
+		this.openGamesCallback = normalized.onOpenGames;
 	}
 
 	override onOpen(): void {
@@ -97,57 +107,50 @@ export class SummaryModal extends Modal {
 	}
 
 	private render(): void {
-		const providers = this.element('section');
-		providers.dataset.summaryProviders = 'true';
-		for (const provider of ['steam', 'playstation'] as const) {
-			const status = this.viewModel.providerStatuses[provider];
-			if (status === undefined) continue;
-			const row = new Setting(providers).setName(translation(this.injected, `sync.providers.${provider}` as TranslationKey));
-			row.settingEl.dataset.summaryProvider = provider;
-			const label = `${this.statusLabel(status.state)} · ${status.gamesFetched}`;
-			row.setDesc(label);
-			row.settingEl.textContent = `${translation(this.injected, `sync.providers.${provider}` as TranslationKey)}: ${label}`;
-		}
+		const intro = this.contentEl.createEl('p');
+		intro.textContent = translation(this.injected, 'sync.summary.ready');
 
-		const metrics = this.element('section');
+		const metrics = this.contentEl.createEl('section');
 		metrics.dataset.summaryMetrics = 'true';
-		this.metric(metrics, 'notesCreated', countApplied(this.viewModel, ['create-note']));
-		this.metric(metrics, 'notesUpdated', countApplied(this.viewModel, ['adopt-note', 'update-properties', 'add-achievement-block', 'update-achievement-block']));
-		if (this.viewModel.gamesFetched !== undefined) this.metric(metrics, 'gamesFetched', this.viewModel.gamesFetched);
-		this.metric(metrics, 'pending', this.viewModel.pendingOperationIds.length);
-		this.metric(metrics, 'deselected', this.viewModel.deselectedOperationIds.length);
-		this.metric(metrics, 'ignored', this.viewModel.ignored);
-		if (this.viewModel.unlockedCount !== undefined) this.metric(metrics, 'unlocked', this.viewModel.unlockedCount);
+		this.metric(metrics, 'gameNotesCreated', countApplied(this.viewModel, ['create-note']));
+		this.metric(metrics, 'notesUpdated', countApplied(this.viewModel, ['adopt-note', 'update-properties', 'link-providers']));
+		this.metric(metrics, 'achievementsAdded', countApplied(this.viewModel, ['add-achievement-block']));
+
+		const destination = this.contentEl.createEl('p');
+		destination.dataset.summaryDestination = 'true';
+		destination.textContent = `${translation(this.injected, 'sync.summary.savedIn')} ${this.viewModel.notesFolder ?? 'Games'}/`;
 
 		if (this.viewModel.warnings.length > 0) {
-			const warnings = this.element('section');
+			const warnings = this.contentEl.createEl('section');
 			warnings.dataset.summaryWarnings = 'true';
 			for (const warning of this.viewModel.warnings) {
-				const item = this.element('p', warnings);
+				const item = this.contentEl.createEl('p');
 				item.dataset.summaryWarning = 'true';
 				item.textContent = warning;
 			}
 		}
 
 		const footer = new Setting(this.contentEl);
+		footer.settingEl.dataset.gameSyncActionRow = 'true';
+		if (this.openGamesCallback !== undefined) {
+			footer.addButton((button) => {
+				button.setButtonText(translation(this.injected, 'sync.summary.openGames'));
+				button.buttonEl.dataset.summaryOpenGames = 'true';
+				button.onClick(() => void this.openGamesCallback?.());
+			});
+		}
 		footer.addButton((button) => {
-			button.setButtonText(translation(this.injected, 'sync.summary.close'));
+			button.setButtonText(translation(this.injected, 'sync.summary.done'));
+			button.setCta();
+			button.buttonEl.dataset.summaryDone = 'true';
 			button.onClick(() => this.close());
 		});
 	}
 
-	private element<K extends keyof HTMLElementTagNameMap>(tag: K, parent = this.contentEl): HTMLElementTagNameMap[K] {
-		return parent.createEl(tag);
-	}
-
-	private metric(parent: HTMLElement, key: 'notesCreated' | 'notesUpdated' | 'gamesFetched' | 'pending' | 'deselected' | 'ignored' | 'unlocked', value: number): void {
-		const row = new Setting(parent).setName(translation(this.injected, `sync.summary.${key}` as TranslationKey));
-		row.settingEl.dataset[`summary${key[0].toUpperCase()}${key.slice(1)}` as 'summaryNotesCreated'] = String(value);
-		row.settingEl.textContent = `${translation(this.injected, `sync.summary.${key}` as TranslationKey)}: ${value}`;
-	}
-
-	private statusLabel(state: ProviderStatusSummary['state']): string {
-		return translation(this.injected, `sync.status.${state}` as TranslationKey);
+	private metric(parent: HTMLElement, key: 'gameNotesCreated' | 'notesUpdated' | 'achievementsAdded', value: number): void {
+		const row = parent.createEl('p');
+		row.dataset[`summary${key[0].toUpperCase()}${key.slice(1)}` as 'summaryGameNotesCreated'] = String(value);
+		row.textContent = translation(this.injected, `sync.summary.${key}` as TranslationKey, { count: value });
 	}
 }
 

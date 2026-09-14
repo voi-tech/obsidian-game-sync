@@ -14,7 +14,10 @@ const context = await esbuild.context({
 	treeShaking: true,
 	minify: !watch,
 	outfile: 'main.js',
-	define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"' },
+	define: {
+		'process.env.NODE_ENV': watch ? '"development"' : '"production"',
+		'window.__GAME_SYNC_DEV__': watch ? 'true' : 'false',
+	},
 });
 
 if (watch) {

@@ -1,10 +1,15 @@
 import type { GameProvider } from '../model/provider';
+import type { LibraryProviderId } from '../model/library-provider';
 import { sanitizeDiagnosticData, sanitizeError } from '../auth/sanitize';
 
 export interface DiagnosticProviderInput {
 	enabled?: boolean;
 	status?: unknown;
 	state?: unknown;
+	readiness?: unknown;
+	games?: unknown;
+	warnings?: unknown;
+	errorCodes?: unknown;
 }
 
 export interface DiagnosticReportInput {
@@ -15,10 +20,10 @@ export interface DiagnosticReportInput {
 	os?: unknown;
 	platform?: unknown;
 	osPlatform?: unknown;
-	providers?: Partial<Record<GameProvider, DiagnosticProviderInput>>;
-	providerStatus?: Partial<Record<GameProvider, DiagnosticProviderInput>>;
-	providerStatuses?: Partial<Record<GameProvider, DiagnosticProviderInput>>;
-	enabledProviders?: Partial<Record<GameProvider, boolean>>;
+	providers?: Partial<Record<GameProvider | LibraryProviderId, DiagnosticProviderInput>>;
+	providerStatus?: Partial<Record<GameProvider | LibraryProviderId, DiagnosticProviderInput>>;
+	providerStatuses?: Partial<Record<GameProvider | LibraryProviderId, DiagnosticProviderInput>>;
+	enabledProviders?: Partial<Record<GameProvider | LibraryProviderId, boolean>>;
 	lastSyncState?: unknown;
 	lastSync?: unknown;
 	stateSchemaVersion?: unknown;
@@ -28,19 +33,19 @@ export interface DiagnosticReportInput {
 	[key: string]: unknown;
 }
 
-type ProviderName = GameProvider;
+type ProviderName = GameProvider | 'gametrack';
 
 interface AllowlistedReportData {
 	gameSyncVersion: unknown;
 	obsidianVersion: unknown;
 	osPlatform: unknown;
-	providers: Record<ProviderName, { enabled: unknown; status: unknown }>;
+	providers: Record<ProviderName, { enabled: unknown; status: unknown; readiness: unknown; games: unknown; warnings: unknown; errorCodes: unknown }>;
 	lastSyncState: unknown;
 	stateSchemaVersion: unknown;
 	cacheSchemaVersion: unknown;
 }
 
-const PROVIDERS: readonly ProviderName[] = ['steam', 'playstation'];
+const PROVIDERS: readonly ProviderName[] = ['gametrack', 'steam', 'playstation'];
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -48,6 +53,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asText(value: unknown, fallback = 'unknown'): string {
 	return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : fallback;
+}
+
+function errorCodesValue(value: unknown): string | undefined {
+	if (!Array.isArray(value)) return undefined;
+	return value.filter((item): item is string => typeof item === 'string').slice(0, 20).join(', ') || undefined;
 }
 
 function providerValue(
@@ -71,11 +81,16 @@ function lastSyncState(input: DiagnosticReportInput, sanitizedError: string | un
 	return sanitizedError === undefined ? undefined : 'failed';
 }
 
-function copyProviderStatus(input: DiagnosticReportInput, provider: ProviderName): { enabled: unknown; status: unknown } {
+function copyProviderStatus(input: DiagnosticReportInput, provider: ProviderName): { enabled: unknown; status: unknown; readiness: unknown; games: unknown; warnings: unknown; errorCodes: unknown } {
+	const source = input.providers?.[provider] ?? input.providerStatuses?.[provider] ?? input.providerStatus?.[provider];
 	const state = providerValue(input, provider, 'status') ?? providerValue(input, provider, 'state');
 	return {
 		enabled: providerValue(input, provider, 'enabled'),
 		status: state,
+		readiness: source?.readiness,
+		games: source?.games,
+		warnings: source?.warnings,
+		errorCodes: errorCodesValue(source?.errorCodes),
 	};
 }
 
@@ -87,6 +102,7 @@ export function buildDiagnosticReport(input: DiagnosticReportInput, secrets: rea
 		obsidianVersion: input.obsidianVersion,
 		osPlatform: input.osPlatform ?? `${asText(input.os)} / ${asText(input.platform)}`,
 		providers: {
+			gametrack: copyProviderStatus(input, 'gametrack'),
 			steam: copyProviderStatus(input, 'steam'),
 			playstation: copyProviderStatus(input, 'playstation'),
 		},
@@ -105,7 +121,10 @@ export function buildDiagnosticReport(input: DiagnosticReportInput, secrets: rea
 	];
 	for (const provider of PROVIDERS) {
 		const status = safe.providers[provider];
-		lines.push(`${provider}: enabled=${asText(status.enabled)}; status=${asText(status.status)}`);
+		const details = provider === 'gametrack'
+			? `; readiness=${asText(status.readiness)}; games=${asText(status.games)}; warnings=${asText(status.warnings)}; errors=${asText(status.errorCodes)}`
+			: '';
+		lines.push(`${provider}: enabled=${asText(status.enabled)}; status=${asText(status.status)}${details}`);
 	}
 	lines.push(
 		`Last sync state: ${asText(safe.lastSyncState)}`,

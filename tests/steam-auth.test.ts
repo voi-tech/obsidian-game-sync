@@ -51,6 +51,20 @@ describe('Steam authentication', () => {
 		expect(requests[0]).toContain('vanityurl=vanity-player');
 	});
 
+	it('accepts a bare vanity name in the connection form', async () => {
+		const requests: string[] = [];
+		const http: HttpClient = {
+			request: async <T>(request: HttpRequest) => {
+				requests.push(request.url);
+				if (request.url.includes('ResolveVanityURL')) return { response: { success: 1, steamid: '76561198000000003' } } as T;
+				return (request.url.includes('GetOwnedGames') ? { response: { game_count: 1, games: [] } } : { response: { players: [{ steamid: '76561198000000003', personaname: 'Bare Vanity' }] } }) as T;
+			},
+		};
+		const auth = createSteamAuth({ http, secretStore: secretStore(), account: 'bare-vanity' });
+		await expect(auth.testConnection()).resolves.toMatchObject({ accountId: '76561198000000003' });
+		expect(requests[0]).toContain('vanityurl=bare-vanity');
+	});
+
 	it('keeps invalid API-key errors distinct from private Game Details', async () => {
 		const invalidKeyHttp: HttpClient = {
 			request: async () => {

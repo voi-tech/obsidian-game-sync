@@ -1,4 +1,5 @@
 import { resolveCanonicalGameId } from '../model/identity';
+import { t, type TranslationKey } from '../i18n';
 import type { NormalizedGame, NormalizedProviderGame } from '../model/game';
 import type { GameSyncData, LastSuccessfulProviderState, OperationJournalEntry } from '../state/schema';
 import { migrateState } from '../state/migrations';
@@ -22,6 +23,14 @@ import type { PlannedSyncPlan, SyncPlanner } from './planner';
 import { SyncExecutor, type ApplyResult, type ExecutorHook, type ExecutorProgress } from './executor';
 import { VaultWriter } from '../vault/writer';
 import { sanitizeError } from '../auth/sanitize';
+import { addNegativeMapping, addPositiveMapping, removeNegativeMapping } from '../identity/mappings';
+import type { ReviewDecision } from '../ui/preview-modal';
+import type { MatchManagerAdapter, MatchManagerRow, MatchResolutionAction, PreparedUnmerge, UnmergePreview } from '../model/match-manager';
+import { buildManagedProperties, resolvePropertyMapping } from '../model/property-mapping';
+import { buildNoteIndex, type IndexedNote } from '../vault/note-index';
+import { parseFrontmatter } from '../vault/frontmatter';
+import { VaultConflictError } from '../network/errors';
+import { noteFingerprint } from '../vault/gateway';
 
 export type ServiceProviderState = 'success' | 'partial' | 'failed';
 
@@ -167,6 +176,10 @@ function providerLabel(provider: GameProvider): string {
 	return provider === 'steam' ? 'Steam' : 'PlayStation';
 }
 
+function providerWarning(provider: GameProvider, kind: 'connectionFailed' | 'fetchFailed' | 'incomplete'): string {
+	return t(`sync.warnings.${kind}` as TranslationKey, { provider: providerLabel(provider) });
+}
+
 function errorDetails(error: unknown, secretValues: readonly string[] = []): { code: string; message: string } {
 	if (error instanceof Error) {
 		const code = 'code' in error && typeof error.code === 'string' ? error.code : 'provider-failure';
@@ -264,6 +277,19 @@ function rebaseRecoveryOperation(operation: Operation, planRevision: string): Op
 	if (operation.kind === 'create-base') {
 		return createOperation({ ...common, kind: 'create-base', expectedNoteFingerprint: null });
 	}
+	if (operation.kind === 'unmerge') return createOperation({
+		...common,
+		kind: 'unmerge',
+		path: operation.path,
+		expectedNoteFingerprint: operation.expectedNoteFingerprint,
+		newPath: operation.newPath,
+		expectedNewNoteFingerprint: operation.expectedNewNoteFingerprint,
+		providerToKeep: operation.providerToKeep,
+		providerToSplit: operation.providerToSplit,
+		providerToKeepId: operation.providerToKeepId,
+		providerToSplitId: operation.providerToSplitId,
+		removeManagedProperties: [...operation.removeManagedProperties],
+	});
 	return createOperation({
 		...common,
 		kind: operation.kind,
@@ -337,6 +363,23 @@ function hashRevision(value: string): string {
 		hash = Math.imul(hash, 16777619);
 	}
 	return `service:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function unmergeHash(value: string): string {
+	let hash = 2166136261;
+	for (const character of value) {
+		hash ^= character.charCodeAt(0);
+		hash = Math.imul(hash, 16777619);
+	}
+	return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function providerRef(provider: GameProvider, id: string): string {
+	return `${provider}:${id}`;
+}
+
+function providerName(provider: GameProvider): string {
+	return provider === 'steam' ? 'Steam' : 'PlayStation';
 }
 
 function revisionFor(games: readonly NormalizedGame[], statuses: Readonly<Record<GameProvider, ProviderStatusSummary>>): string {
@@ -431,6 +474,7 @@ export class SyncService {
 	private stateValue?: GameSyncData;
 	private stateHydrated = false;
 	private currentSourceRevision = 'service:empty';
+	private lastPreparedSync?: PreparedSync;
 	private readonly options: SyncServiceOptions;
 
 	constructor(options: SyncServiceOptions) {
@@ -461,10 +505,13 @@ export class SyncService {
 				const games = appliedSnapshots[provider] ?? this.stateValue.lastSuccessfulProviderSnapshots[provider];
 				if (games !== undefined) this.committedProviderGames.set(provider, games.map(cloneProviderGame));
 			}
+			for (const mapping of this.stateValue.identityMappings) {
+				this.canonicalIds.set(providerRef(mapping.provider, mapping.providerGameId), mapping.canonicalId);
+			}
 			for (const entry of this.stateValue.operationJournal) {
 				if (entry.game === undefined) continue;
 				for (const [provider, providerGame] of Object.entries(entry.game.providers) as [GameProvider, NormalizedProviderGame | undefined][]) {
-					if (providerGame !== undefined) this.canonicalIds.set(`${provider}:${providerGame.providerGameId}`, entry.game.canonicalId);
+					if (providerGame !== undefined && !this.canonicalIds.has(providerRef(provider, providerGame.providerGameId))) this.canonicalIds.set(providerRef(provider, providerGame.providerGameId), entry.game.canonicalId);
 				}
 			}
 			this.stateHydrated = true;
@@ -525,6 +572,7 @@ export class SyncService {
 		const state = await this.loadState();
 		return this.planner.plan(games, planRevision, {
 			identityMappings: state.identityMappings,
+			negativeMappings: state.negativeMappings,
 			ignoredCanonicalIds: state.ignoredCanonicalIds,
 			ignoredProviderRefs: state.ignoredProviderRefs,
 		});
@@ -671,9 +719,8 @@ export class SyncService {
 		let connection: ProviderConnectionStatus | undefined;
 		try {
 			connection = await adapter.getConnectionStatus();
-		} catch (error) {
-			const details = errorDetails(error, this.options.secretValues ?? []);
-			warnings.push(`${providerLabel(provider)} connection check failed: ${details.message}`);
+		} catch {
+			warnings.push(providerWarning(provider, 'connectionFailed'));
 		}
 		let snapshot: ProviderSnapshot;
 		const { force, now, achievementCacheTtlMs } = fetchOptions;
@@ -698,15 +745,14 @@ export class SyncService {
 				paginationComplete: false,
 				error: details,
 			};
-			return this.buildProviderPreparation(provider, failedSnapshot, state, previous, connection, [`${providerLabel(provider)} fetch failed: ${details.message}`, ...warnings]);
+			return this.buildProviderPreparation(provider, failedSnapshot, state, previous, connection, [providerWarning(provider, 'fetchFailed'), ...warnings]);
 		}
 		if (snapshot.status === 'failed') {
 			const safeSnapshot = sanitizeProviderSnapshot(snapshot, this.options.secretValues ?? []);
-			const details = safeSnapshot.error ?? { code: 'provider-failure', message: 'Provider returned a failed snapshot.' };
-			return this.buildProviderPreparation(provider, safeSnapshot, state, previous, connection, [`${providerLabel(provider)} returned a failed snapshot: ${details.message}`, ...warnings]);
+			return this.buildProviderPreparation(provider, safeSnapshot, state, previous, connection, [providerWarning(provider, 'fetchFailed'), ...warnings]);
 		}
 		const safeSnapshot = sanitizeProviderSnapshot(snapshot, this.options.secretValues ?? []);
-		if (safeSnapshot.error !== undefined) warnings.push(`${providerLabel(provider)}: ${safeSnapshot.error.message}`);
+		if (safeSnapshot.error !== undefined) warnings.push(providerWarning(provider, 'incomplete'));
 		return this.buildProviderPreparation(provider, safeSnapshot, state, previous, connection, warnings, this.achievementSourceFetchedAt(safeSnapshot));
 	}
 
@@ -738,6 +784,7 @@ export class SyncService {
 		this.currentSourceRevision = planRevision;
 		const plan = await this.planner.plan(games, planRevision, {
 			identityMappings: state.identityMappings,
+			negativeMappings: state.negativeMappings,
 			ignoredCanonicalIds: state.ignoredCanonicalIds,
 			ignoredProviderRefs: state.ignoredProviderRefs,
 		});
@@ -755,6 +802,7 @@ export class SyncService {
 			previewRequired: state.settings.firstSyncCompleted === false,
 			presence,
 		};
+		this.lastPreparedSync = prepared;
 		return prepared;
 	}
 
@@ -1087,6 +1135,379 @@ export class SyncService {
 			warnings,
 			reviewRequiredCount: prepared.reviewRequiredCount,
 		};
+	}
+
+	private noteForCanonical(index: Awaited<ReturnType<typeof buildNoteIndex>>, canonicalId: string): IndexedNote | undefined {
+		const byCanonical = index.findByGameSyncId(canonicalId);
+		if (byCanonical.length === 1) return byCanonical[0];
+		return undefined;
+	}
+
+	private providerRows(state: GameSyncData, canonicalId: string): MatchManagerRow['providers'] {
+		return state.identityMappings
+			.filter((mapping) => mapping.canonicalId === canonicalId)
+			.sort((left, right) => `${left.provider}:${left.providerGameId}`.localeCompare(`${right.provider}:${right.providerGameId}`))
+			.map((mapping) => ({
+				provider: mapping.provider,
+				providerRef: providerRef(mapping.provider, mapping.providerGameId),
+				providerName: providerName(mapping.provider),
+			}));
+	}
+
+	private providerRowsForGame(game: NormalizedGame | undefined): MatchManagerRow['providers'] {
+		if (game === undefined) return [];
+		return (['steam', 'playstation'] as const)
+			.flatMap((provider) => {
+				const providerGame = game.providers[provider];
+				return providerGame === undefined ? [] : [{
+					provider,
+					providerRef: providerRef(provider, providerGame.providerGameId),
+					providerName: providerName(provider),
+				}];
+			});
+	}
+
+	async getMatchManagerRows(): Promise<readonly MatchManagerRow[]> {
+		const state = await this.loadState();
+		const index = await buildNoteIndex(this.planner.gateway, state.propertyMapping);
+		const rows: MatchManagerRow[] = [];
+		const canonicalIds = [...new Set(state.identityMappings.map((mapping) => mapping.canonicalId))].sort();
+		for (const canonicalId of canonicalIds) {
+			const providers = this.providerRows(state, canonicalId);
+			const note = this.noteForCanonical(index, canonicalId);
+			if (providers.length === 2 && new Set(providers.map((provider) => provider.provider)).size === 2 && note !== undefined) {
+				rows.push({ category: 'merged', canonicalId, title: note.title, existingPath: note.path, providers });
+			}
+		}
+		for (const negative of state.negativeMappings) {
+			const leftNote = this.noteForCanonical(index, negative.leftCanonicalId);
+			const rightNote = this.noteForCanonical(index, negative.rightCanonicalId);
+			const note = leftNote ?? rightNote;
+			rows.push({
+				category: 'kept-separate',
+				leftCanonicalId: negative.leftCanonicalId,
+				rightCanonicalId: negative.rightCanonicalId,
+				title: note?.title,
+				existingPath: note?.path,
+				providers: [...this.providerRows(state, negative.leftCanonicalId), ...this.providerRows(state, negative.rightCanonicalId)],
+			});
+		}
+		for (const status of this.lastPreparedSync?.plan.statuses ?? []) {
+			if (status.status !== 'review' && status.status !== 'conflict') continue;
+			if (rows.some((row) => row.category === 'unresolved' && row.canonicalId === status.canonicalGameId)) continue;
+			const game = this.lastPreparedSync?.games.find((candidate) => candidate.canonicalId === status.canonicalGameId);
+			const note = status.match?.note ?? (status.path === undefined ? undefined : index.notes.find((candidate) => candidate.path === status.path));
+			const candidatePaths = [...new Set(status.match?.candidates.map((candidate) => candidate.path) ?? [])];
+			const providers = this.providerRowsForGame(game);
+			rows.push({
+				category: 'unresolved',
+				canonicalId: status.canonicalGameId,
+				title: note?.title,
+				existingPath: status.path,
+				providers: providers.length > 0 ? providers : this.providerRows(state, status.canonicalGameId),
+				...(candidatePaths.length === 0 ? {} : { candidatePaths }),
+				...(candidatePaths.length === 1 ? { candidatePath: candidatePaths[0] } : {}),
+				...(status.reason === undefined ? {} : { reason: status.reason }),
+			});
+		}
+		return rows;
+	}
+
+	async createMatchManagerAdapter(): Promise<MatchManagerAdapter> {
+		const rows = await this.getMatchManagerRows();
+		return {
+			rows,
+			prepareUnmerge: (canonicalId, provider) => this.prepareUnmerge(canonicalId, provider),
+			applyUnmerge: (prepared) => this.applyUnmerge(prepared),
+			allowMatchingAgain: (left, right) => this.allowMatchingAgain(left, right),
+			resolveUnresolved: (canonicalId, action, candidatePath) => this.resolveUnresolved(canonicalId, action, candidatePath),
+		};
+	}
+
+	async prepareMatchManagerSnapshot(): Promise<void> {
+		const state = await this.loadState();
+		const providerResults: Partial<Record<GameProvider, ProviderPreparation>> = {};
+		const statuses = {} as Record<GameProvider, ProviderStatusSummary>;
+		const grouped = new Map<string, NormalizedGame[]>();
+		for (const provider of ['steam', 'playstation'] as const) {
+			const providerGames = (state.lastAppliedProviderSnapshots[provider] ?? state.lastSuccessfulProviderSnapshots[provider] ?? []).map(cloneProviderGame);
+			if (providerGames.length === 0) continue;
+			const games = providerGames.map((game) => providerGameToNormalized(game, this.canonicalIdFor(game, state.identityMappings)));
+			for (const game of games) {
+				const list = grouped.get(game.canonicalId) ?? [];
+				list.push(game);
+				grouped.set(game.canonicalId, list);
+			}
+			const snapshot = {
+				provider,
+				status: 'complete' as const,
+				games: providerGames,
+				fetchedAt: state.lastSuccessfulProviderStates[provider]?.fetchedAt ?? this.now(),
+				pagination: { complete: true, pagesFetched: 0 },
+				paginationComplete: true,
+			};
+			const providerStatus: ProviderStatusSummary = {
+				provider,
+				state: 'success',
+				gamesFetched: providerGames.length,
+				fetchedAt: snapshot.fetchedAt,
+			};
+			statuses[provider] = providerStatus;
+			providerResults[provider] = {
+				provider,
+				providerStatus,
+				snapshot,
+				providerGames,
+				games,
+				gamesFetched: providerGames.length,
+				warnings: [],
+				plan: emptyPlan(),
+			};
+		}
+		const games = [...grouped.values()].map(mergeProviderStates).sort((left, right) => left.canonicalId.localeCompare(right.canonicalId));
+		const planRevision = revisionFor(games, statuses);
+		this.currentSourceRevision = planRevision;
+		const plan = await this.planner.plan(games, planRevision, {
+			identityMappings: state.identityMappings,
+			negativeMappings: state.negativeMappings,
+			ignoredCanonicalIds: state.ignoredCanonicalIds,
+			ignoredProviderRefs: state.ignoredProviderRefs,
+		});
+		this.lastPreparedSync = {
+			plan,
+			games,
+			providerStatuses: statuses,
+			providerResults,
+			gamesFetched: games.length,
+			operationsCreated: plan.operations.length,
+			warnings: [],
+			reviewRequiredCount: plan.statuses.filter((status) => status.status === 'review' || status.status === 'conflict').length,
+			ignored: plan.statuses.filter((status) => status.status === 'ignored').length,
+			previewRequired: false,
+		};
+	}
+
+	async getMatchManagerAdapter(): Promise<MatchManagerAdapter> {
+		return this.createMatchManagerAdapter();
+	}
+
+	private unmergePreviewConflict(providerToKeep: GameProvider, providerToSplit: GameProvider, message: string): PreparedUnmerge {
+		const preview: UnmergePreview = {
+			existingPath: '',
+			newPath: '',
+			providerToKeep,
+			providerToSplit,
+			providerToKeepId: '',
+			providerToSplitId: '',
+			providerIds: { steam: '', playstation: '' },
+			propertiesRemoved: [],
+			propertiesAdded: [],
+		};
+		const plan = createSyncPlan(`${this.currentSourceRevision}:unmerge:conflict`, []);
+		return { planId: plan.id, plan, preview, conflict: message };
+	}
+
+	async prepareUnmerge(existingCanonicalId: string, providerToKeep: GameProvider): Promise<PreparedUnmerge> {
+		const prepared = this.lastPreparedSync;
+		if (prepared === undefined) return this.unmergePreviewConflict(providerToKeep, providerToKeep === 'steam' ? 'playstation' : 'steam', 'A local sync snapshot is required.');
+		const mergedGame = prepared?.games.find((game) => game.canonicalId === existingCanonicalId);
+		if (mergedGame === undefined) return this.unmergePreviewConflict(providerToKeep, providerToKeep === 'steam' ? 'playstation' : 'steam', 'Merged game was not found.');
+		const providers = (['steam', 'playstation'] as const).filter((provider) => mergedGame.providers[provider] !== undefined);
+		if (providers.length !== 2 || !providers.includes(providerToKeep)) {
+			const split = providers.find((provider) => provider !== providerToKeep) ?? (providerToKeep === 'steam' ? 'playstation' : 'steam');
+			return this.unmergePreviewConflict(providerToKeep, split, 'The merged provider pair is ambiguous.');
+		}
+		const providerToSplit = providers.find((provider) => provider !== providerToKeep)!;
+		const keepGame = prepared.providerResults[providerToKeep]?.providerGames?.find((game) => game.providerGameId === mergedGame.providers[providerToKeep]?.providerGameId);
+		const splitGame = prepared.providerResults[providerToSplit]?.providerGames?.find((game) => game.providerGameId === mergedGame.providers[providerToSplit]?.providerGameId);
+		if (keepGame === undefined || splitGame === undefined) return this.unmergePreviewConflict(providerToKeep, providerToSplit, 'Provider data for the merged game is unavailable.');
+		const state = await this.loadState();
+		const index = await buildNoteIndex(this.planner.gateway, state.propertyMapping);
+		const statusMatches = prepared.plan.statuses.filter((status) => status.canonicalGameId === existingCanonicalId && status.path !== undefined);
+		const statusPaths = [...new Set(statusMatches.map((status) => status.path!))];
+		const notes = index.notes.filter((note) => statusPaths.includes(note.path));
+		const existingNote = notes.length === 1 ? notes[0] : this.noteForCanonical(index, existingCanonicalId);
+		if (existingNote === undefined || notes.length > 1) return this.unmergePreviewConflict(providerToKeep, providerToSplit, 'The existing merged note is ambiguous.');
+		const existingContent = await this.planner.gateway.read(existingNote.path);
+		const existingProperties = parseFrontmatter(existingContent).frontmatter;
+		const newCanonicalId = `game-sync:unmerge:${providerToSplit}:${splitGame.providerGameId}:${unmergeHash(`${existingCanonicalId}|${providerToSplit}|${splitGame.providerGameId}`)}`;
+		const stem = existingNote.path.split('/').at(-1)?.replace(/\.md$/iu, '') ?? existingNote.path;
+		const newPath = `${existingNote.path.slice(0, Math.max(0, existingNote.path.length - (existingNote.path.split('/').at(-1)?.length ?? existingNote.path.length)))}${stem} (${providerName(providerToSplit)}).md`;
+		const kept = providerGameToNormalized(keepGame, existingCanonicalId);
+		const split = providerGameToNormalized(splitGame, newCanonicalId);
+		const mergedProperties = buildManagedProperties(mergedGame, state.propertyMapping, this.now());
+		const keptProperties = buildManagedProperties(kept, state.propertyMapping, this.now());
+		const splitProperties = buildManagedProperties(split, state.propertyMapping, this.now());
+		const propertiesRemoved = Object.keys(mergedProperties)
+			.filter((name) => keptProperties[name] === undefined)
+			.map((name) => ({ name, ...(existingProperties[name] === undefined ? {} : { previousValue: existingProperties[name] }) }));
+		const propertiesAdded = Object.entries(splitProperties).map(([name, value]) => ({ name, nextValue: value }));
+		const preview: UnmergePreview = {
+			existingPath: existingNote.path,
+			newPath,
+			providerToKeep,
+			providerToSplit,
+			providerToKeepId: keepGame.providerGameId,
+			providerToSplitId: splitGame.providerGameId,
+			providerIds: { steam: mergedGame.providers.steam?.providerGameId ?? '', playstation: mergedGame.providers.playstation?.providerGameId ?? '' },
+			propertiesRemoved,
+			propertiesAdded,
+		};
+		const revision = `${this.currentSourceRevision}:unmerge:${unmergeHash(`${existingCanonicalId}|${providerToKeep}|${providerToSplit}`)}`;
+		if (await this.planner.gateway.exists(newPath)) {
+			const plan = createSyncPlan(revision, []);
+			return { planId: plan.id, plan, preview, conflict: 'The deterministic new note path is already in use.' };
+		}
+		const operation = createOperation({
+			canonicalGameId: existingCanonicalId,
+			kind: 'unmerge',
+			path: existingNote.path,
+			risk: 'review',
+			summary: `Split ${providerName(providerToSplit)} from ${existingNote.path}.`,
+			planRevision: revision,
+			expectedNoteFingerprint: existingNote.fingerprint ?? noteFingerprint(existingContent),
+			newPath,
+			expectedNewNoteFingerprint: null,
+			providerToKeep,
+			providerToSplit,
+			providerToKeepId: keepGame.providerGameId,
+			providerToSplitId: splitGame.providerGameId,
+			removeManagedProperties: propertiesRemoved.map((property) => property.name),
+		});
+		const plan = createSyncPlan(revision, [operation]);
+		return { planId: plan.id, plan, preview };
+	}
+
+	async applyUnmerge(prepared: PreparedUnmerge): Promise<void> {
+		const operation = prepared.plan.operations[0];
+		if (operation === undefined || operation.kind !== 'unmerge' || prepared.plan.operations.length !== 1 || prepared.conflict !== undefined || prepared.planId !== prepared.plan.id) {
+			throw new VaultConflictError('The unmerge plan is not applicable.');
+		}
+		const source = this.lastPreparedSync;
+		if (source === undefined) throw new VaultConflictError('The unmerge source snapshot is no longer available.');
+		const mergedGame = source.games.find((game) => game.canonicalId === operation.canonicalGameId);
+		const splitProviderGame = source.providerResults[operation.providerToSplit]?.providerGames?.find((game) => game.providerGameId === operation.providerToSplitId);
+		if (mergedGame === undefined || splitProviderGame === undefined || operation.planRevision !== prepared.plan.planRevision || prepared.plan.planRevision !== `${this.currentSourceRevision}:unmerge:${unmergeHash(`${operation.canonicalGameId}|${operation.providerToKeep}|${operation.providerToSplit}`)}`) {
+			throw new VaultConflictError('The unmerge plan is stale; prepare it again.');
+		}
+		const existingContent = await this.planner.gateway.read(operation.path);
+		if (noteFingerprint(existingContent) !== operation.expectedNoteFingerprint || await this.planner.gateway.exists(operation.newPath)) {
+			throw new VaultConflictError('The unmerge plan is stale or its new path is no longer available.');
+		}
+		const newCanonicalId = `game-sync:unmerge:${operation.providerToSplit}:${operation.providerToSplitId}:${unmergeHash(`${operation.canonicalGameId}|${operation.providerToSplit}|${operation.providerToSplitId}`)}`;
+		const splitGame = providerGameToNormalized(splitProviderGame, newCanonicalId);
+		const keepProviderGame = source.providerResults[operation.providerToKeep]?.providerGames?.find((game) => game.providerGameId === operation.providerToKeepId);
+		if (keepProviderGame === undefined) throw new VaultConflictError('Provider data for the existing note is unavailable.');
+		const keptGame = providerGameToNormalized(keepProviderGame, operation.canonicalGameId);
+		const state = await this.loadState();
+		const previousState = cloneState(state);
+		let createdNewNote = false;
+		let createdNewNoteFingerprint: string | undefined;
+		let updatedExistingNote = false;
+		let updatedExistingNoteFingerprint: string | undefined;
+		try {
+			await this.writer.createNote({ path: operation.newPath, game: splitGame, expectedNoteFingerprint: null, template: '' });
+			createdNewNote = true;
+			createdNewNoteFingerprint = noteFingerprint(await this.planner.gateway.read(operation.newPath));
+			await this.writer.updateNote({
+				path: operation.path,
+				game: keptGame,
+				expectedNoteFingerprint: operation.expectedNoteFingerprint,
+				removeManagedProperties: operation.removeManagedProperties,
+			});
+			updatedExistingNote = true;
+			updatedExistingNoteFingerprint = noteFingerprint(await this.planner.gateway.read(operation.path));
+
+			const nextState = cloneState(state);
+			nextState.identityMappings = nextState.identityMappings.map((mapping) => mapping.provider === operation.providerToSplit && mapping.providerGameId === operation.providerToSplitId
+				? { ...mapping, canonicalId: newCanonicalId }
+				: mapping);
+			nextState.identityIndex = nextState.identityIndex.filter((identity) => identity.canonicalId !== operation.canonicalGameId && identity.canonicalId !== newCanonicalId);
+			nextState.identityIndex.push({ ...keptGame.identity, canonicalId: operation.canonicalGameId }, { ...splitGame.identity, canonicalId: newCanonicalId });
+			this.stateValue = nextState;
+			await this.saveState();
+			this.canonicalIds.set(providerRef(operation.providerToSplit, operation.providerToSplitId), newCanonicalId);
+		} catch (error) {
+			this.stateValue = previousState;
+			try {
+				if (updatedExistingNote && updatedExistingNoteFingerprint !== undefined) {
+					await this.planner.gateway.process(operation.path, (content) => {
+						if (noteFingerprint(content) !== updatedExistingNoteFingerprint) throw new VaultConflictError(`Rollback is unsafe for ${operation.path}.`);
+						return existingContent;
+					});
+				}
+				if (createdNewNote && createdNewNoteFingerprint !== undefined) await this.planner.gateway.remove(operation.newPath, createdNewNoteFingerprint);
+			} catch (rollbackError) {
+				throw new VaultConflictError('Unmerge failed and its partial vault changes could not be rolled back.', { cause: rollbackError });
+			}
+			throw error;
+		}
+	}
+
+	async applyReviewDecision(decision: ReviewDecision): Promise<void> {
+		const prepared = this.lastPreparedSync;
+		if (prepared === undefined || decision.planId !== prepared.plan.id) throw new VaultConflictError('The review plan is stale; prepare it again.');
+		const game = prepared.games.find((candidate) => candidate.canonicalId === decision.canonicalGameId);
+		if (game === undefined) throw new VaultConflictError('The review item is no longer available.');
+		const state = await this.loadState();
+		if (decision.action === 'skip') {
+			if (!state.ignoredCanonicalIds.includes(decision.canonicalGameId)) state.ignoredCanonicalIds.push(decision.canonicalGameId);
+			this.stateValue = state;
+			await this.saveState();
+			return;
+		}
+		const status = prepared.plan.statuses.find((candidate) => candidate.canonicalGameId === decision.canonicalGameId && (candidate.status === 'review' || candidate.status === 'conflict'));
+		const candidate = status?.match?.candidates.find((candidateNote) => candidateNote.path === decision.candidatePath);
+		if (candidate === undefined) throw new VaultConflictError('The review candidate is no longer available.');
+		if (decision.candidatePath === undefined) throw new VaultConflictError('The review candidate is unavailable.');
+		const index = await buildNoteIndex(this.planner.gateway, state.propertyMapping);
+		const note = index.notes.find((candidate) => candidate.path === decision.candidatePath);
+		const gameSyncIdKey = resolvePropertyMapping(state.propertyMapping).gameSyncId ?? 'game-sync-id';
+		const candidateValue = note?.properties[gameSyncIdKey];
+		const candidateId = typeof candidateValue === 'string' ? candidateValue : undefined;
+		if (candidateId === undefined) throw new VaultConflictError('The review candidate has no stable identity.');
+		if (note === undefined || noteFingerprint(await this.planner.gateway.read(note.path)) !== candidate.fingerprint) throw new VaultConflictError('The review candidate changed after the preview.');
+		if (decision.action === 'merge') {
+			state.identityMappings = state.identityMappings.filter((mapping) => !Object.entries(game.providers).some(([provider, providerGame]) =>
+				providerGame !== undefined && mapping.provider === provider && mapping.providerGameId === providerGame.providerGameId,
+			));
+			for (const [provider, providerGame] of Object.entries(game.providers) as [GameProvider, NormalizedProviderGame | undefined][]) {
+				if (providerGame !== undefined) state.identityMappings.push({ canonicalId: candidateId, provider, providerGameId: providerGame.providerGameId });
+			}
+			state.negativeMappings = removeNegativeMapping(state, game.canonicalId, candidateId).negativeMappings as GameSyncData['negativeMappings'];
+			for (const [provider, providerGame] of Object.entries(game.providers) as [GameProvider, NormalizedProviderGame | undefined][]) {
+				if (providerGame !== undefined) this.canonicalIds.set(providerRef(provider, providerGame.providerGameId), candidateId);
+			}
+			this.stateValue = state;
+			await this.saveState();
+			return;
+		}
+		let next = state;
+		for (const [provider, providerGame] of Object.entries(game.providers) as [GameProvider, NormalizedProviderGame | undefined][]) {
+			if (providerGame !== undefined) next.identityMappings = addPositiveMapping(next, { canonicalId: game.canonicalId, provider, providerGameId: providerGame.providerGameId }).identityMappings as GameSyncData['identityMappings'];
+		}
+		next.negativeMappings = addNegativeMapping(next, game.canonicalId, candidateId).negativeMappings as GameSyncData['negativeMappings'];
+		this.stateValue = next;
+		await this.saveState();
+	}
+
+	async allowMatchingAgain(leftCanonicalId: string, rightCanonicalId: string): Promise<void> {
+		const state = await this.loadState();
+		state.negativeMappings = removeNegativeMapping(state, leftCanonicalId, rightCanonicalId).negativeMappings as GameSyncData['negativeMappings'];
+		this.stateValue = state;
+		await this.saveState();
+	}
+
+	async resolveUnresolved(canonicalId: string, action: MatchResolutionAction, candidatePath?: string): Promise<void> {
+		const prepared = this.lastPreparedSync;
+		const status = prepared?.plan.statuses.find((candidate) => candidate.canonicalGameId === canonicalId && (candidate.status === 'review' || candidate.status === 'conflict'));
+		if (prepared === undefined || status === undefined) throw new VaultConflictError('The unresolved item is no longer available.');
+		await this.applyReviewDecision({
+			planId: prepared.plan.id,
+			canonicalGameId: canonicalId,
+			action,
+			...(candidatePath === undefined && status.match?.note?.path === undefined ? {} : { candidatePath: candidatePath ?? status.match?.note?.path }),
+		});
 	}
 
 	async getState(): Promise<GameSyncData> {
