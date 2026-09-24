@@ -10,7 +10,7 @@ Game Sync synchronizes GameTrack exports, Steam and PlayStation game data into o
 - One note per logical game, including games present on both providers.
 - Conservative matching with preview before the first write.
 - Existing note adoption without rewriting the manual body.
-- Managed Properties and a managed achievements block; other note content remains user-owned.
+- Mapped destinations and a managed achievements block; unmapped note attributes and other note content remain unchanged.
 - Optional `Games.base` bootstrap, background sync on desktop, English and Polish UI.
 - No provider write-back, telemetry, Game Sync account or custom backend.
 
@@ -67,6 +67,8 @@ The default destination is `Games/`; change it only if you want another folder. 
 
 The first sync cannot be applied silently. A later sync may still require review when matching is uncertain. When credentials are still available, opening a connection tries a one-click reconnect first and opens the provider dialog only when repair is needed.
 
+The sync preview lets you select individual games and individual changed attributes, inspect create/update details and apply only the changes you accept.
+
 ## GameTrack setup
 
 1. In GameTrack, export your library using its official export action.
@@ -94,7 +96,7 @@ PlayStation support is unofficial. Sony does not provide a public consumer API f
 
 ## Notes and Properties
 
-Game Sync writes ordinary Markdown notes. Managed Properties use the default names such as `game-sync-id`, `steam-id`, `playstation-id`, `playtime` and provider-specific playtime fields. Property destinations can be changed or disabled in Settings; template keys are independent of Property mappings.
+Game Sync writes ordinary Markdown notes. Each managed source field can use a custom destination attribute name, or be disabled by clearing the destination in Settings. User-owned attributes — `status`, `rating`, `favorite`, `start`, `end`, `review`, `notes` and `tags` — are protected: they cannot be selected as destinations and remain under your control. Template keys are independent of attribute mappings.
 
 On an existing note, Game Sync preserves the manual body, unmanaged frontmatter and existing note identity. Templates render the body only when a new note is created. The managed achievements block is delimited by:
 
@@ -110,9 +112,28 @@ Playtime is stored in minutes. Progress values are numeric `0–100`. Dates use 
 
 ## Templates
 
-Set a template path in Settings. Template keys include `title`, `released`, `description`, `cover`, `providers`, `owned`, `playtime`, `lastPlayed`, `steamId`, `steamAchievements`, `playstationId` and `playstationTrophies`.
+Set a template path in Settings. The flat template context exposes the complete public key catalog:
 
-Available helpers are `join`, `hours`, `percent` and `date`. Partials include `achievements`, `steamAchievements` and `playstationTrophies`.
+```text
+id, title, original, year, released, description, cover,
+developers, publishers, genres, platforms, providers,
+owned, acquisitionType, playtime, playtimeHours, lastPlayed, updated,
+steamId, steamUrl, steamOwned, steamPlaytime, steamPlaytimeHours,
+steamLastPlayed, steamAchievementsEarned, steamAchievementsTotal,
+steamAchievementsProgress, steamAchievements,
+playstationId, playstationUrl, playstationOwned, playstationPlaytime,
+playstationPlaytimeHours, playstationLastPlayed, psnTrophiesEarned,
+psnTrophiesTotal, psnTrophiesProgress, psnBronze, psnSilver, psnGold,
+psnPlatinum, playstationTrophies,
+purchaseDate, purchasePrice, purchaseCurrency, purchaseSource,
+developersText, publishersText, genresText, platformsText, providersText
+```
+
+The array keys `developers`, `publishers`, `genres`, `platforms` and `providers` can be rendered with `join`. Platform values are normalized identifiers such as `pc` and `playstation-5`; `platformsText` is the ready-to-display comma-separated form. The current provider data does not reliably identify how a game was acquired, so `acquisitionType` is `unknown`.
+
+Available helpers are `join`, `hours`, `percent` and `date`. `join` joins an array, `hours` converts minutes to hours, `percent` formats a number to two decimal places, and `date` formats a date with `YYYY-MM-DD` as the default. The implementation also registers `renderAchievementList` for the built-in achievement partials. Obsidian placeholders such as `{{date:YYYY-MM-DD}}` and `{{time:HH:mm}}` are also resolved when the template is rendered.
+
+Partials are `achievements` (both providers), `steamAchievements` and `playstationTrophies`. They render the corresponding achievement or trophy lists while keeping hidden, locked item details undisclosed unless spoiler disclosure is enabled.
 
 ## Achievements and trophies
 
@@ -156,7 +177,7 @@ PlayStation support is unofficial. Sony does not provide a public consumer API f
 - Purchase history, RAWG and providers other than GameTrack, Steam and PlayStation are outside this release.
 - GameTrack requires an official ZIP export; imports are explicit and manual.
 - Full provider connect/sync/background behavior is guaranteed on desktop; mobile bundle loading, settings and Markdown access are supported, while background sync is disabled.
-- Uncertain cross-provider matches remain review/conflict items. The match-manager command is reserved until a safe split/unmerge backend is available.
+- Uncertain cross-provider matches remain review/conflict items. **Manage game matches** provides Merged, Kept separate and Unresolved views. It can prepare and apply a reviewed split/unmerge, allow matching again for kept-separate pairs and resolve unresolved candidates with merge, keep-separate or skip.
 
 ## Troubleshooting
 

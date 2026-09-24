@@ -62,7 +62,7 @@ function connection(provider: 'steam' | 'playstation', state: ProviderConnection
 	return { provider, state, connected: state === 'connected', ...(state === 'connected' ? { account: { provider, displayName: 'voitech', accountId: `${provider}-account`, ...(provider === 'steam' ? { gameCount: 327 } : {}) } } : {}) };
 }
 
-function setupFixture(overrides: Partial<ConstructorParameters<typeof SetupModal>[1]> = {}) {
+function setupFixture(overrides: Partial<ConstructorParameters<typeof SetupModal>[1]> = {}, app: unknown = {}) {
 	let state = migrateState(undefined);
 	const saved: GameSyncData[] = [];
 	let resolvePrepare!: (value: PreparedSync) => void;
@@ -73,7 +73,7 @@ function setupFixture(overrides: Partial<ConstructorParameters<typeof SetupModal
 		openConnection: vi.fn(), disconnect: vi.fn(async () => undefined), confirm: vi.fn(async () => true),
 		getConnectionStatus: vi.fn(async (provider: 'steam' | 'playstation') => connection(provider)), prepareAll, onPreparedSync: vi.fn(), ...overrides,
 	};
-	return { options, saved, getState: () => state, resolvePrepare: (value: PreparedSync) => resolvePrepare(value), modal: new SetupModal({} as never, options) };
+	return { options, saved, getState: () => state, resolvePrepare: (value: PreparedSync) => resolvePrepare(value), modal: new SetupModal(app as never, options) };
 }
 
 function buttons(modal: InstanceType<typeof SetupModal>): HTMLButtonElement[] { return Array.from(modal.contentEl.querySelectorAll('button')); }
@@ -131,6 +131,13 @@ describe('Quick Setup', () => {
 		fixture.modal.contentEl.querySelector<HTMLButtonElement>('[data-quick-setup-preview]')!.click();
 		await vi.waitFor(() => expect(fixture.options.save).toHaveBeenCalled());
 		expect(fixture.saved.at(-1)?.settings.notesFolder).toBe('My Games');
+	});
+
+	it('shows available vault folders while choosing the setup folder', async () => {
+		const fixture = setupFixture({}, { vault: { getAllLoadedFiles: () => [{ path: 'Games', children: [] }, { path: 'Gaming/Library', children: [] }] } });
+		await openAndWait(fixture.modal);
+		expect(fixture.modal.contentEl.querySelector<HTMLInputElement>('[data-settings-field="notesFolder"]')?.getAttribute('list')).toMatch(/^game-sync-folder-suggestions-/);
+		expect(Array.from(fixture.modal.contentEl.querySelectorAll<HTMLOptionElement>('datalist[data-vault-path-suggestions="folder"] option')).map((option) => option.value)).toEqual(['Games', 'Gaming/Library']);
 	});
 
 	it('saves setup completion, prepares the preview, and prevents duplicate submission', async () => {

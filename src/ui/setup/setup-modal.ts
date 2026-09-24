@@ -11,6 +11,7 @@ import { renderConnectionStatus } from '../status';
 import type { GameTrackRuntimeStatus } from '../../model/library-provider';
 import type { CanonicalPreviewResult } from '../../sync/canonical-service';
 import type { GameTrackCsvSelection } from '../../providers/gametrack/csv/gametrack-csv-provider';
+import { attachVaultPathSuggestions } from '../settings/vault-path-suggestions';
 
 export interface SetupModalOptions {
 	stateStore: StateStore;
@@ -173,11 +174,13 @@ export class SetupModal extends Modal {
 	}
 
 	private renderFolder(): void {
-		new Setting(this.contentEl).setName(t('setup.folder.title')).setDesc(t('setup.folder.description')).addText((component) => {
+		const setting = new Setting(this.contentEl).setName(t('setup.folder.title')).setDesc(t('setup.folder.description'));
+		setting.addText((component) => {
 			component.inputEl.dataset.settingsField = 'notesFolder';
 			component.inputEl.value = this.settings().notesFolder;
 			component.setPlaceholder(t('setup.folder.placeholder'));
 			component.onChange((value) => { this.settings().notesFolder = value.trim() || 'Games'; });
+			attachVaultPathSuggestions(component.inputEl, this.app, 'folder', setting.controlEl);
 		});
 	}
 

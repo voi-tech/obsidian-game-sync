@@ -1,7 +1,8 @@
 import type { CanonicalLibrarySnapshot, LibraryProvider } from '../model/canonical-provider';
 import { mergeEnrichmentResults, type GameEnricher, type GameEnrichmentResult } from '../model/enrichment';
-import { planCanonicalSync, type CanonicalSyncPlan, type CanonicalSyncPlannerOptions } from './canonical-planner';
+import { planCanonicalSync, type CanonicalSyncPlan, type CanonicalSyncPlannerOptions, type CanonicalSyncSelection } from './canonical-planner';
 import { CanonicalVaultWriter } from '../vault/canonical-writer';
+import { canonicalGameFingerprint } from './canonical-state';
 
 export interface CanonicalPreviewResult {
 	readonly snapshot: CanonicalLibrarySnapshot;
@@ -40,13 +41,13 @@ export class CanonicalSyncService {
 		return { snapshot, enrichments, plan: await planCanonicalSync(snapshot.games, { ...this.options.planner, protectedCanonicalProperties: unavailableEnrichmentProperties(enrichments) }, revision) };
 	}
 
-	async sync(selectedOperationIds?: readonly string[]): Promise<{ preview: CanonicalPreviewResult; appliedOperationIds: readonly string[] }> {
+	async sync(selection?: CanonicalSyncSelection): Promise<{ preview: CanonicalPreviewResult; appliedOperationIds: readonly string[] }> {
 		const preview = await this.preview();
-		const appliedOperationIds = await this.applyPreview(preview, selectedOperationIds);
+		const appliedOperationIds = await this.applyPreview(preview, selection);
 		return { preview, appliedOperationIds };
 	}
 
-	async applyPreview(preview: CanonicalPreviewResult, selectedOperationIds?: readonly string[]): Promise<readonly string[]> {
+	async applyPreview(preview: CanonicalPreviewResult, selection?: CanonicalSyncSelection): Promise<readonly string[]> {
 		if (preview.snapshot.status !== 'complete' || preview.plan === undefined) {
 			throw new CanonicalProviderError('Library snapshot is not complete; no vault changes were made.');
 		}
@@ -60,7 +61,7 @@ export class CanonicalSyncService {
 		if (currentRevision !== preview.plan.planRevision) {
 			throw new CanonicalProviderError('The library source changed; this preview is no longer valid. Preview the sync again.');
 		}
-		return this.options.writer.apply(preview.plan, selectedOperationIds);
+		return this.options.writer.apply(preview.plan, selection);
 	}
 
 	private async runEnricher(enricher: GameEnricher, snapshot: CanonicalLibrarySnapshot): Promise<GameEnrichmentResult> {
@@ -78,13 +79,21 @@ function unavailableSnapshot(provider: string): CanonicalLibrarySnapshot {
 
 function enrichedRevision(games: readonly import('../model/canonical-game').CanonicalGame[], results: readonly GameEnrichmentResult[]): string {
 	let value = 2166136261;
-	const input = JSON.stringify({ games, results: results.map((result) => ({ source: result.source, status: result.status, fingerprint: result.fingerprint, patches: result.patches })) });
+	const input = JSON.stringify({ games: games.map(canonicalGameFingerprint).sort(), results: results.map((result) => ({ source: result.source, status: result.status })) });
 	for (const character of input) { value ^= character.charCodeAt(0); value = Math.imul(value, 16777619); }
 	return (value >>> 0).toString(16).padStart(8, '0');
 }
 
 function unavailableEnrichmentProperties(results: readonly GameEnrichmentResult[]): readonly import('../vault/canonical-projection').CanonicalPropertyKey[] {
-	return results.some((result) => result.status !== 'success')
-		? ['lastPlayed', 'achievementsUnlocked', 'achievementsTotal', 'achievementPercentage']
-		: [];
+	const protectedProperties = new Set<import('../vault/canonical-projection').CanonicalPropertyKey>();
+	for (const result of results) {
+		if (result.status === 'success') continue;
+		if (result.source === 'steam') {
+			for (const key of ['steamPlaytime', 'steamLastPlayed', 'steamAchievementsEarned', 'steamAchievementsTotal', 'steamAchievementsProgress'] as const) protectedProperties.add(key);
+		}
+		if (result.source === 'playstation') {
+			for (const key of ['playstationPlaytime', 'playstationLastPlayed', 'psnTrophiesEarned', 'psnTrophiesTotal', 'psnTrophiesProgress', 'psnBronze', 'psnSilver', 'psnGold', 'psnPlatinum'] as const) protectedProperties.add(key);
+		}
+	}
+	return [...protectedProperties];
 }

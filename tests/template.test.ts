@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { NormalizedGame } from '../src/model/game';
 import type { ProviderGame } from '../src/model/provider';
 import { buildTemplateContext, renderFilename, renderTemplate } from '../src/vault/template';
-import { TEMPLATE_PUBLIC_KEYS } from '../src/vault/template-reference';
+import { TEMPLATE_KEY_CATALOG, TEMPLATE_PUBLIC_KEYS } from '../src/vault/template-reference';
+import { buildCanonicalTemplateContext } from '../src/vault/canonical-template';
+import type { CanonicalGame } from '../src/model/canonical-game';
 
 function makeProvider(provider: ProviderGame['provider'], overrides: Partial<ProviderGame> = {}): ProviderGame {
 	return {
@@ -73,7 +75,28 @@ function makeGame(): NormalizedGame {
 	};
 }
 
+function makeCanonicalGame(): CanonicalGame {
+	return {
+		identity: { canonicalKey: 'gametrack:canonical-game', externalIds: { gametrack: 'canonical-game', igdb: 42, steam: '1091500' } },
+		title: 'Canonical Game',
+		metadata: { releaseDate: '2024-03-04', developers: ['Studio'], publishers: ['Publisher'], genres: ['Action'], summary: 'Summary', cover: 'https://example.com/cover.jpg' },
+		platforms: [{ id: 'steam', source: 'gametrack', owned: true }],
+		playtime: { canonical: { minutes: 90, source: 'gametrack', confidence: 'high' }, observations: [] },
+		achievements: [{ source: 'steam', unlocked: 1, total: 2, completionPercent: 50, confidence: 'high', details: [{ id: 'a1', name: 'First', unlocked: true, hidden: false }] }],
+		provenance: { provider: 'gametrack', sourceId: 'canonical-game', schemaSignature: 'schema' },
+	};
+}
+
 describe('stable Handlebars template contract', () => {
+	it('documents every public template key with a description and example', () => {
+		expect(TEMPLATE_KEY_CATALOG.map((entry) => entry.key)).toEqual([...TEMPLATE_PUBLIC_KEYS]);
+		for (const entry of TEMPLATE_KEY_CATALOG) {
+			expect(entry.description.en.length).toBeGreaterThan(0);
+			expect(entry.description.pl.length).toBeGreaterThan(0);
+			expect(entry.example.length).toBeGreaterThan(0);
+		}
+	});
+
 	it('exposes the complete flat public context independently of property mappings', () => {
 		const context = buildTemplateContext(makeGame(), { updatedAt: '2026-09-12T12:30:00.000Z' });
 		expect(Object.keys(context).sort()).toEqual([...TEMPLATE_PUBLIC_KEYS].sort());
@@ -135,5 +158,32 @@ describe('stable Handlebars template contract', () => {
 
 	it('wraps template compilation errors', () => {
 		expect(() => renderTemplate('{{#if', buildTemplateContext(makeGame()))).toThrow(/Template rendering failed/);
+	});
+
+	it('adapts canonical games to the existing flat template contract', () => {
+		const context = buildCanonicalTemplateContext(makeCanonicalGame());
+		expect(Object.keys(context).sort()).toEqual([...TEMPLATE_PUBLIC_KEYS].sort());
+		expect(context).toMatchObject({ id: 'gametrack:canonical-game', title: 'Canonical Game', released: '2024-03-04', playtime: 90, playtimeHours: 1.5, acquisitionType: 'unknown', steamId: '1091500', steamAchievementsEarned: 1, steamAchievementsTotal: 2, steamAchievementsProgress: 50 });
+		expect(renderTemplate('{{title}}|{{released}}|{{playtimeHours}}|{{steamAchievementsEarned}}|{{join providers ","}}', context)).toBe('Canonical Game|2024-03-04|1.5|1|gametrack,steam');
+	});
+
+	it('keeps zero trophy categories in the canonical template context for an empty reliable details snapshot', () => {
+		const context = buildCanonicalTemplateContext({
+			...makeCanonicalGame(),
+			achievements: [{ source: 'playstation', unlocked: 0, total: 0, completionPercent: 0, confidence: 'high', details: [] }],
+		});
+
+		expect(context).toMatchObject({ psnBronze: 0, psnSilver: 0, psnGold: 0, psnPlatinum: 0 });
+	});
+
+	it('keeps trophy categories undefined when no reliable category snapshot exists', () => {
+		const withoutSummary = buildCanonicalTemplateContext(makeCanonicalGame());
+		const withoutDetails = buildCanonicalTemplateContext({
+			...makeCanonicalGame(),
+			achievements: [{ source: 'playstation', unlocked: 0, total: 0, completionPercent: 0, confidence: 'high' }],
+		});
+
+		expect(withoutSummary.psnBronze).toBeUndefined();
+		expect(withoutDetails.psnBronze).toBeUndefined();
 	});
 });

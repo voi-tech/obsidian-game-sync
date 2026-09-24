@@ -1,5 +1,5 @@
 import type { GameTrackCsvBundle } from './gametrack-csv-normalizer';
-import { parseGameTrackZip } from './gametrack-zip';
+import { GAME_TRACK_ZIP_MAX_INPUT_SIZE, GameTrackZipError, parseGameTrackZip } from './gametrack-zip';
 import type { GameTrackCsvSelection, GameTrackCsvSource } from './gametrack-csv-provider';
 
 const CSV_FILES = [
@@ -32,7 +32,10 @@ export interface GameTrackFileLike {
 export function createGameTrackCsvFileSource(file: GameTrackFileLike, path?: string): GameTrackCsvSource {
 	const selection: GameTrackCsvSelection = { name: file.name, size: file.size, modifiedAt: file.lastModified, ...(path === undefined ? {} : { path }) };
 	return {
-		readBundle: async () => parseGameTrackZip(new Uint8Array(await file.arrayBuffer())),
+		readBundle: async () => {
+			if (file.size > GAME_TRACK_ZIP_MAX_INPUT_SIZE) throw new GameTrackZipError('EXPORT_INVALID_ZIP');
+			return parseGameTrackZip(new Uint8Array(await file.arrayBuffer()));
+		},
 		getFingerprint: async () => ({ name: file.name, size: file.size, modifiedAt: file.lastModified }),
 		getSelection: () => selection,
 	};

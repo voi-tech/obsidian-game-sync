@@ -1,6 +1,8 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/state/defaults';
+import { DEFAULT_PROPERTY_MAPPING } from '../src/model/property-mapping';
+import { PROPERTY_MAPPING_GROUPS } from '../src/ui/settings/property-settings';
 
 const obsidianMock = vi.hoisted(() => {
 	function decorate(element: HTMLElement): HTMLElement {
@@ -65,11 +67,12 @@ const { AdditionalSettingsModal } = await import('../src/ui/settings/additional-
 
 function fixture() {
 	const current = structuredClone(DEFAULT_SETTINGS);
+	const mapping: Record<string, string | null | false> = {};
 	const host = {
 		readSettings: vi.fn(async () => structuredClone(current)),
 		writeSettings: vi.fn(async (settings: typeof current) => { Object.assign(current, structuredClone(settings)); }),
-		readPropertyMapping: vi.fn(async () => ({})),
-		writePropertyMapping: vi.fn(async () => undefined),
+		readPropertyMapping: vi.fn(async () => structuredClone(mapping)),
+		writePropertyMapping: vi.fn(async (next: typeof mapping) => { Object.assign(mapping, structuredClone(next)); }),
 		openIgnoredGames: vi.fn(),
 		openMatchManager: vi.fn(),
 		copyDiagnostics: vi.fn(),
@@ -157,8 +160,59 @@ describe('Additional settings', () => {
 		buttons(fixtureData.modal)[1].click();
 		await vi.waitFor(() => expect(fixtureData.host.readPropertyMapping).toHaveBeenCalledOnce());
 		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="title"]')).not.toBeNull();
-		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="gameSyncId"]')).toBeNull();
-		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="steamId"]')).toBeNull();
-		expect(fixtureData.modal.contentEl.querySelectorAll('[data-property-destination]')).toHaveLength(12);
+		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="gameSyncId"]')).not.toBeNull();
+		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="steamId"]')).not.toBeNull();
+		expect(fixtureData.modal.contentEl.querySelectorAll('[data-property-destination]')).toHaveLength(Object.keys(DEFAULT_PROPERTY_MAPPING).length);
+		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="igdbId"]')).not.toBeNull();
+		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="gametrackId"]')).not.toBeNull();
+		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="steamAchievementsTotal"]')).not.toBeNull();
+		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="updated"]')).not.toBeNull();
+		expect(fixtureData.modal.contentEl.querySelectorAll('[data-property-mapping-group]')).toHaveLength(PROPERTY_MAPPING_GROUPS.length);
+	});
+
+	it('shows a concrete example beside each mapped attribute', async () => {
+		const fixtureData = fixture();
+		await open(fixtureData.modal);
+		buttons(fixtureData.modal)[1].click();
+		await vi.waitFor(() => expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="title"]')).not.toBeNull());
+		expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="title"]')?.closest('.setting-item')?.textContent).toContain('Example: Dead Space');
+	});
+
+	it('does not render an enable toggle for attribute mappings', async () => {
+		const fixtureData = fixture();
+		await open(fixtureData.modal);
+		buttons(fixtureData.modal)[1].click();
+		await vi.waitFor(() => expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="title"]')).not.toBeNull());
+		expect(fixtureData.modal.contentEl.querySelector('[data-property-enabled]')).toBeNull();
+	});
+
+	it('persists an arbitrary destination across reopening the property view', async () => {
+		const fixtureData = fixture();
+		await open(fixtureData.modal);
+		buttons(fixtureData.modal)[1].click();
+		await vi.waitFor(() => expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="title"]')).not.toBeNull());
+		const input = fixtureData.modal.contentEl.querySelector<HTMLInputElement>('[data-property-destination="title"]')!;
+		input.value = 'game-title';
+		input.dispatchEvent(new Event('input'));
+		await vi.waitFor(() => expect(fixtureData.host.writePropertyMapping).toHaveBeenCalledWith(expect.objectContaining({ title: 'game-title' })));
+		fixtureData.modal.onClose();
+		await open(fixtureData.modal);
+		buttons(fixtureData.modal)[1].click();
+		await vi.waitFor(() => expect(fixtureData.modal.contentEl.querySelector<HTMLInputElement>('[data-property-destination="title"]')?.value).toBe('game-title'));
+	});
+
+	it('treats an empty destination as a disabled mapping and persists it', async () => {
+		const fixtureData = fixture();
+		await open(fixtureData.modal);
+		buttons(fixtureData.modal)[1].click();
+		await vi.waitFor(() => expect(fixtureData.modal.contentEl.querySelector('[data-property-destination="title"]')).not.toBeNull());
+		const input = fixtureData.modal.contentEl.querySelector<HTMLInputElement>('[data-property-destination="title"]')!;
+		input.value = '';
+		input.dispatchEvent(new Event('input'));
+		await vi.waitFor(() => expect(fixtureData.host.writePropertyMapping).toHaveBeenCalledWith(expect.objectContaining({ title: null })));
+		fixtureData.modal.onClose();
+		await open(fixtureData.modal);
+		buttons(fixtureData.modal)[1].click();
+		await vi.waitFor(() => expect(fixtureData.modal.contentEl.querySelector<HTMLInputElement>('[data-property-destination="title"]')?.value).toBe(''));
 	});
 });

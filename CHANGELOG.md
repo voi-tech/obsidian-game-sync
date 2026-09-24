@@ -1,5 +1,13 @@
 # Changelog
 
+## 26.9.1
+
+- Added game-level and attribute-level preview selection, including stable-identity safeguards for new notes.
+- Made new-note templates part of the frozen preview so applied notes use exactly the content that was reviewed.
+- Hardened canonical matching and provider-specific property projection while protecting user-owned attributes.
+- Bounded memory use when reading GameTrack ZIP exports.
+- Streamlined settings and documented the full template catalog, match manager, protected attributes and local release checks in English and Polish.
+
 ## 26.9.0
 
 Initial public release of Game Sync:
@@ -18,4 +26,4 @@ Known limitations:
 - There is no direct Xbox provider.
 - Detailed achievement presentation remains limited to the supported summary projection.
 
-Not included: provider write-back, purchase-history import, extra providers, custom backend, multi-account vaults and a split/unmerge backend for the match-manager command.
+Not included: provider write-back, purchase-history import, extra providers, custom backend and multi-account vaults.

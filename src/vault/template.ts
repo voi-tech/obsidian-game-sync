@@ -2,6 +2,7 @@ import Handlebars from 'handlebars';
 import type { ProviderAchievement } from '../model/achievement';
 import type { NormalizedGame } from '../model/game';
 import { renderAchievementList } from './achievement-renderer';
+import { toIsoDate } from '../model/iso-date';
 
 export interface TemplateContext {
 	id: string;
@@ -16,10 +17,10 @@ export interface TemplateContext {
 	genres: string[];
 	platforms: string[];
 	providers: string[];
-	owned: boolean;
-	acquisitionType: string;
-	playtime: number;
-	playtimeHours: number;
+	owned?: boolean;
+	acquisitionType?: string;
+	playtime?: number;
+	playtimeHours?: number;
 	lastPlayed?: string;
 	updated?: string;
 	steamId?: string;
@@ -113,15 +114,15 @@ export function buildTemplateContext(game: NormalizedGame, options: TemplateCont
 	const playstationTrophies = normalizedAchievements(playstation?.achievements?.achievements, options.revealHidden === true);
 	const values: TemplateContext = {
 		id: game.canonicalId, title: game.title, original: game.originalTitle, year: game.releaseDate ? Number(game.releaseDate.slice(0, 4)) : undefined,
-		released: game.releaseDate, description: game.description, cover: game.cover, developers: [...game.developers], publishers: [...game.publishers],
+		released: toIsoDate(game.releaseDate), description: game.description, cover: game.cover, developers: [...game.developers], publishers: [...game.publishers],
 		genres: [...game.genres], platforms: [...game.platforms], providers: Object.keys(game.providers), owned: game.owned, acquisitionType: game.acquisitionType,
-		playtime: game.playtimeMinutes, playtimeHours: hours(game.playtimeMinutes) as number, lastPlayed: game.lastPlayed, updated: options.updatedAt,
+		playtime: game.playtimeMinutes, playtimeHours: hours(game.playtimeMinutes) as number, lastPlayed: toIsoDate(game.lastPlayed), updated: options.updatedAt,
 		steamId: steam?.providerGameId, steamUrl: steam?.sourceUrl, steamOwned: steam?.owned, steamPlaytime: steam?.playtimeMinutes,
-		steamPlaytimeHours: steam?.playtimeMinutes === undefined ? undefined : (hours(steam.playtimeMinutes) as number), steamLastPlayed: steam?.lastPlayed,
+		steamPlaytimeHours: steam?.playtimeMinutes === undefined ? undefined : (hours(steam.playtimeMinutes) as number), steamLastPlayed: toIsoDate(steam?.lastPlayed),
 		steamAchievementsEarned: steam?.achievements?.earned, steamAchievementsTotal: steam?.achievements?.total, steamAchievementsProgress: steam?.achievements?.progress,
 		steamAchievements, playstationId: playstation?.providerGameId, playstationUrl: playstation?.sourceUrl, playstationOwned: playstation?.owned,
 		playstationPlaytime: playstation?.playtimeMinutes, playstationPlaytimeHours: playstation?.playtimeMinutes === undefined ? undefined : (hours(playstation.playtimeMinutes) as number),
-		playstationLastPlayed: playstation?.lastPlayed, psnTrophiesEarned: playstation?.achievements?.earned, psnTrophiesTotal: playstation?.achievements?.total,
+		playstationLastPlayed: toIsoDate(playstation?.lastPlayed), psnTrophiesEarned: playstation?.achievements?.earned, psnTrophiesTotal: playstation?.achievements?.total,
 		psnTrophiesProgress: playstation?.achievements?.progress,
 		psnBronze: playstation?.achievements?.achievements.filter((achievement) => achievement.trophyType === 'bronze').length,
 		psnSilver: playstation?.achievements?.achievements.filter((achievement) => achievement.trophyType === 'silver').length,

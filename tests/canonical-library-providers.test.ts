@@ -67,7 +67,7 @@ describe('canonical Steam and PlayStation library providers', () => {
 		expect(result.games[0]).toMatchObject({
 			identity: { canonicalKey: 'steam:440', externalIds: { steam: '440' } },
 			title: 'Team Fortress 2',
-			platforms: [{ id: 'steam', owned: true, source: 'steam' }],
+			platforms: [{ id: 'pc', owned: true, source: 'steam' }],
 			playtime: { canonical: { minutes: 120, source: 'steam', confidence: 'high' } },
 		});
 	});

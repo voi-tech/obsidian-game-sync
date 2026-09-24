@@ -25,6 +25,7 @@ import { BackgroundSyncScheduler } from './sync/scheduler';
 import { createSyncConcurrencyGuard } from './sync/concurrency';
 import { retry } from './sync/retry';
 import type { SyncService } from './sync/service';
+import type { CanonicalSyncSelection } from './sync/canonical-planner';
 import { PlayStationConnectModal } from './ui/playstation-connect-modal';
 import { PreviewModal } from './ui/preview-modal';
 import { IgnoredGamesModal } from './ui/ignored-games-modal';
@@ -293,7 +294,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 		disconnect: disconnectProvider,
 		syncNow: () => Promise.resolve(actions.syncAll()).then(() => undefined),
 		confirm,
-		openAdditionalSettings: () => {
+		openAdditionalSettings: (view?: import('./ui/settings/additional-settings-modal').AdditionalSettingsView) => {
 			new AdditionalSettingsModal(host.app, {
 				readSettings: settingsHost.readSettings,
 				writeSettings: settingsHost.writeSettings,
@@ -302,8 +303,10 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 				openIgnoredGames: () => Promise.resolve(ui.openIgnoredGames()),
 				openMatchManager: async () => ui.openMatchManager(await composition.createMatchManager()),
 				copyDiagnostics: () => Promise.resolve(ui.copyDiagnostics()),
-			}).open();
+			}, view === undefined ? {} : { initialView: view }).open();
 		},
+		openIgnoredGames: () => Promise.resolve(ui.openIgnoredGames()),
+		openMatchManager: async () => ui.openMatchManager(await composition.createMatchManager()),
 		getGameTrackStatus: () => composition.getGameTrackStatus(),
 		chooseGameTrackExport,
 	};
@@ -320,7 +323,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 		openCanonicalPreview: (preview, onApply) => {
 			new CanonicalPreviewModal(host.app, {
 				preview,
-				onApply: (operationIds) => Promise.resolve(onApply(operationIds)).then(() => undefined),
+				onApply: (selection: CanonicalSyncSelection) => Promise.resolve(onApply(selection)).then(() => undefined),
 			}).open();
 		},
 		openSummary: (summary, onOpenBase, onSyncNow) => {
@@ -385,9 +388,9 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 				},
 				onGameTrackPreview: async (preview) => {
 					if (ui.openCanonicalPreview === undefined) return;
-					await ui.openCanonicalPreview(preview, async (operationIds) => {
+					await ui.openCanonicalPreview(preview, async (selection) => {
 						if (setupCanonicalService === undefined) throw new Error('GameTrack provider is unavailable.');
-						await setupCanonicalService.applyPreview(preview, operationIds);
+						await setupCanonicalService.applyPreview(preview, selection);
 						const importedState = await stateStore.load();
 						importedState.settings.gametrackLastImportedAt = new Date().toISOString();
 						await composition.approveCanonicalBackgroundSync();
@@ -397,9 +400,9 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 				},
 					onCanonicalPreview: async (preview) => {
 					if (ui.openCanonicalPreview === undefined) return;
-					await ui.openCanonicalPreview(preview, async (operationIds) => {
+					await ui.openCanonicalPreview(preview, async (selection) => {
 						if (setupCanonicalService === undefined) throw new Error('Selected library provider is unavailable.');
-						await setupCanonicalService.applyPreview(preview, operationIds);
+						await setupCanonicalService.applyPreview(preview, selection);
 						const importedState = await stateStore.load();
 						if (importedState.settings.libraryProvider === 'gametrack') {
 							importedState.settings.gametrackLastImportedAt = new Date().toISOString();

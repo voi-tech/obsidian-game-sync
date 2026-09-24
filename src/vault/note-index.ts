@@ -14,10 +14,16 @@ function normalize(value: string): string {
 	return value.toLocaleLowerCase().replace(/\.md$/i, '').replace(/[ _-]+/g, ' ').trim();
 }
 
+function readPropertyValue(properties: Record<string, unknown>, name: string): unknown {
+	if (Object.prototype.hasOwnProperty.call(properties, name)) return properties[name];
+	const entry = Object.entries(properties).find(([key]) => key.toLocaleLowerCase() === name.toLocaleLowerCase());
+	return entry?.[1];
+}
+
 function valuesFor(properties: Record<string, unknown>, names: readonly (string | undefined)[]): string[] {
 	return names.flatMap((name) => {
 		if (!name) return [];
-		const value = properties[name];
+		const value = readPropertyValue(properties, name);
 		if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
 		return typeof value === 'string' || typeof value === 'number' ? [String(value)] : [];
 	});

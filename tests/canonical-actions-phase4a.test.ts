@@ -16,13 +16,14 @@ function fixture() {
 	const service = { preview: vi.fn(async () => preview), applyPreview: vi.fn(async () => []) };
 	const createCanonicalService = vi.fn(async () => service);
 	const stateStore: StateStore = { load: vi.fn(async () => structuredClone(state)), save: vi.fn(async () => undefined) };
-	const openCanonicalPreview = vi.fn();
+	const openCanonicalPreview = vi.fn<NonNullable<RuntimeUiPort['openCanonicalPreview']>>();
 	const createService = vi.fn();
 	const ui = {
 		openPreview: vi.fn(), openCanonicalPreview, openSummary: vi.fn(), openIgnoredGames: vi.fn(), openSetupWizard: vi.fn(),
 		copyDiagnostics: vi.fn(), openMatchManager: vi.fn(), showUnavailable: vi.fn(),
 	} as unknown as RuntimeUiPort;
-	const composition = { createCanonicalService, createService } as unknown as GameSyncRuntimeComposition;
+	const approveCanonicalBackgroundSync = vi.fn(async () => undefined);
+	const composition = { createCanonicalService, createService, approveCanonicalBackgroundSync } as unknown as GameSyncRuntimeComposition;
 	const actions = createGameSyncCommandActions({ composition, ui, stateStore });
 	return { actions, service, createCanonicalService, createService, openCanonicalPreview, ui };
 }
@@ -55,6 +56,16 @@ describe('GameTrack command routing', () => {
 		expect(createCanonicalService).toHaveBeenCalledOnce();
 		expect(createService).not.toHaveBeenCalled();
 		expect(openCanonicalPreview).toHaveBeenCalledOnce();
+	});
+
+	it('forwards the complete canonical field selection from the preview UI to the service', async () => {
+		const value = fixture();
+		const selection = { operationIds: ['operation-1'], fieldIdsByOperation: { 'operation-1': ['field-1', 'field-2'] } } as const;
+		value.openCanonicalPreview.mockImplementation(async (_preview, onApply) => { await onApply(selection); });
+
+		await value.actions.syncAll();
+
+		expect(value.service.applyPreview).toHaveBeenCalledWith(expect.anything(), selection);
 	});
 
 });

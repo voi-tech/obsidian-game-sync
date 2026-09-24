@@ -10,11 +10,11 @@ Game Sync synchronizuje eksporty GameTrack oraz dane Steam i PlayStation do zwyk
 - jedna notatka dla jednej logicznej gry, także gdy występuje na obu platformach;
 - ostrożne dopasowanie z podglądem przed pierwszym zapisem;
 - adopcja istniejących notatek bez przepisywania ręcznej treści;
-- zarządzane Properties i zarządzany blok osiągnięć; pozostała treść notatki pozostaje własnością użytkownika;
+- mapowane miejsca docelowe i zarządzany blok osiągnięć; niemapowane atrybuty oraz pozostała treść notatki pozostają bez zmian;
 - opcjonalny bootstrap `Games.base`, synchronizacja w tle na desktopie, interfejs po angielsku i polsku;
-- brak zapisu zwrotnego do providerów, telemetryki, konta Game Sync i własnego backendu.
+- brak zapisu zwrotnego do źródeł danych, telemetryki, konta Game Sync i własnego backendu.
 
-## Obsługiwani providerzy
+## Obsługiwane źródła biblioteki
 
 ### Steam
 
@@ -63,9 +63,11 @@ Przeładuj Obsidiana, włącz **Game Sync** i otwórz Quick Setup.
 3. Obejrzyj **Podgląd pierwszej synchronizacji**.
 4. Zastosuj zaakceptowane zmiany.
 
-Domyślnym miejscem zapisu jest `Games/`; zmień je tylko wtedy, gdy chcesz użyć innego folderu. Okna providerów prowadzą przez wymagane kroki, a podgląd pojawia się przed każdym zapisem.
+Domyślnym miejscem zapisu jest `Games/`; zmień je tylko wtedy, gdy chcesz użyć innego folderu. Okna źródeł danych prowadzą przez wymagane kroki, a podgląd pojawia się przed każdym zapisem.
 
-Pierwsza synchronizacja nie może zostać zastosowana po cichu. Późniejsze synchronizacje również mogą wymagać ręcznej decyzji, gdy dopasowanie jest niepewne. Jeśli credentials są nadal dostępne, otwarcie połączenia najpierw próbuje połączenia jednym kliknięciem, a dialog providera otwiera dopiero przy potrzebie naprawy.
+Pierwsza synchronizacja nie może zostać zastosowana po cichu. Późniejsze synchronizacje również mogą wymagać ręcznej decyzji, gdy dopasowanie jest niepewne. Jeśli credentials są nadal dostępne, otwarcie połączenia najpierw próbuje połączenia jednym kliknięciem, a okno źródła danych otwiera dopiero przy potrzebie naprawy.
+
+W podglądzie możesz zaznaczyć tylko wybrane gry i pojedyncze zmieniane atrybuty, zobaczyć szczegóły utworzenia lub aktualizacji notatki i zastosować wyłącznie zaakceptowane zmiany.
 
 ## Konfiguracja GameTrack
 
@@ -92,9 +94,9 @@ Okno połączenia otwiera oficjalną stronę logowania PlayStation oraz stronę 
 
 Obsługa PlayStation jest nieoficjalna. Sony nie udostępnia publicznego konsumenckiego API do tego zastosowania. Integracja zależy od nieudokumentowanego zachowania PlayStation Network i może przestać działać po zmianach po stronie Sony.
 
-## Notatki i Properties
+## Notatki i atrybuty
 
-Game Sync zapisuje zwykłe notatki Markdown. Domyślne nazwy zarządzanych Properties to między innymi `game-sync-id`, `steam-id`, `playstation-id`, `playtime` oraz pola czasu gry dla providerów. Miejsca docelowe Properties można zmieniać lub wyłączać w Settings; klucze szablonu są niezależne od mapowania Properties.
+Game Sync zapisuje zwykłe notatki Markdown. Każdemu zarządzanemu polu źródłowemu można przypisać własną nazwę docelowego atrybutu albo wyłączyć mapowanie przez wyczyszczenie nazwy w ustawieniach. Atrybuty użytkownika — `status`, `rating`, `favorite`, `start`, `end`, `review`, `notes` i `tags` — są chronione: nie można wybrać ich jako miejsc docelowych i pozostają pod kontrolą użytkownika. Klucze szablonu są niezależne od mapowania atrybutów.
 
 W istniejącej notatce Game Sync zachowuje ręczną treść, niezależny frontmatter i istniejącą tożsamość notatki. Szablon renderuje body tylko podczas tworzenia nowej notatki. Zarządzany blok osiągnięć ma markery:
 
@@ -110,13 +112,32 @@ Czas gry jest zapisywany w minutach. Postęp ma wartość liczbową `0–100`. D
 
 ## Szablony
 
-Ustaw ścieżkę szablonu w Settings. Klucze obejmują `title`, `released`, `description`, `cover`, `providers`, `owned`, `playtime`, `lastPlayed`, `steamId`, `steamAchievements`, `playstationId` i `playstationTrophies`.
+Ustaw ścieżkę szablonu w ustawieniach. Płaski kontekst szablonu udostępnia pełny publiczny katalog kluczy:
 
-Dostępne helpery to `join`, `hours`, `percent` i `date`. Partiale obejmują `achievements`, `steamAchievements` i `playstationTrophies`.
+```text
+id, title, original, year, released, description, cover,
+developers, publishers, genres, platforms, providers,
+owned, acquisitionType, playtime, playtimeHours, lastPlayed, updated,
+steamId, steamUrl, steamOwned, steamPlaytime, steamPlaytimeHours,
+steamLastPlayed, steamAchievementsEarned, steamAchievementsTotal,
+steamAchievementsProgress, steamAchievements,
+playstationId, playstationUrl, playstationOwned, playstationPlaytime,
+playstationPlaytimeHours, playstationLastPlayed, psnTrophiesEarned,
+psnTrophiesTotal, psnTrophiesProgress, psnBronze, psnSilver, psnGold,
+psnPlatinum, playstationTrophies,
+purchaseDate, purchasePrice, purchaseCurrency, purchaseSource,
+developersText, publishersText, genresText, platformsText, providersText
+```
+
+Klucze tablicowe `developers`, `publishers`, `genres`, `platforms` i `providers` można wyświetlać przez `join`. Wartości platform są znormalizowanymi identyfikatorami, takimi jak `pc` i `playstation-5`; `platformsText` jest gotową formą tekstową rozdzieloną przecinkami. Obecne źródła danych nie określają wiarygodnie, w jaki sposób gra została pozyskana, dlatego `acquisitionType` ma wartość `unknown`.
+
+Dostępne helpery to `join`, `hours`, `percent` i `date`. `join` łączy tablicę, `hours` przelicza minuty na godziny, `percent` formatuje liczbę do dwóch miejsc po przecinku, a `date` formatuje datę z domyślnym wzorem `YYYY-MM-DD`. Implementacja rejestruje również `renderAchievementList` na potrzeby wbudowanych partiali osiągnięć. Podczas renderowania rozwiązywane są także obiekty zastępcze Obsidiana, na przykład `{{date:YYYY-MM-DD}}` i `{{time:HH:mm}}`.
+
+Partiale to `achievements` (oba źródła), `steamAchievements` i `playstationTrophies`. Renderują odpowiednie listy osiągnięć lub trofeów, zachowując ukryte szczegóły zablokowanych elementów jako nieujawnione, dopóki nie włączysz ujawniania spoilerów.
 
 ## Osiągnięcia i trofea
 
-Osiągnięcia Steam i trofea PlayStation pozostają osobnymi danymi providerów. Game Sync nie tworzy wspólnego procentu osiągnięć. Ukryte elementy domyślnie nie ujawniają spoilerów. Gdy pobranie osiągnięć jest częściowe, znane dane są zachowywane, a nieznane pozostają nieznane.
+Osiągnięcia Steam i trofea PlayStation pozostają osobnymi danymi źródeł. Game Sync nie tworzy wspólnego procentu osiągnięć. Ukryte elementy domyślnie nie ujawniają spoilerów. Gdy pobranie osiągnięć jest częściowe, znane dane są zachowywane, a nieznane pozostają nieznane.
 
 ## Games.base
 
@@ -130,11 +151,11 @@ Synchronizacja w tle jest domyślnie wyłączona i nie działa na mobile. Obsłu
 
 - Nie ma backendu Game Sync, telemetryki ani konta Game Sync.
 - Treść sejfu i pełne body notatek nie są wysyłane.
-- Żądania providerów idą bezpośrednio z Obsidiana do usług providerów.
+- Żądania źródeł danych idą bezpośrednio z Obsidiana do odpowiednich usług.
 - Dane uwierzytelniające są przechowywane przez Obsidian SecretStorage.
 - Raport diagnostyczny korzysta z allowlisty i nie zawiera credentials, tokenów, odpowiedzi API ani treści notatek.
 
-Aktualny bundle produkcyjny zawiera następujące hosty związane z providerami:
+Aktualny bundle produkcyjny zawiera następujące hosty związane ze źródłami danych:
 
 | Cel | Hosty |
 | --- | --- |
@@ -150,13 +171,13 @@ Obsługa PlayStation jest nieoficjalna. Sony nie udostępnia publicznego konsume
 
 ## Ograniczenia
 
-- Synchronizacja działa wyłącznie provider → Obsidian; nie ma zapisu zwrotnego.
+- Synchronizacja działa wyłącznie źródło danych → Obsidian; nie ma zapisu zwrotnego.
 - Game Sync nigdy automatycznie nie usuwa, nie przenosi, nie zmienia nazw ani nie scala istniejących notatek.
 - Na jeden sejf przypada jedno konto Steam i jedno konto PlayStation.
-- Historia zakupów, RAWG i providerzy inni niż GameTrack, Steam oraz PlayStation są poza tym wydaniem.
+- Historia zakupów, RAWG i źródła inne niż GameTrack, Steam oraz PlayStation są poza tym wydaniem.
 - GameTrack wymaga oficjalnego eksportu ZIP; import jest jawny i ręczny.
 - Pełne connect/sync/background jest gwarantowane na desktopie; ładowanie bundle, ustawienia i dostęp do Markdown działają na mobile, ale synchronizacja w tle jest wyłączona.
-- Niepewne dopasowania pozostają elementami review/conflict. Polecenie match managera pozostaje niedostępne do czasu bezpiecznej implementacji split/unmerge.
+- Niepewne dopasowania pozostają elementami review/conflict. **Manage game matches** udostępnia widoki Scalone, Zachowane osobno i Nierozstrzygnięte. Można w nim przygotować i zastosować rozdzielenie po podglądzie, ponownie zezwolić na dopasowanie par zachowanych osobno oraz rozstrzygać nierozstrzygnięte kandydatury przez merge, keep-separate albo skip.
 
 ## Rozwiązywanie problemów
 

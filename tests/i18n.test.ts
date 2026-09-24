@@ -67,6 +67,15 @@ describe('typed Game Sync translations', () => {
 		expect(t('sync.summary.gamesFetched', { count: 3 })).toBe('Pobrane gry: 3');
 	});
 
+	it('uses natural Polish UI terminology and concrete attribute examples', () => {
+		const polishText = Object.values(leafValues(pl)).join('\n').replace(/\{[A-Za-z][A-Za-z0-9_]*\}/g, '');
+		expect(polishText).not.toMatch(/\bprovider(?:y|ze|ami|a)?\b/i);
+		expect(polishText).not.toMatch(/\bwłaściwość(?:ci|ciami|ci)?\b/i);
+		expect(pl.settings.properties.examples.title).toContain('Dead Space');
+		expect(pl.settings.properties.examples.igdbId).toContain('1905');
+		expect(pl.settings.properties.examples.playtime).toContain('42 h 18 min');
+	});
+
 	it('interpolates named parameters as literal text', () => {
 		language.mockReturnValue('en');
 		expect(t('sync.summary.gamesFetched', { count: 3 })).toBe('Games fetched: 3');

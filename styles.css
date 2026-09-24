@@ -13,6 +13,14 @@
 	gap: var(--size-4-2);
 }
 
+[data-game-sync-section] + [data-game-sync-section] {
+	margin-top: var(--size-4-6);
+}
+
+[data-game-sync-section-heading] {
+	margin-bottom: var(--size-4-2);
+}
+
 [data-connection-state="connected"] {
 	color: var(--text-success);
 }
@@ -78,7 +86,100 @@
 		flex-wrap: wrap;
 	}
 
-	.game-sync-preview-modal button {
+.game-sync-preview-modal button {
 		white-space: normal;
+	}
+}
+
+[data-canonical-preview-modal] [data-canonical-preview-section] {
+	margin-top: var(--size-4-6);
+}
+
+[data-canonical-preview-modal] [data-canonical-preview-section] h3 {
+	margin-bottom: var(--size-4-1);
+}
+
+[data-canonical-preview-modal] [data-canonical-preview-section] > p {
+	margin-top: 0;
+}
+
+[data-canonical-preview-modal] [data-canonical-preview-section-actions] {
+	display: flex;
+	gap: var(--size-4-2);
+	margin: var(--size-4-2) 0;
+}
+
+[data-canonical-preview-modal] [data-canonical-preview-list] {
+	display: grid;
+	gap: var(--size-4-1);
+}
+
+[data-canonical-preview-modal] .game-sync-preview-game {
+		align-items: center;
+	display: flex;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) 0;
+}
+
+[data-canonical-preview-modal] .game-sync-preview-game input[type='checkbox'] {
+		flex: 0 0 auto;
+}
+
+[data-canonical-preview-modal] .game-sync-preview-game small {
+	color: var(--text-muted);
+	margin-left: auto;
+}
+
+[data-canonical-preview-modal] [data-canonical-preview-changes] {
+	display: grid;
+	gap: var(--size-4-1);
+	margin: var(--size-4-2) 0;
+	width: 100%;
+}
+
+[data-canonical-preview-modal] .game-sync-preview-field {
+	align-items: start;
+	display: grid;
+	gap: var(--size-4-2);
+	grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 2fr) auto;
+}
+
+[data-canonical-preview-modal] .game-sync-preview-field > label {
+	align-items: start;
+	display: flex;
+	gap: var(--size-4-1);
+}
+
+[data-canonical-preview-modal] .game-sync-preview-field-values {
+	display: grid;
+	gap: var(--size-4-1);
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+[data-canonical-preview-modal] [data-canonical-preview-body] {
+	max-height: 18rem;
+	overflow: auto;
+	white-space: pre-wrap;
+}
+
+[data-canonical-preview-modal] [data-canonical-preview-footer] {
+		align-items: center;
+	display: flex;
+	gap: var(--size-4-2);
+	justify-content: flex-end;
+	margin-top: var(--size-4-8);
+}
+
+[data-canonical-preview-modal] [data-canonical-preview-footer] p {
+	margin: 0 auto 0 0;
+}
+
+@media (max-width: 40rem) {
+	[data-canonical-preview-modal] .game-sync-preview-field {
+		grid-template-columns: 1fr;
+	}
+
+	[data-canonical-preview-modal] .game-sync-preview-field-values {
+		grid-template-columns: 1fr;
 	}
 }

@@ -111,6 +111,8 @@ export class GameSyncRuntimeComposition {
 				gateway: this.options.gateway,
 				notesFolder: state.settings.notesFolder,
 				propertyMapping,
+				templatePath: state.settings.templatePath,
+				revealHidden: state.settings.revealHiddenAchievements,
 			},
 			writer: new CanonicalVaultWriter(this.options.gateway, { propertyMapping }),
 		});

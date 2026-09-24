@@ -15,22 +15,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run check
-      - name: Verify stable tag matches plugin version
+      - name: Verify release metadata
         shell: bash
         run: |
           version="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')).version")"
           test "$GITHUB_REF_NAME" = "$version"
           test "$GITHUB_REF_NAME" != "v$version"
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --title "$GITHUB_REF_NAME" --generate-notes
+      - name: Determine release channel
+        id: release-channel
+        shell: bash
+        run: |
+          git fetch origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+          fi
       - name: Attest release assets
         uses: actions/attest-build-provenance@v2
         with:
@@ -38,3 +46,13 @@ jobs:
             main.js
             manifest.json
             styles.css
+      - name: Create stable release
+        if: steps.release-channel.outputs.channel == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --verify-tag --latest --generate-notes
+      - name: Create prerelease
+        if: steps.release-channel.outputs.channel == 'beta'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --verify-tag --prerelease --latest=false --title "$GITHUB_REF_NAME" --notes 'BRAT test build for Obsidian Game Sync.' --generate-notes

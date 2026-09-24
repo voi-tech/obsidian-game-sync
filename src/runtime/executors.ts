@@ -1,5 +1,6 @@
 import type { PreparedSync, SyncApplyResult, SyncService } from '../sync/service';
 import type { CanonicalPreviewResult, CanonicalSyncService } from '../sync/canonical-service';
+import type { CanonicalSyncSelection } from '../sync/canonical-planner';
 import type { SyncExecutor, SyncExecutorAttention, SyncExecutorPreview } from '../sync/background-executor';
 
 function legacyAttention(prepared: PreparedSync): SyncExecutorAttention[] {
@@ -55,6 +56,17 @@ function canonicalAttention(preview: CanonicalPreviewResult): SyncExecutorAttent
 		.map((status) => ({ id: status.canonicalKey, kind: 'conflict' as const, reason: status.reason ?? 'The item requires explicit review.' }));
 }
 
+function canonicalSelection(preview: CanonicalPreviewResult, operationIds: readonly string[]): CanonicalSyncSelection {
+	const operations = preview.plan?.operations ?? [];
+	return {
+		operationIds: [...operationIds],
+		fieldIdsByOperation: Object.fromEntries(operationIds.map((operationId) => [
+			operationId,
+			operations.find((operation) => operation.id === operationId)?.preview.changes.map((change) => change.fieldId) ?? [],
+		])),
+	};
+}
+
 export function createCanonicalSyncExecutor(service: CanonicalSyncService, isApproved: () => boolean): SyncExecutor {
 	return {
 		async preview() {
@@ -77,7 +89,8 @@ export function createCanonicalSyncExecutor(service: CanonicalSyncService, isApp
 		},
 		async apply(preview, selectedOperationIds) {
 			if (preview.approvalRequired) throw new Error('Background sync requires explicit preview approval.');
-			const result = await service.applyPreview(preview.token as CanonicalPreviewResult, selectedOperationIds);
+			const canonicalPreview = preview.token as CanonicalPreviewResult;
+			const result = await service.applyPreview(canonicalPreview, canonicalSelection(canonicalPreview, selectedOperationIds));
 			return { appliedOperationIds: [...result], pendingOperationIds: [], warnings: [] };
 		},
 	};

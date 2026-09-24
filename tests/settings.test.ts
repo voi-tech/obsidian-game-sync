@@ -116,16 +116,20 @@ describe('Game Sync settings', () => {
 		obsidianMock.getLanguage.mockReturnValue('en');
 	});
 
-	it('renders only the compact main information architecture', async () => {
+	it('renders the compact main information architecture with one additional settings launcher', async () => {
 		const host = makeHost();
 		const tab = new GameSyncSettingsTab({} as never, {} as never, host);
 		display(tab);
 		await tab.ready;
 
 		expect(Array.from(tab.containerEl.querySelectorAll<HTMLElement>('[data-game-sync-section]')).map((element) => element.dataset.gameSyncSection)).toEqual(['accounts', 'sync', 'notes', 'more']);
+		expect(tab.containerEl.querySelectorAll('[data-settings-action="additional"]')).toHaveLength(1);
 		expect(tab.containerEl.textContent).toContain('Open additional settings');
-		expect(tab.containerEl.textContent).toContain('Game Sync 26.9.0');
-		expect(tab.containerEl.textContent).not.toMatch(/Library|About|property mapping|metadata preference|history path|preview mode|filename pattern/i);
+		expect(tab.containerEl.textContent).not.toContain('Property mappings');
+		expect(tab.containerEl.textContent).not.toContain('Game information');
+		expect(tab.containerEl.textContent).not.toContain('Diagnostics');
+		expect(tab.containerEl.textContent).toContain('Game Sync 26.9.1');
+		expect(tab.containerEl.textContent).not.toContain('Include unplayed games');
 		expect(tab.containerEl.querySelectorAll('[data-settings-field="includeUnplayed"]').length).toBe(0);
 		expect(tab.containerEl.querySelectorAll('[data-settings-field="recordHistory"]').length).toBe(0);
 	});
@@ -160,6 +164,31 @@ describe('Game Sync settings', () => {
 		expect(template.placeholder).toBe('Templates/game.md');
 		expect(template.closest('.setting-item')?.getAttribute('data-setting-description')).toBe('Optional Markdown template used only when a new game note is created.');
 		expect(tab.containerEl.querySelector('[data-settings-field="filenamePattern"]')).toBeNull();
+		expect(tab.containerEl.querySelector('[data-template-key-catalog]')).not.toBeNull();
+		expect(tab.containerEl.querySelector('[data-template-key="title"]')?.textContent).toContain('Example: Dead Space');
+		expect(tab.containerEl.querySelector('[data-template-key="acquisitionType"]')?.textContent).toContain('Example: unknown');
+		expect(tab.containerEl.querySelector('[data-template-key="platforms"]')?.textContent).toContain('Example: pc, playstation-5');
+	});
+
+	it('offers searchable folder and template matches from the current vault', async () => {
+		const app = { vault: { getAllLoadedFiles: () => [
+			{ path: 'Games', children: [] }, { path: 'Games/Library', children: [] },
+			{ path: 'Templates/game.md', extension: 'md' }, { path: 'Templates/archive.tmpl', extension: 'tmpl' },
+			{ path: 'Assets/cover.png', extension: 'png' },
+		] } };
+		const host = makeHost();
+		const tab = new GameSyncSettingsTab(app as never, {} as never, host);
+		display(tab); await tab.ready;
+		const folder = tab.containerEl.querySelector<HTMLInputElement>('[data-settings-field="notesFolder"]')!;
+		const template = tab.containerEl.querySelector<HTMLInputElement>('[data-settings-field="templatePath"]')!;
+		expect(folder.getAttribute('list')).toMatch(/^game-sync-folder-suggestions-/);
+		expect(template.getAttribute('list')).toMatch(/^game-sync-template-suggestions-/);
+		expect(Array.from(tab.containerEl.querySelectorAll<HTMLOptionElement>('datalist[data-vault-path-suggestions="folder"] option')).map((option) => option.value)).toEqual(['Games', 'Games/Library']);
+		expect(Array.from(tab.containerEl.querySelectorAll<HTMLOptionElement>('datalist[data-vault-path-suggestions="template"] option')).map((option) => option.value)).toEqual(['Templates/archive.tmpl', 'Templates/game.md']);
+		folder.value = 'library'; folder.dispatchEvent(new Event('input'));
+		expect(Array.from(tab.containerEl.querySelectorAll<HTMLOptionElement>('datalist[data-vault-path-suggestions="folder"] option')).map((option) => option.value)).toEqual(['Games/Library']);
+		template.value = 'GAME'; template.dispatchEvent(new Event('input'));
+		expect(Array.from(tab.containerEl.querySelectorAll<HTMLOptionElement>('datalist[data-vault-path-suggestions="template"] option')).map((option) => option.value)).toEqual(['Templates/game.md']);
 	});
 
 	it('uses native Setting rows for accounts and keeps the shared connection status', async () => {
@@ -175,7 +204,7 @@ describe('Game Sync settings', () => {
 		expect(host.confirm).toHaveBeenCalledWith(expect.stringContaining('Markdown data remains'));
 	});
 
-	it('opens Additional settings without rendering its controls in the main page', async () => {
+	it('opens the additional settings launcher without rendering its controls in the main page', async () => {
 		const host = makeHost();
 		const tab = new GameSyncSettingsTab({} as never, {} as never, host);
 		display(tab);
@@ -183,6 +212,7 @@ describe('Game Sync settings', () => {
 		tab.containerEl.querySelector<HTMLButtonElement>('[data-settings-action="additional"]')!.click();
 
 		expect(host.openAdditionalSettings).toHaveBeenCalledOnce();
+		expect(host.openAdditionalSettings).toHaveBeenCalledWith();
 		expect(tab.containerEl.querySelector('[data-property-destination]')).toBeNull();
 	});
 

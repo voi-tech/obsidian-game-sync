@@ -7,6 +7,8 @@ import type { StateStore } from '../src/state/store';
 import { GameSyncRuntimeComposition } from '../src/runtime/composition';
 import { FakeVaultGateway } from './fake-gateway';
 import type { GameEnricher } from '../src/model/enrichment';
+import { createCanonicalSyncExecutor } from '../src/runtime/executors';
+import type { CanonicalPreviewResult, CanonicalSyncService } from '../src/sync/canonical-service';
 
 class MemoryStateStore implements StateStore {
 	constructor(public state: GameSyncData) {}
@@ -67,5 +69,24 @@ describe('provider-neutral background composition', () => {
 
 		expect(getSnapshot).toHaveBeenCalledOnce();
 		expect(enrich).toHaveBeenCalledTimes(2);
+	});
+
+	it('translates generic background operation IDs into a complete canonical field selection', async () => {
+		const preview = {
+			snapshot: { ...snapshot },
+			plan: {
+				id: 'plan', planRevision: 'revision', statuses: [], games: [],
+				operations: [{ id: 'operation-1', kind: 'update', canonicalKey: 'game-1', path: 'Games/Game.md', expectedNoteFingerprint: 'fingerprint', risk: 'safe', summary: 'Update', game: {}, preview: { properties: {}, changes: [{ fieldId: 'field-1', sourceField: 'title', property: 'title', previous: 'Old', next: 'New' }], requiredIdentityFieldIds: [] } }],
+			},
+		} as unknown as CanonicalPreviewResult;
+		const service = { preview: vi.fn(async () => preview), applyPreview: vi.fn(async () => []) } as unknown as CanonicalSyncService;
+		const executor = createCanonicalSyncExecutor(service, () => true);
+		const executorPreview = await executor.preview();
+		await executor.apply(executorPreview, ['operation-1']);
+
+		expect((service as unknown as { applyPreview: ReturnType<typeof vi.fn> }).applyPreview).toHaveBeenCalledWith(preview, {
+			operationIds: ['operation-1'],
+			fieldIdsByOperation: { 'operation-1': ['field-1'] },
+		});
 	});
 });

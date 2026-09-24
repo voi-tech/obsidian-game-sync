@@ -3,6 +3,7 @@ import { chooseCanonicalPlaytime, normalizePlaytimeObservation } from './playtim
 import { normalizePlatform } from './platforms';
 import type { GameTrackRawGame } from './gametrack-types';
 import { createGameTrackIdentity } from './gametrack-identity';
+import { toIsoDate } from '../../model/iso-date';
 
 export interface GameTrackNormalizationDiagnostics {
 	readonly unknownPlatforms: readonly string[];
@@ -47,7 +48,7 @@ export function normalizeGameTrackGame(raw: GameTrackRawGame, schemaSignature: s
 		} satisfies PlaytimeObservation)),
 	};
 	const achievements = raw.achievements.map(toAchievementSummary).filter((value): value is AchievementSummary => value !== undefined);
-	const lastPlayed = raw.lastPlayed.map((value) => toIsoDate(value.value)).filter((value): value is string => value !== undefined).sort().at(-1);
+	const lastPlayed = raw.lastPlayed.map((value) => toIsoDate(value.value, { numericEpoch: 'apple-seconds' })).filter((value): value is string => value !== undefined).sort().at(-1);
 	const game: CanonicalGame = {
 		identity: createGameTrackIdentity(raw.gameTrackId, raw.igdbId, {
 			steam: raw.steamId ?? raw.platformPlaytime.find((value) => value.source === 'steam')?.id,
@@ -84,13 +85,6 @@ function toAchievementSummary(value: GameTrackRawGame['achievements'][number]): 
 		...(completionPercent === undefined ? {} : { completionPercent }),
 		confidence: complete ? 'high' : 'low',
 	};
-}
-
-function toIsoDate(value: number | string | null | undefined): string | undefined {
-	if (value === null || value === undefined) return undefined;
-	const date = typeof value === 'number' ? new Date(978307200000 + value * 1000) : new Date(value);
-	if (Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1970 || date.getUTCFullYear() > 2100) return undefined;
-	return date.toISOString();
 }
 
 function nonEmpty(value: string | null | undefined): string | undefined {

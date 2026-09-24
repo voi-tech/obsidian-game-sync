@@ -1,11 +1,12 @@
 import type { NormalizedGame } from './game';
+import { toIsoDate } from './iso-date';
 
 export type ManagedPropertyKey =
 	| 'gameSyncId' | 'type' | 'title' | 'released' | 'developers' | 'publishers' | 'genres' | 'cover' | 'platforms' | 'providers'
 	| 'owned' | 'acquisitionType' | 'playtime' | 'lastPlayed' | 'steamId' | 'steamOwned' | 'steamPlaytime' | 'steamLastPlayed'
 	| 'steamAchievementsEarned' | 'steamAchievementsTotal' | 'steamAchievementsProgress' | 'playstationId' | 'playstationOwned'
 	| 'playstationPlaytime' | 'playstationLastPlayed' | 'psnTrophiesEarned' | 'psnTrophiesTotal' | 'psnTrophiesProgress'
-	| 'psnBronze' | 'psnSilver' | 'psnGold' | 'psnPlatinum' | 'updated';
+	| 'psnBronze' | 'psnSilver' | 'psnGold' | 'psnPlatinum' | 'updated' | 'igdbId' | 'gametrackId';
 
 export type PropertyMapping = Partial<Record<ManagedPropertyKey, string | null | false>>;
 export type ResolvedPropertyMapping = Record<ManagedPropertyKey, string | undefined>;
@@ -22,7 +23,7 @@ export const DEFAULT_PROPERTY_MAPPING: Record<ManagedPropertyKey, string> = {
 	steamAchievementsProgress: 'steam-achievements-progress', playstationId: 'playstation-id', playstationOwned: 'playstation-owned',
 	playstationPlaytime: 'playstation-playtime', playstationLastPlayed: 'playstation-last-played', psnTrophiesEarned: 'psn-trophies-earned',
 	psnTrophiesTotal: 'psn-trophies-total', psnTrophiesProgress: 'psn-trophies-progress', psnBronze: 'psn-bronze', psnSilver: 'psn-silver',
-	psnGold: 'psn-gold', psnPlatinum: 'psn-platinum', updated: 'game-sync-updated',
+	psnGold: 'psn-gold', psnPlatinum: 'psn-platinum', updated: 'game-sync-updated', igdbId: 'igdb-id', gametrackId: 'gametrack-id',
 };
 
 const USER_OWNED_PROPERTY_NAMES = new Set(['status', 'rating', 'favorite', 'start', 'end', 'review', 'notes', 'tags']);
@@ -89,13 +90,13 @@ export function buildManagedProperties(
 	const trophyCount = (type: 'bronze' | 'silver' | 'gold' | 'platinum') =>
 		playstationAchievements?.achievements.filter((achievement) => achievement.trophyType === type).length;
 	const values: Partial<Record<ManagedPropertyKey, unknown>> = {
-		gameSyncId: game.canonicalId, type: 'game', title: game.title, released: game.releaseDate, developers: game.developers,
+		gameSyncId: game.canonicalId, type: 'game', title: game.title, released: toIsoDate(game.releaseDate), developers: game.developers,
 		publishers: game.publishers, genres: game.genres, cover: game.cover, platforms: game.platforms,
 		providers: Object.keys(game.providers), owned: game.owned, acquisitionType: game.acquisitionType, playtime: game.playtimeMinutes,
-		lastPlayed: game.lastPlayed, steamId: steam?.providerGameId, steamOwned: steam?.owned, steamPlaytime: steam?.playtimeMinutes,
-		steamLastPlayed: steam?.lastPlayed, steamAchievementsEarned: steamAchievements?.earned, steamAchievementsTotal: steamAchievements?.total,
+		lastPlayed: toIsoDate(game.lastPlayed), steamId: steam?.providerGameId, steamOwned: steam?.owned, steamPlaytime: steam?.playtimeMinutes,
+		steamLastPlayed: toIsoDate(steam?.lastPlayed), steamAchievementsEarned: steamAchievements?.earned, steamAchievementsTotal: steamAchievements?.total,
 		steamAchievementsProgress: steamAchievements?.progress, playstationId: playstation?.providerGameId, playstationOwned: playstation?.owned,
-		playstationPlaytime: playstation?.playtimeMinutes, playstationLastPlayed: playstation?.lastPlayed,
+		playstationPlaytime: playstation?.playtimeMinutes, playstationLastPlayed: toIsoDate(playstation?.lastPlayed),
 		psnTrophiesEarned: playstationAchievements?.earned, psnTrophiesTotal: playstationAchievements?.total,
 		psnTrophiesProgress: playstationAchievements?.progress, psnBronze: trophyCount('bronze'), psnSilver: trophyCount('silver'),
 		psnGold: trophyCount('gold'), psnPlatinum: trophyCount('platinum'), updated: options.updatedAt,

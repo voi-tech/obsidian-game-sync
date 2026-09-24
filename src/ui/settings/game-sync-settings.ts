@@ -1,4 +1,4 @@
-import { PluginSettingTab, Setting, type App, type Plugin } from 'obsidian';
+import { getLanguage, PluginSettingTab, Setting, type App, type Plugin } from 'obsidian';
 import { t, type TranslationKey } from '../../i18n';
 import type { GameProvider } from '../../model/provider';
 import { isSupportedBackgroundIntervalMinutes, type GameSyncSettings } from '../../model/settings';
@@ -6,6 +6,8 @@ import type { ProviderConnectionStatus } from '../../providers/provider';
 import { renderConnectionStatus } from '../status';
 import type { GameTrackRuntimeStatus } from '../../model/library-provider';
 import type { GameTrackCsvSelection } from '../../providers/gametrack/csv/gametrack-csv-provider';
+import { attachVaultPathSuggestions, type VaultPathSuggestionKind } from './vault-path-suggestions';
+import { TEMPLATE_KEY_CATALOG } from '../../vault/template-reference';
 
 export interface GameSyncSettingsHost {
 	readSettings: () => GameSyncSettings | Promise<GameSyncSettings>;
@@ -95,11 +97,12 @@ export class GameSyncSettingsTab extends NativePluginSettingTab {
 		const section = this.containerEl.createEl('section');
 		section.dataset.gameSyncSection = key;
 		section.dataset.gameSyncSectionLabel = translation(`settings.sections.${key}`);
-		new Setting(section).setName(section.dataset.gameSyncSectionLabel ?? '').setHeading();
+		const heading = new Setting(section).setName(section.dataset.gameSyncSectionLabel ?? '').setHeading();
+		heading.settingEl.dataset.gameSyncSectionHeading = 'true';
 		return section;
 	}
 
-	private textSetting(container: HTMLElement, field: TextSettingField, nameKey: string, descriptionKey: string, placeholderKey: string, type: 'text' | 'number' = 'text'): void {
+	private textSetting(container: HTMLElement, field: TextSettingField, nameKey: string, descriptionKey: string, placeholderKey: string, type: 'text' | 'number' = 'text', suggestionKind?: VaultPathSuggestionKind): void {
 		const settings = this.currentSettings();
 		const setting = new Setting(container).setName(translation(nameKey)).setDesc(translation(descriptionKey));
 		setting.addText((component) => {
@@ -112,7 +115,29 @@ export class GameSyncSettingsTab extends NativePluginSettingTab {
 				else settings[field] = value;
 				void this.saveSettings();
 			});
+			if (suggestionKind !== undefined) attachVaultPathSuggestions(component.inputEl, this.app, suggestionKind, setting.controlEl);
 		});
+	}
+
+	private renderTemplateKeyCatalog(container: HTMLElement): void {
+		const details = container.createEl('details');
+		details.dataset.templateKeyCatalog = 'true';
+		const summary = details.createEl('summary');
+		const polish = getLanguage().toLocaleLowerCase().startsWith('pl');
+		summary.textContent = polish ? 'Klucze dostępne w szablonie' : 'Available template keys';
+		const description = details.createEl('p');
+		description.textContent = polish ? 'Użyj kluczy w zapisie {{klucz}}. Tablica może być użyta z pomocnikiem join.' : 'Use keys as {{key}}. Arrays can be rendered with the join helper.';
+		const list = details.createDiv();
+		list.dataset.templateKeyList = 'true';
+		for (const entry of TEMPLATE_KEY_CATALOG) {
+			const row = list.createDiv();
+			row.dataset.templateKey = entry.key;
+			const key = row.createEl('code');
+			key.textContent = `{{${entry.key}}}`;
+			const explanation = row.createSpan();
+			const localized = polish ? entry.description.pl : entry.description.en;
+			explanation.textContent = ` — ${localized} ${polish ? 'Przykład' : 'Example'}: ${entry.example}`;
+		}
 	}
 
 	private toggleSetting(container: HTMLElement, field: keyof GameSyncSettings, nameKey: string, descriptionKey?: string, afterChange?: () => void): void {
@@ -332,8 +357,9 @@ export class GameSyncSettingsTab extends NativePluginSettingTab {
 	}
 
 	private renderNotes(section: HTMLElement): void {
-		this.textSetting(section, 'notesFolder', 'settings.notesTemplates.notesFolder', 'settings.notesTemplates.notesFolderDescription', 'settings.notesTemplates.notesFolderPlaceholder');
-		this.textSetting(section, 'templatePath', 'settings.notesTemplates.templatePath', 'settings.notesTemplates.templateDescription', 'settings.notesTemplates.templatePlaceholder');
+		this.textSetting(section, 'notesFolder', 'settings.notesTemplates.notesFolder', 'settings.notesTemplates.notesFolderDescription', 'settings.notesTemplates.notesFolderPlaceholder', 'text', 'folder');
+		this.textSetting(section, 'templatePath', 'settings.notesTemplates.templatePath', 'settings.notesTemplates.templateDescription', 'settings.notesTemplates.templatePlaceholder', 'text', 'template');
+		this.renderTemplateKeyCatalog(section);
 	}
 
 	private renderMore(section: HTMLElement): void {
@@ -342,7 +368,7 @@ export class GameSyncSettingsTab extends NativePluginSettingTab {
 
 	private renderFooter(): void {
 		const footer = this.containerEl.createEl('p');
-		const version = (this.plugin as Plugin & { manifest?: { version?: string } }).manifest?.version ?? '26.9.0';
+		const version = (this.plugin as Plugin & { manifest?: { version?: string } }).manifest?.version ?? '26.9.1';
 		footer.append(document.createTextNode(`Game Sync ${version} · `));
 		const github = footer.createEl('a'); github.href = GITHUB_URL; github.textContent = 'GitHub';
 		footer.append(document.createTextNode(' · '));

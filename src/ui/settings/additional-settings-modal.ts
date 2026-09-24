@@ -14,7 +14,10 @@ export interface AdditionalSettingsHost {
 	copyDiagnostics: () => void | Promise<void>;
 }
 
-type AdditionalView = 'library' | 'properties' | 'metadata' | 'additional-data' | 'history';
+export type AdditionalSettingsView = 'library' | 'properties' | 'metadata' | 'additional-data' | 'history' | 'diagnostics';
+export interface AdditionalSettingsModalOptions {
+	readonly initialView?: AdditionalSettingsView;
+}
 type BooleanField = 'includeUnplayed' | 'includeFreeToPlay' | 'includePreviouslyPlayedNoLongerOwned' | 'includeDemosTrials' | 'includeBetasTestApps' | 'showAchievementRarity' | 'showTrophyType' | 'showUnlockDate' | 'recordHistory' | 'steamEnricherEnabled' | 'playstationEnricherEnabled';
 
 function translation(key: string, params?: Record<string, string | number>): string {
@@ -33,7 +36,7 @@ export class AdditionalSettingsModal extends Modal {
 	private statusEl?: HTMLElement;
 	public ready: Promise<void> = Promise.resolve();
 
-	constructor(app: App, private readonly host: AdditionalSettingsHost) {
+	constructor(app: App, private readonly host: AdditionalSettingsHost, private readonly options: AdditionalSettingsModalOptions = {}) {
 		super(app);
 	}
 
@@ -53,7 +56,10 @@ export class AdditionalSettingsModal extends Modal {
 	private async load(version: number): Promise<void> {
 		try {
 			this.settings = settingCopy(await this.host.readSettings());
-			if (this.isCurrent(version)) this.renderLauncher();
+			if (this.isCurrent(version)) {
+				if (this.options.initialView === undefined) this.renderLauncher();
+				else this.renderView(this.options.initialView);
+			}
 		} catch {
 			if (this.isCurrent(version)) this.setStatus(translation('settings.common.loadError'));
 		}
@@ -103,7 +109,18 @@ export class AdditionalSettingsModal extends Modal {
 		});
 	}
 
-	private startView(view: AdditionalView, titleKey: string): HTMLElement {
+	private renderView(view: AdditionalSettingsView): void {
+		switch (view) {
+			case 'library': this.renderLibrary(); break;
+			case 'properties': void this.renderProperties(); break;
+			case 'metadata': this.renderMetadata(); break;
+			case 'additional-data': this.renderAdditionalData(); break;
+			case 'history': this.renderHistory(); break;
+			case 'diagnostics': this.renderDiagnostics(); break;
+		}
+	}
+
+	private startView(view: AdditionalSettingsView, titleKey: string): HTMLElement {
 		this.contentEl.replaceChildren();
 		const root = this.contentEl.createDiv();
 		root.dataset.additionalView = view;
@@ -224,6 +241,15 @@ export class AdditionalSettingsModal extends Modal {
 		const root = this.startView('history', 'settings.advanced.gameHistory');
 		this.addToggle(root, 'recordHistory', 'settings.history.recordHistory', () => this.renderHistory());
 		if (this.currentSettings().recordHistory) this.addText(root, 'historyPath', 'settings.history.historyPath', 'settings.history.historyPathDescription', 'settings.history.historyPathPlaceholder');
+		this.addBack(root);
+	}
+
+	private renderDiagnostics(): void {
+		const root = this.startView('diagnostics', 'settings.advanced.diagnostics');
+		new Setting(root)
+			.setName(translation('settings.advanced.diagnostics'))
+			.setDesc(translation('settings.advanced.diagnosticsDescription'))
+			.addButton((button) => button.setButtonText(translation('settings.advanced.copyDiagnostics')).onClick(() => void this.host.copyDiagnostics()));
 		this.addBack(root);
 	}
 }

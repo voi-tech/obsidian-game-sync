@@ -79,7 +79,7 @@ describe('canonical library/enrichment boundary', () => {
 		const preview = await service.preview();
 		await service.applyPreview(preview);
 		const content = await gateway.read('Games/Example.md');
-		expect(content).toContain('last-played: 2026-09-13T12:00:00.000Z');
+		expect(content).toContain('last-played: 2026-09-13');
 		expect(content).toContain('achievements-unlocked: 9');
 		expect(content).toContain('custom: keep');
 	});

@@ -9,6 +9,7 @@ import type { GameSyncRuntimeComposition } from './composition';
 import type { GameSyncCommandActions } from './commands';
 import type { MatchManagerAdapter } from '../model/match-manager';
 import type { CanonicalPreviewResult } from '../sync/canonical-service';
+import type { CanonicalSyncSelection } from '../sync/canonical-planner';
 import { createSyncConcurrencyGuard, type SyncExclusiveRunner } from '../sync/concurrency';
 
 export type RuntimeSummary = SyncApplyResult | LibrarySummaryViewModel;
@@ -21,7 +22,7 @@ export interface RuntimeUiPort {
 	): void | PromiseLike<void>;
 	openCanonicalPreview?: (
 		preview: CanonicalPreviewResult,
-		onApply: (operationIds: readonly string[]) => void | PromiseLike<void>,
+		onApply: (selection: CanonicalSyncSelection) => void | PromiseLike<void>,
 	) => void | PromiseLike<void>;
 	openSummary(
 		summary: RuntimeSummary,
@@ -83,8 +84,8 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 					await options.ui.showUnavailable(state.settings.libraryProvider);
 					return;
 				}
-				await options.ui.openCanonicalPreview(prepared.preview, (operationIds) => runExclusive(async () => {
-					await prepared.service.applyPreview(prepared.preview, operationIds);
+				await options.ui.openCanonicalPreview(prepared.preview, (selection) => runExclusive(async () => {
+					await prepared.service.applyPreview(prepared.preview, selection);
 					await markGameTrackImport();
 					await options.composition.approveCanonicalBackgroundSync();
 				}));

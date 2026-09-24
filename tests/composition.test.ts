@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { GameProviderAdapter } from '../src/providers/provider';
 import type { GameProvider, ProviderGame, ProviderSnapshot } from '../src/model/provider';
+import type { CanonicalGame } from '../src/model/canonical-game';
+import type { LibraryProvider } from '../src/model/canonical-provider';
 import type { GameSyncData } from '../src/state/schema';
 import type { StateStore } from '../src/state/store';
 import { DEFAULT_SETTINGS } from '../src/state/defaults';
@@ -99,6 +101,28 @@ function adapter(game: ProviderGame, onFetch: () => void): GameProviderAdapter {
 	};
 }
 
+function canonicalGame(): CanonicalGame {
+	return {
+		identity: { canonicalKey: 'gametrack:canonical-game', externalIds: { gametrack: 'canonical-game' } },
+		title: 'Canonical Game',
+		metadata: { developers: [], publishers: [], genres: [] },
+		platforms: [{ id: 'steam', source: 'gametrack', owned: true }],
+		playtime: { observations: [] },
+		provenance: { provider: 'gametrack', sourceId: 'canonical-game', schemaSignature: 'schema' },
+	};
+}
+
+function canonicalProvider(game: CanonicalGame): LibraryProvider {
+	return {
+		id: 'gametrack',
+		getCapabilities: () => ({ supported: true, desktop: true, mobile: false, automaticSync: false, library: true, metadata: true, platforms: true, playtime: true, achievementSummary: true }),
+		isAvailable: async () => true,
+		getSnapshot: async () => ({ status: 'complete', games: [game], revision: 'revision', diagnostics: { provider: 'gametrack', database: 'found', schema: 'supported', gamesRead: 1, gamesNormalized: 1, diagnostics: [] } }),
+		getLibrary: async () => [game],
+		getDiagnostics: () => ({ provider: 'gametrack', database: 'found', schema: 'supported', gamesRead: 1, gamesNormalized: 1, diagnostics: [] }),
+	};
+}
+
 describe('GameSyncRuntimeComposition', () => {
 	it('reads current settings for each service and applies provider scope', async () => {
 		const steamFetches = { count: 0 };
@@ -168,5 +192,25 @@ describe('GameSyncRuntimeComposition', () => {
 
 		expect(existingGateway.existenceChecks).toEqual(['Templates/game.tmpl']);
 		expect(existingGateway.reads).toEqual(['Templates/game.tmpl']);
+	});
+
+	it('passes the configured template path into the canonical preview', async () => {
+		const gateway = new CountingVaultGateway({ 'Templates/game.tmpl': '# {{title}}\n{{playtime}}' });
+		const store = new MutableStateStore(state({ libraryProvider: 'gametrack', templatePath: 'Templates/game.tmpl' }));
+		const composition = new GameSyncRuntimeComposition({ stateStore: store, gateway, canonicalProvider: canonicalProvider(canonicalGame()) });
+
+		const service = await composition.createCanonicalService();
+		const preview = await service!.preview();
+		expect(preview.plan?.operations[0]?.preview.body).toBe('# Canonical Game\n');
+	});
+
+	it('fails canonical preview when an explicitly configured template cannot be read', async () => {
+		const gateway = new CountingVaultGateway();
+		const store = new MutableStateStore(state({ libraryProvider: 'gametrack', templatePath: 'Templates/missing.tmpl' }));
+		const composition = new GameSyncRuntimeComposition({ stateStore: store, gateway, canonicalProvider: canonicalProvider(canonicalGame()) });
+
+		const service = await composition.createCanonicalService();
+		await expect(service!.preview()).rejects.toThrow(/template.*missing\.tmpl.*clear|create/i);
+		expect(await gateway.listMarkdownFiles()).toEqual([]);
 	});
 });

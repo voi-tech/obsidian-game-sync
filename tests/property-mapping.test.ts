@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { NormalizedGame } from '../src/model/game';
 import { buildManagedProperties, DEFAULT_PROPERTY_MAPPING, resolvePropertyMapping, validatePropertyMapping } from '../src/model/property-mapping';
+import { canonicalMappingFromLegacy, resolveCanonicalPropertyMapping } from '../src/vault/canonical-projection';
+import { PROPERTY_MAPPING_GROUPS } from '../src/ui/settings/property-settings';
 
 const game: NormalizedGame = {
 	identity: { canonicalId: 'game-sync:one', steamAppId: 1 },
@@ -37,7 +39,15 @@ describe('managed Property mapping', () => {
 			'steamAchievementsEarned', 'steamAchievementsTotal', 'steamAchievementsProgress', 'playstationId', 'playstationOwned',
 			'playstationPlaytime', 'playstationLastPlayed', 'psnTrophiesEarned', 'psnTrophiesTotal', 'psnTrophiesProgress',
 			'psnBronze', 'psnSilver', 'psnGold', 'psnPlatinum', 'updated',
+			'igdbId', 'gametrackId',
 		]);
+	});
+
+	it('renders every default logical key in exactly one settings group', () => {
+		const grouped = PROPERTY_MAPPING_GROUPS.flatMap((group) => group.keys);
+		expect(grouped).toHaveLength(Object.keys(DEFAULT_PROPERTY_MAPPING).length);
+		expect(new Set(grouped).size).toBe(grouped.length);
+		expect(new Set(grouped)).toEqual(new Set(Object.keys(DEFAULT_PROPERTY_MAPPING)));
 	});
 
 	it('omits disabled mappings and does not expose template keys as mapping keys', () => {
@@ -52,16 +62,30 @@ describe('managed Property mapping', () => {
 		expect(values).not.toHaveProperty('title');
 	});
 
-	it('rejects duplicate destinations and user-owned destinations', () => {
+	it('rejects duplicate and user-owned destinations', () => {
 		expect(() => validatePropertyMapping({ title: 'same', type: 'same' })).toThrow(/duplicate/i);
-		expect(() => validatePropertyMapping({ title: 'status' })).toThrow(/user-owned/i);
+		for (const name of ['status', 'rating', 'favorite', 'start', 'end', 'review', 'notes', 'tags']) {
+			expect(() => validatePropertyMapping({ title: `  ${name.toUpperCase()}  ` })).toThrow(/user-owned/i);
+		}
 		expect(() => validatePropertyMapping({ title: ' Steam-ID ' })).toThrow(/duplicate/i);
-		expect(() => validatePropertyMapping({ title: ' STATUS ' })).toThrow(/user-owned/i);
+	});
+
+	it('rejects user-owned canonical destinations after trimming and case normalization', () => {
+		for (const name of ['status', 'rating', 'favorite', 'start', 'end', 'review', 'notes', 'tags']) {
+			expect(() => resolveCanonicalPropertyMapping({ title: `  ${name.toUpperCase()}  ` })).toThrow(/user-owned/i);
+		}
 	});
 
 	it('resolves defaults before validating active destinations and trims overrides', () => {
 		expect(resolvePropertyMapping({ title: '  custom-title  ' }).title).toBe('custom-title');
 		expect(resolvePropertyMapping({ steamPlaytime: null }).steamPlaytime).toBeUndefined();
+	});
+
+	it('passes canonical identity and achievement mapping overrides through the shared settings state', () => {
+		expect(canonicalMappingFromLegacy({ igdbId: 'external-id', gametrackId: null, steamAchievementsTotal: 'achievement-count' })).toEqual({
+		igdbId: 'external-id', gametrackId: null, steamAchievementsTotal: 'achievement-count',
+	});
+		expect(resolveCanonicalPropertyMapping({ title: 'game-title', steamAchievementsTotal: null })).toMatchObject({ title: 'game-title', steamAchievementsTotal: undefined });
 	});
 
 	it('omits null and undefined source values instead of erasing unrelated data', () => {

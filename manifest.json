@@ -1,7 +1,7 @@
 {
 	"id": "game-sync",
 	"name": "Game Sync",
-	"version": "26.9.0",
+	"version": "26.9.1",
 	"minAppVersion": "1.13.7",
 	"description": "Sync GameTrack exports, Steam and PlayStation game libraries, playtime and achievements into ordinary Obsidian Markdown notes.",
 	"author": "voitech",

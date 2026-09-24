@@ -1,4 +1,5 @@
 import type { CanonicalGame } from '../model/canonical-game';
+import { buildCanonicalManagedProperties } from '../vault/canonical-projection';
 
 function stableStringify(value: unknown): string {
 	if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
@@ -17,15 +18,7 @@ function hash(value: string): string {
 
 export function canonicalGameFingerprint(game: CanonicalGame): string {
 	const payload = {
-		identity: game.identity,
-		title: game.title,
-		aliases: game.aliases,
-		lastPlayed: game.lastPlayed,
-		activity: game.activity,
-		metadata: game.metadata,
-		platforms: [...game.platforms].sort((left, right) => left.id.localeCompare(right.id)),
-		playtime: game.playtime.canonical,
-		achievements: game.achievements,
+		projected: buildCanonicalManagedProperties(game),
 	};
 	return `canonical:${hash(stableStringify(payload))}`;
 }
