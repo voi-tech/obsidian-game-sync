@@ -1,5 +1,9 @@
 # Changelog
 
+## 26.10.2 (BRAT prerelease)
+
+- Fixed an Obsidian crash when starting PlayStation sign-in from Settings. Obsidian 1.14 shows Settings in a separate window, and an embedded browser there terminates Electron's main process. Game Sync now never creates the sign-in browser outside the main window: it closes Settings and continues sign-in in the main window. Reproduced and verified in Obsidian 1.14.4 with an identical crash signature before the fix.
+
 ## 26.10.1 (BRAT prerelease)
 
 - Replaced browser-fetch PSN requests with a scoped desktop HTTPS transport for authorization, refresh, library and trophy endpoints.

@@ -34,6 +34,37 @@ function connectButton(modal: InstanceType<typeof PlayStationConnectModal>): HTM
 
 describe('PlayStationConnectModal', () => {
 	beforeEach(() => { document.body.replaceChildren(); vi.clearAllMocks(); obsidianMock.getLanguage.mockReturnValue('en'); vi.stubGlobal('createEl', (tag: string) => document.createElement(tag)); });
+	it('moves browser sign-in to the main window when opened from the separate Settings window', () => {
+		const reopenInMainWindow = vi.fn();
+		const modal = new PlayStationConnectModal({} as never, { secretStore: secretStore().store, openUrl: vi.fn(), onConnected: vi.fn(), reopenInMainWindow });
+		modal.onOpen();
+		// Simulate Obsidian 1.14 Settings: the modal lives in another window's document.
+		document.implementation.createHTMLDocument('Settings').adoptNode(modal.contentEl);
+		const close = vi.spyOn(modal, 'close');
+		Array.from(modal.contentEl.querySelectorAll('button')).find((button) => button.textContent === 'Sign in to PlayStation')!.click();
+		expect(modal.contentEl.querySelector('webview')).toBeNull();
+		expect(close).toHaveBeenCalledOnce();
+		expect(reopenInMainWindow).toHaveBeenCalledOnce();
+	});
+
+	it('does not loop when an already reopened dialog still cannot embed the browser', () => {
+		const reopenInMainWindow = vi.fn();
+		const modal = new PlayStationConnectModal({} as never, { secretStore: secretStore().store, openUrl: vi.fn(), onConnected: vi.fn(), reopenInMainWindow, startBrowserSignIn: true });
+		const foreign = document.implementation.createHTMLDocument('Settings');
+		foreign.adoptNode(modal.contentEl);
+		modal.onOpen();
+		expect(reopenInMainWindow).not.toHaveBeenCalled();
+		expect(modal.contentEl.querySelector('webview')).toBeNull();
+		expect(modal.contentEl.textContent).toContain('embedded sign-in could not finish');
+	});
+
+	it('starts browser sign-in immediately when reopened in the main window', () => {
+		const modal = new PlayStationConnectModal({} as never, { secretStore: secretStore().store, openUrl: vi.fn(), onConnected: vi.fn(), startBrowserSignIn: true });
+		modal.onOpen();
+		expect(modal.contentEl.querySelector('webview')).not.toBeNull();
+		modal.onClose();
+	});
+
 	it('distinguishes authorized sessions from account-settings save failures', async () => {
 		const persistent = secretStore();
 		const save = vi.fn().mockRejectedValueOnce(new Error('Synthetic save failure')).mockResolvedValueOnce(undefined);

@@ -188,11 +188,26 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 			}).open();
 			return;
 		}
-		new PlayStationConnectModal(host.app, {
-			secretStore,
-			openUrl: (url) => { window.open(url, '_blank'); },
-			onConnected: (connected) => saveConnectedAccount(connected, onConnected),
-		}).open();
+		const openPlayStationModal = (startBrowserSignIn: boolean): void => {
+			new PlayStationConnectModal(host.app, {
+				secretStore,
+				openUrl: (url) => { window.open(url, '_blank'); },
+				onConnected: (connected) => saveConnectedAccount(connected, onConnected),
+				startBrowserSignIn,
+				// Obsidian 1.14 shows Settings in a separate window where an embedded browser would crash
+				// the app. Close Settings, wait for focus to return to the main window, then sign in there.
+				reopenInMainWindow: () => {
+					(host.app as typeof host.app & { setting?: { close?: () => void } }).setting?.close?.();
+					const startedAt = Date.now();
+					const reopenWhenMainWindowIsActive = (): void => {
+						if (activeDocument === document || Date.now() - startedAt > 2000) openPlayStationModal(true);
+						else window.setTimeout(reopenWhenMainWindowIsActive, 50);
+					};
+					window.setTimeout(reopenWhenMainWindowIsActive, 50);
+				},
+			}).open();
+		};
+		openPlayStationModal(false);
 	};
 
 	const openConnection = (provider: GameProvider, onConnected?: () => void): void => {

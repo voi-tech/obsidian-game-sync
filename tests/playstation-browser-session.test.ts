@@ -1,9 +1,25 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PlayStationBrowserSession } from '../src/ui/playstation-browser-session';
+import { PlayStationBrowserSession, canEmbedPlayStationBrowser } from '../src/ui/playstation-browser-session';
 
 describe('isolated PlayStation browser', () => {
 	beforeEach(() => vi.stubGlobal('createEl', (tag: string) => document.createElement(tag)));
+	it('never creates an embedded browser outside the main Obsidian window', () => {
+		// Obsidian 1.14 renders Settings in a separate window; a <webview> there crashes Electron's main process.
+		const settingsWindowDocument = document.implementation.createHTMLDocument('Settings');
+		const container = settingsWindowDocument.createElement('div');
+		settingsWindowDocument.body.append(container);
+		const onError = vi.fn();
+		const created = vi.fn((tag: string) => document.createElement(tag));
+		vi.stubGlobal('createEl', created);
+		const session = new PlayStationBrowserSession(container, { onToken: vi.fn(), onError });
+		expect(canEmbedPlayStationBrowser(container)).toBe(false);
+		session.start();
+		expect(created).not.toHaveBeenCalledWith('webview');
+		expect(container.querySelector('webview')).toBeNull();
+		expect(onError).toHaveBeenCalledOnce();
+	});
+
 	it('rejects an old read even after navigation returns to the same Sony URL', async () => {
 		const container = document.createElement('div');
 		const onToken = vi.fn();

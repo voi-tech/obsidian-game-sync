@@ -27,6 +27,15 @@ function isSonyPage(raw: string): boolean {
 	} catch { return false; }
 }
 
+/**
+ * Embedded browsers are only safe in Obsidian's main window. Obsidian 1.14 renders Settings in a
+ * separate window, and attaching a <webview> there crashes Electron's main process (whole app).
+ * Plugin code shares the main window's realm, so the global `document` is the main window document.
+ */
+export function canEmbedPlayStationBrowser(element: HTMLElement): boolean {
+	return element.ownerDocument === document;
+}
+
 /** A separate in-memory Electron webview, never the user's browser cookie store. */
 export class PlayStationBrowserSession {
 	private view?: SonyWebview;
@@ -41,6 +50,10 @@ export class PlayStationBrowserSession {
 
 	start(): void {
 		this.dispose();
+		if (!canEmbedPlayStationBrowser(this.container)) {
+			this.options.onError();
+			return;
+		}
 		const view = createEl('webview');
 		view.className = 'game-sync-playstation-browser';
 		view.setAttribute('partition', `game-sync-psn-${crypto.randomUUID()}`);

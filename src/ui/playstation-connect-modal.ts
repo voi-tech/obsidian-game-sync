@@ -5,7 +5,7 @@ import type { ProviderAccount } from '../model/provider';
 import { PlayStationAuthError, PlayStationNeedsAuthenticationError, createPlayStationAuth, preparePlayStationConnection } from '../providers/playstation/auth';
 import type { PlayStationAuthOptions, PlayStationAuthService } from '../providers/playstation/types';
 import { renderStatusMessage } from './status';
-import { PlayStationBrowserSession, PLAYSTATION_LOGIN_URL, PLAYSTATION_SESSION_URL } from './playstation-browser-session';
+import { PlayStationBrowserSession, PLAYSTATION_LOGIN_URL, PLAYSTATION_SESSION_URL, canEmbedPlayStationBrowser } from './playstation-browser-session';
 
 export const PLAYSTATION_URL = PLAYSTATION_LOGIN_URL;
 export const PLAYSTATION_NPSSO_URL = PLAYSTATION_SESSION_URL;
@@ -19,6 +19,10 @@ export interface PlayStationConnectModalOptions {
 	onConnected: (account: ProviderAccount) => void | Promise<void>;
 	createAuth?: PlayStationAuthFactory;
 	authFactory?: PlayStationAuthFactory;
+	/** Reopen this dialog in Obsidian's main window; the embedded browser cannot run in the Settings window. */
+	reopenInMainWindow?: () => void;
+	/** Start the embedded sign-in as soon as the dialog opens. */
+	startBrowserSignIn?: boolean;
 }
 
 function createMemorySecretStore(): SecretStore {
@@ -73,6 +77,7 @@ export class PlayStationConnectModal extends Modal {
 		this.statusEl = this.contentEl.createDiv();
 		this.statusEl.className = 'game-sync-connect-status';
 		this.statusEl.setAttribute('aria-live', 'polite');
+		if (this.options.startBrowserSignIn === true) this.startBrowser();
 	}
 
 	private renderManualConnection(): void {
@@ -128,6 +133,17 @@ export class PlayStationConnectModal extends Modal {
 
 	private startBrowser(): void {
 		if (!this.isOpen || this.busy || this.doneButton !== undefined || this.browserContainer === undefined) return;
+		if (!canEmbedPlayStationBrowser(this.browserContainer)) {
+			// A dialog that was already reopened must not reopen again, or a slow focus change would loop.
+			if (this.options.reopenInMainWindow === undefined || this.options.startBrowserSignIn === true) {
+				this.setStatus(t('connect.playstation.browserUnavailable'));
+				return;
+			}
+			const reopen = this.options.reopenInMainWindow;
+			this.close();
+			reopen();
+			return;
+		}
 		const version = ++this.lifecycle;
 		this.browser?.dispose();
 		this.browserContainer.replaceChildren();
