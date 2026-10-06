@@ -90,7 +90,7 @@ describe('safe local unmerge', () => {
 
 		const existing = parseFrontmatter(await gateway.read(unmerge.preview.existingPath));
 		const split = parseFrontmatter(await gateway.read(unmerge.preview.newPath));
-		expect(existing.frontmatter['steam-id']).toBe(1);
+		expect(existing.frontmatter['steam-id']).toBe('1');
 		expect(existing.frontmatter['playstation-id']).toBeUndefined();
 		expect(split.frontmatter['playstation-id']).toBe('psn-1');
 		expect(split.frontmatter['steam-id']).toBeUndefined();
@@ -147,7 +147,7 @@ describe('safe local unmerge', () => {
 		expect(await gateway.exists(unmerge.preview.newPath)).toBe(false);
 		const restored = parseFrontmatter(await gateway.read(unmerge.preview.existingPath));
 		expect(restored.frontmatter['game-sync-id']).toBe(canonicalId);
-		expect(restored.frontmatter['steam-id']).toBe(1);
+		expect(restored.frontmatter['steam-id']).toBe('1');
 		expect(restored.frontmatter['playstation-id']).toBe('psn-1');
 		expect(restored.body).toContain('Keep this only in the original note.');
 		expect((await service.getState()).identityMappings).toEqual(before);

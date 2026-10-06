@@ -3,8 +3,11 @@ import type { ProviderGame, ProviderSnapshot } from '../src/model/provider';
 import type { GameProviderAdapter } from '../src/providers/provider';
 import { createSteamLibraryProvider } from '../src/providers/steam/library-provider';
 import { createPlayStationLibraryProvider } from '../src/providers/playstation/library-provider';
+import { CanonicalProviderError, CanonicalSyncService } from '../src/sync/canonical-service';
+import { CanonicalVaultWriter } from '../src/vault/canonical-writer';
+import { FakeVaultGateway } from './fake-gateway';
 
-function steamGame(): ProviderGame {
+function steamGame(overrides: Partial<ProviderGame> = {}): ProviderGame {
 	return {
 		provider: 'steam',
 		providerGameId: '440',
@@ -19,10 +22,11 @@ function steamGame(): ProviderGame {
 		lastPlayed: '2026-09-14T12:00:00.000Z',
 		freshness: { metadata: true, ownership: true, playtime: true, achievements: false },
 		identity: { provider: 'steam', appId: 440 },
+		...overrides,
 	};
 }
 
-function playStationGame(): ProviderGame {
+function playStationGame(overrides: Partial<ProviderGame> = {}): ProviderGame {
 	return {
 		provider: 'playstation',
 		providerGameId: 'concept-1',
@@ -35,6 +39,7 @@ function playStationGame(): ProviderGame {
 		playtimeMinutes: 90,
 		freshness: { metadata: true, ownership: true, playtime: true, achievements: false },
 		identity: { provider: 'playstation', conceptId: 'concept-1', titleIds: ['title-1'], npCommunicationIds: ['np-1'] },
+		...overrides,
 	};
 }
 
@@ -56,6 +61,20 @@ function snapshot(game: ProviderGame, status: ProviderSnapshot['status'] = 'comp
 		fetchedAt: '2026-09-14T12:00:00.000Z',
 		pagination: { complete: status === 'complete', pagesFetched: 1 },
 		paginationComplete: status === 'complete',
+	};
+}
+
+function mutableAdapter(initial: ProviderSnapshot): { adapter: GameProviderAdapter; setSnapshot: (next: ProviderSnapshot) => void } {
+	let current = initial;
+	return {
+		adapter: {
+			id: initial.provider,
+			getConnectionStatus: async () => ({ provider: initial.provider, state: 'connected', connected: true }),
+			testConnection: async () => ({ provider: initial.provider, displayName: initial.provider, accountId: `${initial.provider}-account` }),
+			fetchLibrary: async () => current,
+			disconnect: async () => undefined,
+		},
+		setSnapshot: (next) => { current = next; },
 	};
 }
 
@@ -88,5 +107,53 @@ describe('canonical Steam and PlayStation library providers', () => {
 
 		expect(result.status).toBe('partial');
 		expect(result.games).toHaveLength(1);
+	});
+
+	it.each([
+		{ name: 'Steam', create: createSteamLibraryProvider, game: steamGame() },
+		{ name: 'PlayStation', create: createPlayStationLibraryProvider, game: playStationGame() },
+	])('$name canonical preview survives a retrieval timestamp change', async ({ create, game }) => {
+		const source = mutableAdapter(snapshot(game));
+		const provider = create({ adapter: source.adapter });
+		const gateway = new FakeVaultGateway();
+		const service = new CanonicalSyncService({ provider, planner: { gateway, notesFolder: 'Games' }, writer: new CanonicalVaultWriter(gateway) });
+		const preview = await service.preview();
+		source.setSnapshot({ ...snapshot(game), fetchedAt: '2026-09-15T12:00:00.000Z' });
+
+		await expect(service.applyPreview(preview)).resolves.toHaveLength(1);
+	});
+
+	it.each([
+		{ name: 'Steam', create: createSteamLibraryProvider, game: steamGame() },
+		{ name: 'PlayStation', create: createPlayStationLibraryProvider, game: playStationGame() },
+	])('$name canonical preview rejects a changed managed value before writing', async ({ create, game }) => {
+		const source = mutableAdapter(snapshot(game));
+		const provider = create({ adapter: source.adapter });
+		const gateway = new FakeVaultGateway();
+		const service = new CanonicalSyncService({ provider, planner: { gateway, notesFolder: 'Games' }, writer: new CanonicalVaultWriter(gateway) });
+		const preview = await service.preview();
+		source.setSnapshot(snapshot({ ...game, title: `${game.title} Updated` }));
+
+		await expect(service.applyPreview(preview)).rejects.toBeInstanceOf(CanonicalProviderError);
+		expect(gateway.frontMatterProcessCount).toBe(0);
+		expect(await gateway.listMarkdownFiles()).toEqual([]);
+	});
+
+	it.each([
+		{ name: 'Steam', create: createSteamLibraryProvider, game: steamGame({ description: 'Original summary', achievements: { earned: 1, total: 2, progress: 50, achievements: [{ id: 'a', name: 'First', description: 'Original detail', unlocked: true, hidden: false }] } }) },
+		{ name: 'PlayStation', create: createPlayStationLibraryProvider, game: playStationGame({ description: 'Original summary', achievements: { earned: 1, total: 2, progress: 50, achievements: [{ id: 'a', name: 'First', description: 'Original detail', unlocked: true, hidden: false }] } }) },
+	])('$name canonical preview rejects changed metadata or achievement details', async ({ create, game }) => {
+		const source = mutableAdapter(snapshot(game));
+		const provider = create({ adapter: source.adapter });
+		const gateway = new FakeVaultGateway();
+		const service = new CanonicalSyncService({ provider, planner: { gateway, notesFolder: 'Games' }, writer: new CanonicalVaultWriter(gateway) });
+		const preview = await service.preview();
+		const achievements = game.achievements;
+		if (achievements === undefined) throw new Error('Test fixture must include achievements.');
+		const changedAchievements = { ...achievements, achievements: [{ ...achievements.achievements[0], description: 'Changed detail' }] };
+		source.setSnapshot(snapshot({ ...game, description: 'Changed summary', achievements: changedAchievements }));
+
+		await expect(service.applyPreview(preview)).rejects.toBeInstanceOf(CanonicalProviderError);
+		expect(gateway.frontMatterProcessCount).toBe(0);
 	});
 });

@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-game-sync",
-	"version": "26.9.1",
+	"version": "26.10.0",
 	"description": "Sync GameTrack exports, Steam and PlayStation game libraries, playtime and achievements into ordinary Obsidian Markdown notes.",
 	"author": "voitech",
 	"license": "MIT",
@@ -26,12 +26,13 @@
 		"lint": "eslint . --max-warnings=0",
 		"check:mobile-bundle": "node scripts/check-mobile-bundle.mjs",
 		"release:check": "node scripts/check-release.mjs",
-		"check": "npm run lint && npm run typecheck && npm test && npm run build && npm run check:mobile-bundle && npm run release:check",
+		"check": "npm run lint && npm run typecheck && npm test && npm run build && npm run release:check",
 		"version": "node scripts/version-bump.mjs"
 	},
 	"dependencies": {
 		"handlebars": "^4.7.9",
 		"psn-api": "^2.18.1",
+		"yaml": "^2.9.1",
 		"zod": "^4.6.2"
 	},
 	"devDependencies": {

@@ -229,6 +229,24 @@ describe('Game Sync settings', () => {
 		await vi.waitFor(() => expect(host.writeSettings).toHaveBeenCalledWith(expect.objectContaining({ libraryProvider: 'gametrack' })));
 	});
 
+	it('uses one direct Steam and PlayStation mode and clears only the legacy library selection', async () => {
+		const host = makeHost();
+		host.readSettings.mockResolvedValue({
+			...structuredClone(DEFAULT_SETTINGS),
+			libraryProvider: 'steam',
+			enabledProviders: { steam: true, playstation: true },
+		});
+		(host as unknown as { getGameTrackStatus: unknown }).getGameTrackStatus = vi.fn(async () => ({ code: 'UNSUPPORTED_OS' as const, supported: false, database: 'unavailable' as const, schema: 'unknown' as const, games: 0, platforms: [] }));
+		const tab = new GameSyncSettingsTab({} as never, {} as never, host);
+		display(tab);
+		await tab.ready;
+		const select = tab.containerEl.querySelector<HTMLSelectElement>('[data-settings-field="libraryProvider"]')!;
+		expect(Array.from(select.options).map((option) => option.value)).toEqual(['direct']);
+		expect(select.value).toBe('direct');
+		select.dispatchEvent(new Event('change'));
+		await vi.waitFor(() => expect(host.writeSettings).toHaveBeenCalledWith(expect.objectContaining({ libraryProvider: undefined, enabledProviders: { steam: true, playstation: true } })));
+	});
+
 	it('does not expose GameTrack source when runtime reports unsupported status', async () => {
 		const host = makeHost();
 		(host as unknown as { getGameTrackStatus: unknown }).getGameTrackStatus = vi.fn(async () => ({ code: 'UNSUPPORTED_OS' as const, supported: false, database: 'unavailable' as const, schema: 'unknown' as const, games: 0, platforms: [] }));

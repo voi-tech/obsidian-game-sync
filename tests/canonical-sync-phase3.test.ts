@@ -35,6 +35,15 @@ function game(overrides: Partial<CanonicalGame> = {}): CanonicalGame {
 }
 
 describe('Phase 3 canonical sync', () => {
+	it('blocks every game when multiple identities resolve to the same existing note', async () => {
+		const gateway = new FakeVaultGateway({ 'Games/Shared.md': '---\ngame-sync-id: alpha\nsteam-id: "440"\ntitle: Original\n---\nManual body' });
+		const games = ['alpha', 'beta'].map((key) => game({ title: key, identity: { canonicalKey: key, externalIds: { steam: '440' } } }));
+		const plan = await planCanonicalSync(games, { gateway, notesFolder: 'Games' });
+		expect(plan.operations).toEqual([]);
+		expect(plan.statuses.map((status) => status.status)).toEqual(['conflict', 'conflict']);
+		expect(await gateway.read('Games/Shared.md')).toContain('title: Original');
+	});
+
 	it('matches an existing note by IGDB before GameTrack ID and title', async () => {
 		const gateway = new FakeVaultGateway({
 			'Games/Example Game.md': '---\ntitle: Example Game\nigdb-id: 1234\ngametrack-id: another-id\n---\nmanual',

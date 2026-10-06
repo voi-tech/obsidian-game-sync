@@ -1,95 +1,62 @@
+import { isMap, isNode, isScalar, parseDocument, visit, type Document } from 'yaml';
+
 export interface ParsedFrontmatter {
 	frontmatter: Record<string, unknown>;
 	body: string;
 	hasFrontmatter: boolean;
 }
 
-function unquote(value: string): string {
-	const trimmed = value.trim();
-	if (trimmed.length >= 2 && ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'")))) {
-		if (trimmed.startsWith('"')) {
-			try {
-				return JSON.parse(trimmed) as string;
-			} catch {
-				return trimmed.slice(1, -1);
-			}
-		}
-		return trimmed.slice(1, -1).replaceAll("''", "'");
+export class InvalidFrontmatterError extends Error {
+	constructor() {
+		super('Invalid or ambiguous YAML frontmatter; repair the note before syncing.');
+		this.name = 'InvalidFrontmatterError';
 	}
-	return trimmed;
 }
 
-function parseScalar(value: string): unknown {
-	const trimmed = value.trim();
-	if (trimmed === '') return '';
-	if (trimmed === 'null' || trimmed === '~') return null;
-	if (trimmed === 'true') return true;
-	if (trimmed === 'false') return false;
-	if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
-	if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-		return trimmed
-			.slice(1, -1)
-			.split(',')
-			.map((item) => item.trim())
-			.filter((item) => item.length > 0)
-			.map(parseScalar);
-	}
-	return unquote(trimmed);
+function splitFrontmatter(content: string): { prefix: string; yaml: string; suffix: string; body: string; newline: string } | undefined {
+	const opening = /^\uFEFF?---[^\S\r\n]*\r?\n/.exec(content);
+	if (opening === null) return undefined;
+	const rest = content.slice(opening[0].length);
+	const closing = /^---[^\S\r\n]*(?:\r?\n|$)/m.exec(rest);
+	if (closing === null) throw new InvalidFrontmatterError();
+	return { prefix: opening[0], yaml: rest.slice(0, closing.index), suffix: rest.slice(closing.index), body: rest.slice(closing.index + closing[0].length), newline: opening[0].endsWith('\r\n') ? '\r\n' : '\n' };
 }
 
-function parseYamlLines(lines: readonly string[]): Record<string, unknown> {
-	const result: Record<string, unknown> = {};
-	let index = 0;
-	while (index < lines.length) {
-		const line = lines[index];
-		if (line.trim() === '' || line.trimStart().startsWith('#')) {
-			index += 1;
-			continue;
-		}
-		const separator = line.indexOf(':');
-		if (separator <= 0) {
-			index += 1;
-			continue;
-		}
-		const key = line.slice(0, separator).trim();
-		const rawValue = line.slice(separator + 1).trim();
-		if (rawValue.length > 0) {
-			result[key] = parseScalar(rawValue);
-			index += 1;
-			continue;
-		}
-		const items: unknown[] = [];
-		let cursor = index + 1;
-		while (cursor < lines.length && lines[cursor].trimStart().startsWith('- ')) {
-			items.push(parseScalar(lines[cursor].trimStart().slice(2)));
-			cursor += 1;
-		}
-		result[key] = cursor > index + 1 ? items : null;
-		index = cursor;
+function readYaml(text: string): Document {
+	const document: Document = parseDocument(text, { prettyErrors: false });
+	if (document.errors.length > 0 || document.warnings.length > 0) throw new InvalidFrontmatterError();
+	if (document.contents === null) document.contents = document.createNode({});
+	if (!isMap(document.contents)) throw new InvalidFrontmatterError();
+	return document;
+}
+
+function propertiesOf(document: Document): Record<string, unknown> {
+	try {
+		return document.toJS({ maxAliasCount: 50 }) as Record<string, unknown>;
+	} catch {
+		throw new InvalidFrontmatterError();
 	}
-	return result;
 }
 
 export function parseFrontmatter(content: string): ParsedFrontmatter {
-	const normalized = content.replaceAll('\r\n', '\n');
-	if (!normalized.startsWith('---\n')) return { frontmatter: {}, body: normalized, hasFrontmatter: false };
-	const closing = normalized.indexOf('\n---', 4);
-	if (closing < 0) return { frontmatter: {}, body: normalized, hasFrontmatter: false };
-	const markerEnd = closing + 4;
-	const frontmatterText = normalized.slice(4, closing);
-	const body = normalized.slice(markerEnd).replace(/^\n/, '');
-	return { frontmatter: parseYamlLines(frontmatterText.split('\n')), body, hasFrontmatter: true };
+	const parts = splitFrontmatter(content);
+	if (parts === undefined) return { frontmatter: {}, body: content, hasFrontmatter: false };
+	return { frontmatter: propertiesOf(readYaml(parts.yaml)), body: parts.body, hasFrontmatter: true };
 }
 
 function scalarToYaml(value: unknown): string {
 	if (value === null) return 'null';
-	if (typeof value === 'string') return /^[A-Za-z0-9_.:/+-]+$/.test(value) ? value : JSON.stringify(value);
+	if (typeof value === 'string') {
+		const plainString = /^[A-Za-z_][A-Za-z0-9_.:/+-]*$/.test(value) && !/^(?:true|false|null|yes|no|on|off|y|n)$/i.test(value);
+		return plainString ? value : JSON.stringify(value);
+	}
 	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
 	return JSON.stringify(value);
 }
 
 function serializeProperty(key: string, value: unknown): string[] {
-	if (Array.isArray(value)) return [key + ':', ...value.map((item) => `  - ${scalarToYaml(item)}`)];
+	key = /^[A-Za-z_][A-Za-z0-9_-]*$/.test(key) ? key : JSON.stringify(key);
+	if (Array.isArray(value)) return value.length === 0 ? [`${key}: []`] : [key + ':', ...value.map((item) => `  - ${scalarToYaml(item)}`)];
 	return [`${key}: ${scalarToYaml(value)}`];
 }
 
@@ -99,12 +66,47 @@ export function serializeNote(frontmatter: Record<string, unknown>, body: string
 }
 
 export function applyManagedProperties(content: string, managedProperties: Record<string, unknown>): string {
-	const parsed = parseFrontmatter(content);
-	const frontmatter = { ...parsed.frontmatter };
-	for (const [key, value] of Object.entries(managedProperties)) {
-		if (value !== undefined && value !== null) frontmatter[key] = value;
+	return updateFrontmatter(content, (frontmatter) => applyManagedFrontmatter(frontmatter, managedProperties));
+}
+
+/** Called inside Vault.process so preview validation and mutation share one atomic read. */
+export function updateFrontmatter(content: string, updater: (frontmatter: Record<string, unknown>) => void): string {
+	const parts = splitFrontmatter(content);
+	if (parts === undefined) {
+		const frontmatter: Record<string, unknown> = {};
+		updater(frontmatter);
+		return serializeNote(frontmatter, content);
 	}
-	return serializeNote(frontmatter, parsed.body);
+	const document = readYaml(parts.yaml);
+	const before = propertiesOf(document);
+	const after = structuredClone(before);
+	updater(after);
+	const changed = new Set<string>();
+	for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+		if (Object.hasOwn(before, key) === Object.hasOwn(after, key) && JSON.stringify(before[key]) === JSON.stringify(after[key])) continue;
+		changed.add(key);
+		if (Object.hasOwn(after, key)) document.set(key, after[key]);
+		else {
+			if (isMap(document.contents)) {
+				const pair = document.contents.items.find((item) => isScalar(item.key) && item.key.value === key);
+				const comments = [document.commentBefore, ...[pair?.key, pair?.value].flatMap((node) => isNode(node) ? [node.commentBefore, node.comment] : [])];
+				document.commentBefore = comments.filter(Boolean).join('\n') || null;
+			}
+			document.delete(key);
+		}
+		const node = document.get(key, true);
+		if (isNode(node)) visit(node, { Scalar: (_key, scalar) => {
+			if (typeof scalar.value === 'string' && scalarToYaml(scalar.value).startsWith('"')) scalar.type = 'QUOTE_DOUBLE';
+		} });
+	}
+	if (changed.size === 0) return content;
+	// Anchors must not let a managed change alter an unrelated user property.
+	const written = propertiesOf(document);
+	for (const key of Object.keys(before)) {
+		if (!changed.has(key) && JSON.stringify(before[key]) !== JSON.stringify(written[key])) throw new InvalidFrontmatterError();
+	}
+	const yaml = document.toString({ lineWidth: 0 }).replaceAll('\n', parts.newline);
+	return `${parts.prefix}${yaml}${parts.suffix}`;
 }
 
 export function applyManagedFrontmatter(frontmatter: Record<string, unknown>, managedProperties: Record<string, unknown>): void {

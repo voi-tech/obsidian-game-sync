@@ -8,7 +8,9 @@ const mainTestMocks = vi.hoisted(() => ({
 	playStationAdapterFactory: vi.fn(),
 	steamModal: vi.fn(),
 	playStationModal: vi.fn(),
-	setupOptions: undefined as { openConnection: (provider: 'steam' | 'playstation') => void } | undefined,
+	setupOptions: undefined as { openConnection: (provider: 'steam' | 'playstation') => void; prepareAll?: () => Promise<unknown>; onPreparedSync?: (prepared: unknown) => Promise<void> } | undefined,
+	previewOptions: undefined as { onApply: (prepared: unknown, selectedOperationIds: readonly string[]) => Promise<void> } | undefined,
+	summaryModal: vi.fn(),
 }));
 
 vi.mock('../src/providers/steam/adapter', () => ({ createSteamAdapter: mainTestMocks.steamAdapterFactory }));
@@ -27,7 +29,19 @@ vi.mock('../src/ui/playstation-connect-modal', () => ({
 }));
 vi.mock('../src/ui/setup/setup-modal', () => ({
 	SetupModal: class {
-		constructor(_app: unknown, options: { openConnection: (provider: 'steam' | 'playstation') => void }) { mainTestMocks.setupOptions = options; }
+		constructor(_app: unknown, options: { openConnection: (provider: 'steam' | 'playstation') => void; prepareAll?: () => Promise<unknown>; onPreparedSync?: (prepared: unknown) => Promise<void> }) { mainTestMocks.setupOptions = options; }
+		open(): void {}
+	},
+}));
+vi.mock('../src/ui/preview-modal', () => ({
+	PreviewModal: class {
+		constructor(_app: unknown, options: { onApply: (prepared: unknown, selectedOperationIds: readonly string[]) => Promise<void> }) { mainTestMocks.previewOptions = options; }
+		open(): void {}
+	},
+}));
+vi.mock('../src/ui/summary-modal', () => ({
+	SummaryModal: class {
+		constructor(_app: unknown, options: unknown) { mainTestMocks.summaryModal(options); }
 		open(): void {}
 	},
 }));
@@ -66,12 +80,13 @@ vi.mock('obsidian', () => ({
 	getLanguage: () => 'en',
 }));
 
-import { createGameSyncRuntime, createStaticCommandErrorNotifier } from '../src/main';
+import GameSyncPlugin, { createGameSyncRuntime, createStaticCommandErrorNotifier } from '../src/main';
 
 function createHost(rawState: unknown, secrets: Record<string, string> = {}) {
 	const commands: Array<{ id: string; name: string; callback: () => void }> = [];
 	const settingTabs: unknown[] = [];
 	const registeredIntervals: number[] = [];
+	const layoutCallbacks: Array<() => void> = [];
 	const host = {
 		app: {
 			vault: {
@@ -83,7 +98,7 @@ function createHost(rawState: unknown, secrets: Record<string, string> = {}) {
 				getSecret: (name: string) => secrets[name] ?? null,
 				setSecret: vi.fn(),
 			},
-			workspace: { openLinkText: vi.fn() },
+			workspace: { openLinkText: vi.fn(), onLayoutReady: (callback: () => void) => { layoutCallbacks.push(callback); } },
 		} as unknown as import('obsidian').App,
 		plugin: {} as import('obsidian').Plugin,
 		loadData: vi.fn(async () => rawState),
@@ -95,13 +110,14 @@ function createHost(rawState: unknown, secrets: Record<string, string> = {}) {
 			return timerId;
 		},
 	};
-	return { host, commands, settingTabs, registeredIntervals };
+	return { host, commands, settingTabs, registeredIntervals, layoutCallbacks };
 }
 
 describe('main runtime integration', () => {
 	beforeEach(() => {
 		notices.length = 0;
 		mainTestMocks.setupOptions = undefined;
+		mainTestMocks.previewOptions = undefined;
 		vi.clearAllMocks();
 	});
 
@@ -211,5 +227,66 @@ describe('main runtime integration', () => {
 
 		await vi.waitFor(() => expect(steamAdapter.testConnection).toHaveBeenCalledTimes(2));
 		expect(mainTestMocks.steamModal).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ label: 'fresh', setupCompleted: false },
+		{ label: 'completed', setupCompleted: true },
+	])('does not open Quick Setup automatically for a $label installation', async ({ setupCompleted }) => {
+		const fixture = createHost({ settings: { setupCompleted } });
+		const plugin = new GameSyncPlugin(fixture.host.app, { id: 'game-sync', name: 'Game Sync', author: 'test', version: '26.9.1', minAppVersion: '0.0.0', description: '' });
+		Object.assign(plugin, {
+			manifest: { version: '26.9.1' },
+			loadData: fixture.host.loadData,
+			saveData: fixture.host.saveData,
+			addCommand: fixture.host.addCommand,
+			addSettingTab: fixture.host.addSettingTab,
+			registerInterval: fixture.host.registerInterval,
+		});
+
+		await plugin.onload();
+		for (const callback of fixture.layoutCallbacks) callback();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(mainTestMocks.setupOptions).toBeUndefined();
+		plugin.onunload();
+	});
+
+	it('keeps Quick Setup available through the explicit command after startup', async () => {
+		const fixture = createHost({ settings: { setupCompleted: false } });
+		const plugin = new GameSyncPlugin(fixture.host.app, { id: 'game-sync', name: 'Game Sync', author: 'test', version: '26.9.1', minAppVersion: '0.0.0', description: '' });
+		Object.assign(plugin, {
+			manifest: { version: '26.9.1' },
+			loadData: fixture.host.loadData,
+			saveData: fixture.host.saveData,
+			addCommand: fixture.host.addCommand,
+			addSettingTab: fixture.host.addSettingTab,
+			registerInterval: fixture.host.registerInterval,
+		});
+
+		await plugin.onload();
+		fixture.commands.find((command) => command.id === 'run-setup-wizard')?.callback();
+		await vi.waitFor(() => expect(mainTestMocks.setupOptions).toBeDefined());
+
+		plugin.onunload();
+	});
+
+	it('does not mark Quick Setup complete when the direct apply was not committed', async () => {
+		mainTestMocks.steamAdapterFactory.mockReturnValue({ id: 'steam', getConnectionStatus: vi.fn(async () => ({ provider: 'steam', state: 'disconnected', connected: false })), fetchLibrary: vi.fn(), disconnect: vi.fn() });
+		mainTestMocks.playStationAdapterFactory.mockReturnValue({ id: 'playstation', getConnectionStatus: vi.fn(async () => ({ provider: 'playstation', state: 'disconnected', connected: false })), fetchLibrary: vi.fn(), disconnect: vi.fn() });
+		const fixture = createHost({ settings: { setupCompleted: false, firstSyncCompleted: false } });
+		const runtime = createGameSyncRuntime(fixture.host, { timer: { setInterval: vi.fn(), clearInterval: vi.fn() }, isMobile: () => false });
+		await runtime.ready;
+		fixture.commands.find((command) => command.id === 'run-setup-wizard')?.callback();
+		await vi.waitFor(() => expect(mainTestMocks.setupOptions?.prepareAll).toBeDefined());
+		const prepared = await mainTestMocks.setupOptions?.prepareAll?.();
+		await mainTestMocks.setupOptions?.onPreparedSync?.(prepared);
+		await vi.waitFor(() => expect(mainTestMocks.previewOptions).toBeDefined());
+		await mainTestMocks.previewOptions?.onApply(prepared, []);
+
+		const savedStates = fixture.host.saveData.mock.calls as unknown as Array<[unknown]>;
+		expect(savedStates.every(([saved]) => (saved as { settings?: { setupCompleted?: boolean } } | undefined)?.settings?.setupCompleted !== true)).toBe(true);
+		runtime.stop();
 	});
 });

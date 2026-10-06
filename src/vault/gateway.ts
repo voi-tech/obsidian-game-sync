@@ -1,5 +1,6 @@
 import type { FileManager, TFile, TFolder, Vault } from 'obsidian';
 import { VaultConflictError } from '../network/errors';
+import { updateFrontmatter } from './frontmatter';
 
 function isMarkdownFile(candidate: ReturnType<Vault['getAbstractFileByPath']>): candidate is TFile {
 	return candidate !== null && 'extension' in candidate && candidate.extension === 'md';
@@ -57,10 +58,7 @@ export class ObsidianVaultGateway implements VaultGateway {
 	}
 
 	async listMarkdownFiles(): Promise<VaultNoteRef[]> {
-		const files = this.vault.getMarkdownFiles();
-		const refs: VaultNoteRef[] = [];
-		for (const file of files) refs.push({ path: file.path, fingerprint: noteFingerprint(await this.vault.read(file)) });
-		return refs;
+		return this.vault.getMarkdownFiles().map((file) => ({ path: file.path }));
 	}
 
 	async read(path: string): Promise<string> {
@@ -68,6 +66,8 @@ export class ObsidianVaultGateway implements VaultGateway {
 	}
 
 	async create(path: string, content: string): Promise<void> {
+		const separator = path.lastIndexOf('/');
+		await this.ensureFolder(separator > 0 ? path.slice(0, separator) : '');
 		await this.vault.create(path, content);
 	}
 
@@ -110,11 +110,10 @@ export class ObsidianVaultGateway implements VaultGateway {
 		expectedFingerprint?: string,
 	): Promise<void> {
 		const file = this.file(path);
-		if (expectedFingerprint !== undefined) {
-			const currentFingerprint = noteFingerprint(await this.vault.read(file));
-			if (currentFingerprint !== expectedFingerprint) throw new VaultConflictError(`Stale note preview for ${path}.`);
-		}
-		await this.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => updater(frontmatter));
+		await this.vault.process(file, (content) => {
+			if (expectedFingerprint !== undefined && noteFingerprint(content) !== expectedFingerprint) throw new VaultConflictError(`Stale note preview for ${path}.`);
+			return updateFrontmatter(content, updater);
+		});
 	}
 
 	async exists(path: string): Promise<boolean> {

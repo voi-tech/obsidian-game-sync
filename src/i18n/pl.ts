@@ -282,6 +282,7 @@ export const pl = {
 		},
 		library: {
 			source: 'Źródło biblioteki',
+			direct: 'Konta Steam + PlayStation',
 			gametrack: 'GameTrack',
 			recommended: 'Polecane',
 			checking: 'Sprawdzanie GameTrack…',

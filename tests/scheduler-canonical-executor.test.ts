@@ -38,6 +38,7 @@ describe('BackgroundSyncScheduler neutral executor boundary', () => {
 		};
 		const { scheduler } = fixture(executor);
 
+		await scheduler.start();
 		await scheduler.run();
 
 		expect(apply).toHaveBeenCalledWith(expect.objectContaining({ status: 'complete' }), ['safe']);
@@ -61,6 +62,7 @@ describe('BackgroundSyncScheduler neutral executor boundary', () => {
 		};
 		const { scheduler } = fixture(executor);
 
+		await scheduler.start();
 		await scheduler.run();
 
 		expect(apply).not.toHaveBeenCalled();
@@ -84,6 +86,7 @@ describe('BackgroundSyncScheduler neutral executor boundary', () => {
 		};
 		const { scheduler } = fixture(executor);
 
+		await scheduler.start();
 		await scheduler.run();
 
 		expect(apply).not.toHaveBeenCalled();
@@ -112,6 +115,7 @@ describe('BackgroundSyncScheduler neutral executor boundary', () => {
 			runExclusive: guard,
 			timer: { setInterval: () => 1, clearInterval: () => undefined },
 		});
+		await scheduler.start();
 		const scheduled = scheduler.run();
 		const manual = guard(async () => { order.push('manual'); });
 		await Promise.resolve();

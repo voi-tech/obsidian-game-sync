@@ -1,4 +1,10 @@
-# Runtime verification — Phase 4A.5
+# Runtime verification
+
+## Current publication audit, 2026-10-06
+
+See [publication-audit.md](publication-audit.md) for current evidence and open release checks. The release is now desktop-only. Anonymous GameTrack creation, idempotent reimport, a real YAML update preserving user content, concurrent-edit rejection and configuration-preview invalidation passed in an isolated Obsidian 1.14.4 desktop profile. Authenticated Steam/PSN and the declared minimum application version remain separate checks. The sections below are historical evidence for their stated revisions, not a mobile-support guarantee. Historical private-database/TCC findings do not apply to the current explicit ZIP-export flow.
+
+## Historical verification: Phase 4A.5
 
 Status: `NO-GO` for GameTrack production cutover.
 

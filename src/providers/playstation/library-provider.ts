@@ -1,3 +1,4 @@
+import { canonicalLibraryRevision } from '../../sync/canonical-state';
 import type { AchievementDetail, AchievementSummary, CanonicalGame, GamePlaytime, PlaytimeObservation } from '../../model/canonical-game';
 import type { GameProviderCapabilities, GameProviderDiagnostics, LibraryProvider } from '../../model/canonical-provider';
 import type { ProviderGame, ProviderSnapshot } from '../../model/provider';
@@ -34,7 +35,7 @@ export function createPlayStationLibraryProvider(options: PlayStationLibraryProv
 			const snapshot = await adapter.fetchLibrary({});
 			const games = snapshot.games.map(toCanonicalGame);
 			diagnostics = toDiagnostics(snapshot, games.length);
-			return { status: snapshot.status, games, revision: snapshot.fetchedAt, diagnostics };
+			return { status: snapshot.status, games, revision: canonicalLibraryRevision(games), diagnostics };
 		},
 		async getLibrary() { return (await this.getSnapshot()).games; },
 		getDiagnostics: () => diagnostics,

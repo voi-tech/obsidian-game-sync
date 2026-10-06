@@ -260,7 +260,7 @@ export class SetupModal extends Modal {
 		this.previewButton.setButtonText(t('setup.preparing'));
 		this.setStatus(t('setup.preparing'));
 		const nextState = migrateState(this.state);
-		if (nextState.settings.libraryProvider !== undefined && (this.options.prepareCanonical !== undefined || nextState.settings.libraryProvider === 'gametrack')) {
+		if (nextState.settings.libraryProvider === 'gametrack') {
 			try {
 				await this.options.save(nextState);
 				const preview = await (this.options.prepareCanonical ?? this.options.prepareGameTrack)?.();

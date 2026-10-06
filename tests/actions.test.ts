@@ -174,14 +174,14 @@ function fixture() {
 
 describe('createGameSyncCommandActions', () => {
 	it.each([
-		['syncAll', undefined],
-		['previewAllChanges', undefined],
-	] as const)('prepares %s with the expected provider scope', async (actionName, expectedScope) => {
+		['syncAll'],
+		['previewAllChanges'],
+	] as const)('prepares %s through the direct multi-provider service', async (actionName) => {
 		const fixtureValue = fixture();
 
 		await fixtureValue.actions[actionName]();
 
-		expect(fixtureValue.createService).toHaveBeenCalledWith(expectedScope);
+		expect(fixtureValue.createService).toHaveBeenCalledWith();
 		expect(fixtureValue.services[0]?.prepareCalls).toEqual([{}]);
 	});
 
@@ -190,7 +190,7 @@ describe('createGameSyncCommandActions', () => {
 
 		await fixtureValue.actions.forceRefreshAllData();
 
-		expect(fixtureValue.createService).toHaveBeenCalledWith(undefined);
+		expect(fixtureValue.createService).toHaveBeenCalledWith();
 		expect(fixtureValue.services[0]?.prepareCalls).toEqual([{ force: true }]);
 	});
 
@@ -211,6 +211,38 @@ describe('createGameSyncCommandActions', () => {
 			options: { explicit: true },
 		}]);
 		expect(fixtureValue.summaries).toHaveLength(1);
+	});
+
+	it('applies an already approved safe direct plan once from Sync all and opens its summary', async () => {
+		const fixtureValue = fixture();
+		const current = state('one');
+		current.settings.firstSyncCompleted = true;
+		const stateStore = new FakeStateStore(current);
+		const actions = createGameSyncCommandActions({ composition: fixtureValue.composition, ui: fixtureValue.ui, stateStore });
+
+		await actions.syncAll();
+
+		expect(fixtureValue.services[0]?.prepareCalls).toEqual([{}]);
+		expect(fixtureValue.services[0]?.applyCalls).toHaveLength(1);
+		expect(fixtureValue.services[0]?.applyCalls[0]?.ids).toEqual(['operation:one']);
+		expect(fixtureValue.services[0]?.applyCalls[0]?.options).toEqual({ explicit: true });
+		expect(fixtureValue.previews).toHaveLength(0);
+		expect(fixtureValue.summaries).toHaveLength(1);
+	});
+
+	it('keeps Preview and force refresh preview-only even after the first direct sync', async () => {
+		const fixtureValue = fixture();
+		const current = state('one');
+		current.settings.firstSyncCompleted = true;
+		const stateStore = new FakeStateStore(current);
+		const actions = createGameSyncCommandActions({ composition: fixtureValue.composition, ui: fixtureValue.ui, stateStore });
+
+		await actions.previewAllChanges();
+		await actions.forceRefreshAllData();
+
+		expect(fixtureValue.services[0]?.applyCalls).toHaveLength(0);
+		expect(fixtureValue.previews).toHaveLength(2);
+		expect(fixtureValue.services.map((service) => service.prepareCalls)).toEqual([[{}], [{ force: true }]]);
 	});
 
 	it('opens pending-match review without inventing a review decision', async () => {

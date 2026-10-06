@@ -78,10 +78,11 @@ export class BackgroundSyncScheduler {
 
 	run(): Promise<void> {
 		if (this.running !== undefined) return this.running;
-		const operation = () => this.executeRun();
+		const generation = this.configurationRevision;
+		const operation = () => this.executeRun(generation);
 		const run = (this.runExclusive === undefined ? operation() : this.runExclusive(operation))
 			.catch(() => {
-				this.emit('problems', 'problems-only', true);
+				if (this.isCurrent(generation)) this.emit('problems', 'problems-only', true);
 			})
 			.finally(() => {
 				if (this.running === run) this.running = undefined;
@@ -115,12 +116,15 @@ export class BackgroundSyncScheduler {
 		if (revision !== this.configurationRevision || !this.started || this.isMobile()) return;
 		const automatic = this.canRunAutomatically();
 		const automaticAllowed = automatic === true || (automatic !== false && await automatic);
+		if (revision !== this.configurationRevision || !this.started || this.isMobile()) return;
 		if (!automaticAllowed || !settings.backgroundSync || !isSupportedBackgroundIntervalMinutes(settings.backgroundIntervalMinutes)) return;
 
 		const intervalMs = settings.backgroundIntervalMinutes * 60 * 1000;
 		let timer: number | undefined;
 		try {
-			timer = this.timerApi.setInterval(() => { void this.run(); }, intervalMs);
+			timer = this.timerApi.setInterval(() => {
+				if (this.started && revision === this.configurationRevision) void this.run();
+			}, intervalMs);
 			this.timer = this.component.registerInterval(timer);
 		} catch {
 			if (timer !== undefined) this.timerApi.clearInterval(timer);
@@ -145,27 +149,30 @@ export class BackgroundSyncScheduler {
 		}
 	}
 
-	private async executeRun(): Promise<void> {
-		if (this.isMobile()) return;
+	private async executeRun(generation: number): Promise<void> {
+		if (!this.isCurrent(generation) || this.isMobile()) return;
 
 		let settings: GameSyncSettings;
 		try {
 			settings = await this.readSettings();
 		} catch {
-			this.emit('prepare-failed', 'problems-only', true);
+			if (this.isCurrent(generation)) this.emit('prepare-failed', 'problems-only', true);
 			return;
 		}
+		if (!this.isCurrent(generation) || this.isMobile()) return;
 		const automatic = this.canRunAutomatically();
 		const automaticAllowed = automatic === true || (automatic !== false && await automatic);
+		if (!this.isCurrent(generation) || this.isMobile()) return;
 		if (!automaticAllowed || !settings.backgroundSync || !isSupportedBackgroundIntervalMinutes(settings.backgroundIntervalMinutes)) return;
 
 		let preview: SyncExecutorPreview;
 		try {
 			preview = await this.executor.preview();
 		} catch {
-			this.emit('prepare-failed', settings.backgroundNotifications, true);
+			if (this.isCurrent(generation)) this.emit('prepare-failed', settings.backgroundNotifications, true);
 			return;
 		}
+		if (!this.isCurrent(generation) || this.isMobile()) return;
 
 		const reviewIds = preview.operations.filter((operation) => operation.risk !== 'safe').map((operation) => operation.id);
 		const attention = attentionIds(preview);
@@ -181,13 +188,16 @@ export class BackgroundSyncScheduler {
 
 		const safeOperationIds = preview.operations.filter((operation) => operation.risk === 'safe').map((operation) => operation.id);
 		let result: Awaited<ReturnType<SyncExecutor['apply']>>;
+		if (!this.isCurrent(generation) || this.isMobile()) return;
 		try {
 			result = await this.executor.apply(preview, safeOperationIds);
 		} catch {
+			if (!this.isCurrent(generation)) return;
 			this.pendingOperationIds = uniqueIds([...safeOperationIds, ...pendingBeforeApply]);
 			this.emit('apply-failed', settings.backgroundNotifications, true);
 			return;
 		}
+		if (!this.isCurrent(generation) || this.isMobile()) return;
 
 		this.pendingOperationIds = uniqueIds([...pendingBeforeApply, ...result.pendingOperationIds]);
 		const hasProblems = preview.warnings.length > 0
@@ -197,6 +207,10 @@ export class BackgroundSyncScheduler {
 			|| this.pendingOperationIds.length > 0
 			|| preview.providerStatuses.some((status) => status.state !== 'success');
 		this.emit(hasProblems ? 'problems' : 'completed', settings.backgroundNotifications, hasProblems);
+	}
+
+	private isCurrent(generation: number): boolean {
+		return this.started && generation === this.configurationRevision;
 	}
 
 	private emit(kind: NotificationKind, policy: BackgroundNotifications, isProblem: boolean): void {

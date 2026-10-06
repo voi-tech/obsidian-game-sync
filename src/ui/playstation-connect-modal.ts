@@ -2,7 +2,7 @@ import { Modal, Setting, type App, type ButtonComponent } from 'obsidian';
 import { GAME_SYNC_SECRET_NAMES, type SecretStore } from '../auth/secrets';
 import { t } from '../i18n';
 import type { ProviderAccount } from '../model/provider';
-import { PlayStationAuthError, PlayStationNeedsAuthenticationError, createPlayStationAuth } from '../providers/playstation/auth';
+import { PlayStationAuthError, PlayStationNeedsAuthenticationError, createPlayStationAuth, preparePlayStationConnection } from '../providers/playstation/auth';
 import type { PlayStationAuthOptions, PlayStationAuthService } from '../providers/playstation/types';
 import { renderStatusMessage } from './status';
 
@@ -137,6 +137,7 @@ export class PlayStationConnectModal extends Modal {
 			return;
 		}
 		const version = ++this.lifecycle;
+		const commitSession = preparePlayStationConnection(this.options.secretStore);
 		const temporaryStore = createMemorySecretStore();
 		this.connectButton?.setDisabled(true);
 		this.connectButton?.setButtonText(t('connect.playstation.connecting'));
@@ -149,7 +150,7 @@ export class PlayStationConnectModal extends Modal {
 			if (!this.isCurrent(version)) return;
 			const refreshToken = temporaryStore.get(GAME_SYNC_SECRET_NAMES.psnRefreshToken);
 			if (refreshToken === null) throw new PlayStationAuthError();
-			this.options.secretStore.set(GAME_SYNC_SECRET_NAMES.psnRefreshToken, refreshToken);
+			commitSession(refreshToken);
 			await this.options.onConnected(connected);
 			if (!this.isCurrent(version)) return;
 			this.setStatus(t('connect.playstation.success', { displayName: connected.displayName }));

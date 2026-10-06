@@ -1,5 +1,16 @@
 # Changelog
 
+## 26.10.0 (BRAT prerelease)
+
+- Made preview fingerprint validation and YAML updates atomic, preserving comments, nested properties, string identifiers, empty lists and Markdown body bytes.
+- Blocked every game involved in a shared-note identity collision and invalidated canonical previews after configuration changes or runtime shutdown.
+- Prevented stale PlayStation authentication responses from restoring a disconnected session; coalesced concurrent refreshes.
+- Removed redundant full-vault reads when building the note index and updated the development source-map dependency.
+- Marked the release desktop-only to match its Node/Electron export flow and embedded bundled dependency license notices.
+- Hardened background-write approval, scheduler shutdown and setup lifecycle safeguards, with regression tests.
+
+Known test scope: anonymous GameTrack desktop import/update passed in Obsidian 1.14.4. Authenticated Steam/PSN, other desktop platforms and the minimum application version still require end-to-end testing before a stable release.
+
 ## 26.9.1
 
 - Added game-level and attribute-level preview selection, including stable-identity safeguards for new notes.

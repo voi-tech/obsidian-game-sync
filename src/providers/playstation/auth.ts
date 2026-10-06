@@ -4,6 +4,7 @@ import {
 	exchangeRefreshTokenForAuthTokens,
 } from 'psn-api';
 import type { ProviderAccount } from '../../model/provider';
+import type { SecretStore } from '../../auth/secrets';
 import { GAME_SYNC_SECRET_NAMES } from '../../auth/secrets';
 import type { ProviderConnectionStatus } from '../provider';
 import type { PlayStationAuthOptions, PlayStationAuthService, PlayStationAuthTokens } from './types';
@@ -50,11 +51,28 @@ function accountFromTokens(tokens: PlayStationAuthTokens): ProviderAccount {
 	return { provider: 'playstation', accountId, displayName: tokens.displayName ?? payload.online_id ?? payload.onlineId ?? accountId };
 }
 
+interface SessionController {
+	auth: PlayStationAuthService;
+	beginConnection: () => (refreshToken: string) => void;
+}
+
+const sessions = new WeakMap<SecretStore, SessionController>();
+
+/** Stage a modal connection without persisting anything until it is still current. */
+export function preparePlayStationConnection(secretStore: SecretStore): (refreshToken: string) => void {
+	createPlayStationAuth({ secretStore });
+	return sessions.get(secretStore)!.beginConnection();
+}
+
 export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStationAuthService {
+	const existing = sessions.get(options.secretStore);
+	if (existing !== undefined) return existing.auth;
 	let accessToken: string | undefined;
 	let accessTokenExpiresAt = 0;
 	let account: ProviderAccount | undefined;
 	let needsAuthentication = false;
+	let generation = 0;
+	let refreshInFlight: Promise<void> | undefined;
 	const skew = options.accessTokenLifetimeSkewMs ?? 30_000;
 
 	const storeTokens = (tokens: PlayStationAuthTokens): void => {
@@ -65,12 +83,16 @@ export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStat
 		needsAuthentication = false;
 	};
 
-	return {
+	const auth: PlayStationAuthService = {
 		async connectWithNpsso(npsso: string): Promise<ProviderAccount> {
 			if (npsso.trim().length === 0) throw new PlayStationAuthError();
+			const startedAt = ++generation;
+			refreshInFlight = undefined;
 			try {
 				const accessCode = await exchangeNpssoForAccessCode(npsso);
+				if (startedAt !== generation) throw new PlayStationAuthError();
 				const tokens = await exchangeAccessCodeForAuthTokens(accessCode) as PlayStationAuthTokens;
+				if (startedAt !== generation) throw new PlayStationAuthError();
 				storeTokens(tokens);
 				return account as ProviderAccount;
 			} catch (error) {
@@ -87,18 +109,33 @@ export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStat
 			return accessToken;
 		},
 		async refresh(): Promise<void> {
+			if (refreshInFlight !== undefined) return refreshInFlight;
 			const refreshToken = options.secretStore.get(GAME_SYNC_SECRET_NAMES.psnRefreshToken);
 			if (refreshToken === null) throw new PlayStationNeedsAuthenticationError();
+			const startedAt = generation;
+			const pending = (async () => {
+				try {
+					const tokens = await exchangeRefreshTokenForAuthTokens(refreshToken) as PlayStationAuthTokens;
+					if (startedAt !== generation) throw new PlayStationNeedsAuthenticationError();
+					storeTokens(tokens);
+				} catch {
+					if (startedAt === generation) {
+						accessToken = undefined;
+						needsAuthentication = true;
+					}
+					throw new PlayStationNeedsAuthenticationError();
+				}
+			})();
+			refreshInFlight = pending;
 			try {
-				const tokens = await exchangeRefreshTokenForAuthTokens(refreshToken) as PlayStationAuthTokens;
-				storeTokens(tokens);
-			} catch {
-				accessToken = undefined;
-				needsAuthentication = true;
-				throw new PlayStationNeedsAuthenticationError();
+				await pending;
+			} finally {
+				if (refreshInFlight === pending) refreshInFlight = undefined;
 			}
 		},
 		async disconnect(): Promise<void> {
+			generation++;
+			refreshInFlight = undefined;
 			accessToken = undefined;
 			accessTokenExpiresAt = 0;
 			account = undefined;
@@ -115,4 +152,22 @@ export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStat
 			return account;
 		},
 	};
+	sessions.set(options.secretStore, {
+		auth,
+		beginConnection: () => {
+			const startedAt = ++generation;
+			refreshInFlight = undefined;
+			return (refreshToken) => {
+				if (startedAt !== generation) throw new PlayStationAuthError();
+				options.secretStore.set(GAME_SYNC_SECRET_NAMES.psnRefreshToken, refreshToken);
+				generation++;
+				refreshInFlight = undefined;
+				accessToken = undefined;
+				accessTokenExpiresAt = 0;
+				account = undefined;
+				needsAuthentication = false;
+			};
+		},
+	});
+	return auth;
 }

@@ -20,7 +20,7 @@ describe('existing-vault adoption', () => {
 		const parsed = parseFrontmatter(content);
 		expect(parsed.frontmatter.custom).toBe('keep');
 		expect(parsed.frontmatter['game-sync-id']).toEqual(expect.any(String));
-		expect(parsed.frontmatter['steam-id']).toBe(1);
+		expect(parsed.frontmatter['steam-id']).toBe('1');
 		expect(parsed.body).toBe('# Manual body\n\nDo not rewrite');
 	});
 

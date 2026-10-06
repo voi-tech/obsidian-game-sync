@@ -25,6 +25,19 @@ function pathsFor(games: readonly CanonicalGame[]): Map<string, string> {
 }
 
 describe('NotePathAllocator', () => {
+	it('keeps paths unique when raw identities sanitize to the same suffix', () => {
+		const games = ['a b', 'a-b', 'a/b'].map((id) => game({ title: 'Collision', identity: { canonicalKey: `gametrack:${id}`, externalIds: { gametrack: id } }, metadata: { developers: [], publishers: [], genres: [] } }));
+		const paths = pathsFor(games);
+		expect(new Set(paths.values()).size).toBe(3);
+		expect([...paths]).toEqual([...pathsFor([...games].reverse())]);
+	});
+
+	it('does not reuse an occupied stable identity suffix in single allocation', () => {
+		const context = { notesFolder: 'Games', existingPaths: ['Games/Dead Space.md', 'Games/Dead Space (2008).md', 'Games/Dead Space (2008) [igdb-37].md'] };
+		const path = new NotePathAllocator().allocate(game(), context).path;
+		expect(context.existingPaths).not.toContain(path);
+	});
+
 	it('uses the existing title path for a unique new game', () => {
 		const result = new NotePathAllocator().allocate(game(), { notesFolder: 'Games', existingPaths: [] });
 

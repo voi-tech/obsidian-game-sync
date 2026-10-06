@@ -111,7 +111,7 @@ describe('canonical projection integrity', () => {
 		expect(operation.preview.properties['game-sync-updated']).toBe('2026-09-24T10:00:00.000Z');
 		expect(operation.preview.body).toContain('updated=2026-09-24T10:00:00.000Z');
 		await new CanonicalVaultWriter(gateway).apply(plan);
-		expect((await gateway.read(operation.path))).toContain('game-sync-updated: 2026-09-24T10:00:00.000Z');
+		expect((await gateway.read(operation.path))).toContain('game-sync-updated: "2026-09-24T10:00:00.000Z"');
 	});
 
 	it('rejects a partial apply that selects only the technical timestamp before creating folders', async () => {

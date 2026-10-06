@@ -33,6 +33,7 @@ export interface RuntimeCompositionOptions {
 	canonicalProviderFactories?: Partial<Record<LibraryProviderId, (settings: GameSyncSettings) => Promise<CanonicalGameProvider | undefined>>>;
 	canonicalStatusFactory?: () => Promise<GameTrackRuntimeStatus>;
 	createEnrichers?: (settings: GameSyncSettings) => readonly GameEnricher[];
+	isActive?: () => boolean;
 }
 
 const PROVIDERS = ['steam', 'playstation'] as const satisfies readonly GameProvider[];
@@ -47,7 +48,7 @@ export class GameSyncRuntimeComposition {
 		return (await this.options.stateStore.load()).settings;
 	}
 
-	async createService(providers?: readonly GameProvider[]): Promise<SyncService> {
+	async createService(_providers?: readonly GameProvider[]): Promise<SyncService> {
 		const state = await this.options.stateStore.load();
 		const noteIndex = await buildNoteIndex(this.options.gateway, state.propertyMapping);
 		const planner = new SyncPlanner({
@@ -70,14 +71,9 @@ export class GameSyncRuntimeComposition {
 			revealHidden: state.settings.revealHiddenAchievements,
 		});
 		const availableAdapters = this.options.createAdapters?.(state.settings) ?? this.options.adapters ?? [];
-		const scopedAdapters = providers === undefined
-			? [...availableAdapters]
-			: availableAdapters.filter((adapter) => providers.includes(adapter.id));
-		const enabledProviders = providers === undefined
-			? PROVIDERS.filter((provider) => state.settings.enabledProviders[provider])
-			: undefined;
+		const enabledProviders = PROVIDERS.filter((provider) => state.settings.enabledProviders[provider]);
 		return new SyncService({
-			adapters: scopedAdapters,
+			adapters: [...availableAdapters],
 			planner,
 			writer,
 			stateStore: this.options.stateStore,
@@ -85,6 +81,7 @@ export class GameSyncRuntimeComposition {
 			cache: this.options.cache,
 			now: this.options.now,
 			secretValues: this.options.secretValues,
+			isActive: this.options.isActive,
 		});
 	}
 
@@ -100,7 +97,12 @@ export class GameSyncRuntimeComposition {
 		const propertyMapping = canonicalMappingFromLegacy(state.propertyMapping);
 		const sourceKey = this.canonicalApprovalKey(state.settings);
 		const enrichers = this.options.createEnrichers?.(state.settings) ?? [];
+		const revisionFor = async (current: typeof state): Promise<string> => JSON.stringify({ settings: current.settings, mapping: current.propertyMapping, template: await this.readTemplate(current.settings.templatePath) });
+		const configurationRevision = await revisionFor(state);
 		return new CanonicalSyncService({
+			configurationRevision,
+			readConfigurationRevision: async () => revisionFor(await this.options.stateStore.load()),
+			isActive: this.options.isActive,
 			provider: selectedProvider,
 			enrichers,
 			...(options.background && selectedProvider.id === 'gametrack' ? { snapshotOverride: () => this.cachedCanonicalSnapshot?.sourceKey === sourceKey ? this.cachedCanonicalSnapshot.snapshot : undefined, requireSnapshotOverride: true } : {}),
@@ -129,11 +131,10 @@ export class GameSyncRuntimeComposition {
 			preview: async () => {
 			const settings = await this.readSettings();
 			const sourceKey = this.canonicalApprovalKey(settings);
-			if (settings.libraryProvider === 'gametrack' || settings.libraryProvider === 'steam' || settings.libraryProvider === 'playstation') {
+			if (settings.libraryProvider === 'gametrack') {
 				const service = await this.createCanonicalService(undefined, options);
 				if (service === undefined) throw new Error(`${settings.libraryProvider} provider is unavailable.`);
-				const requiresApproval = settings.libraryProvider === 'gametrack';
-				active = { executor: createCanonicalSyncExecutor(service, () => !requiresApproval || options.background === true || this.canonicalBackgroundApprovalKey === sourceKey), sourceKey };
+				active = { executor: createCanonicalSyncExecutor(service, () => this.canonicalBackgroundApprovalKey === sourceKey), sourceKey };
 				return active.executor.preview();
 			}
 			active = { executor: createLegacySyncExecutor(await this.createService()), sourceKey };

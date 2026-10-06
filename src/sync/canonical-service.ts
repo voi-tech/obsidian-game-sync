@@ -25,20 +25,30 @@ export interface CanonicalSyncServiceOptions {
 	readonly onLibrarySnapshot?: (snapshot: CanonicalLibrarySnapshot) => void;
 	readonly planner: Omit<CanonicalSyncPlannerOptions, 'gateway'> & Pick<CanonicalSyncPlannerOptions, 'gateway'>;
 	readonly writer: CanonicalVaultWriter;
+	readonly configurationRevision?: string;
+	readonly readConfigurationRevision?: () => Promise<string>;
+	readonly isActive?: () => boolean;
 }
 
 export class CanonicalSyncService {
+	private readonly previews = new WeakSet<CanonicalPreviewResult>();
 	constructor(private readonly options: CanonicalSyncServiceOptions) {}
 
 	async preview(): Promise<CanonicalPreviewResult> {
+		await this.assertCurrent();
 		const overridden = this.options.snapshotOverride?.();
 		const base = overridden ?? (this.options.requireSnapshotOverride ? unavailableSnapshot(this.options.provider.id) : await this.options.provider.getSnapshot());
+		await this.assertCurrent();
 		this.options.onLibrarySnapshot?.(base);
 		if (base.status !== 'complete') return { snapshot: base };
 		const enrichments = await Promise.all((this.options.enrichers ?? []).map((enricher) => this.runEnricher(enricher, base)));
 		const snapshot = mergeEnrichmentResults(base, enrichments);
+		await this.assertCurrent();
 		const revision = `${base.revision ?? 'base'}:${enrichedRevision(snapshot.games, enrichments)}`;
-		return { snapshot, enrichments, plan: await planCanonicalSync(snapshot.games, { ...this.options.planner, protectedCanonicalProperties: unavailableEnrichmentProperties(enrichments) }, revision) };
+		const preview = { snapshot, enrichments, plan: await planCanonicalSync(snapshot.games, { ...this.options.planner, protectedCanonicalProperties: unavailableEnrichmentProperties(enrichments) }, revision) };
+		await this.assertCurrent();
+		this.previews.add(preview);
+		return preview;
 	}
 
 	async sync(selection?: CanonicalSyncSelection): Promise<{ preview: CanonicalPreviewResult; appliedOperationIds: readonly string[] }> {
@@ -48,20 +58,32 @@ export class CanonicalSyncService {
 	}
 
 	async applyPreview(preview: CanonicalPreviewResult, selection?: CanonicalSyncSelection): Promise<readonly string[]> {
+		await this.assertCurrent();
 		if (preview.snapshot.status !== 'complete' || preview.plan === undefined) {
 			throw new CanonicalProviderError('Library snapshot is not complete; no vault changes were made.');
 		}
+		if (!this.previews.has(preview)) throw new CanonicalProviderError('This preview belongs to another sync service. Preview the sync again.');
 		const currentBase = this.options.snapshotOverride?.() ?? await this.options.provider.getSnapshot();
+		await this.assertCurrent();
 		if (currentBase.status !== 'complete') {
 			throw new CanonicalProviderError('The library snapshot is no longer complete; this preview is no longer valid. Preview the sync again.');
 		}
 		const currentResults = await Promise.all((this.options.enrichers ?? []).map((enricher) => this.runEnricher(enricher, currentBase)));
 		const currentSnapshot = mergeEnrichmentResults(currentBase, currentResults);
+		await this.assertCurrent();
 		const currentRevision = `${currentBase.revision ?? 'base'}:${enrichedRevision(currentSnapshot.games, currentResults)}`;
 		if (currentRevision !== preview.plan.planRevision) {
 			throw new CanonicalProviderError('The library source changed; this preview is no longer valid. Preview the sync again.');
 		}
-		return this.options.writer.apply(preview.plan, selection);
+		return this.options.writer.apply(preview.plan, selection, () => this.assertCurrent());
+	}
+
+	private async assertCurrent(): Promise<void> {
+		if (this.options.isActive?.() === false) throw new CanonicalProviderError('Sync runtime is inactive; no further writes will be made.');
+		if (this.options.readConfigurationRevision !== undefined && await this.options.readConfigurationRevision() !== this.options.configurationRevision) {
+			throw new CanonicalProviderError('Sync configuration changed. Preview the sync again.');
+		}
+		if (this.options.isActive?.() === false) throw new CanonicalProviderError('Sync runtime is inactive; no further writes will be made.');
 	}
 
 	private async runEnricher(enricher: GameEnricher, snapshot: CanonicalLibrarySnapshot): Promise<GameEnrichmentResult> {

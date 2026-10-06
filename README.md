@@ -26,7 +26,8 @@ PlayStation support is unofficial. It uses an NPSSO bootstrap and the `psn-api` 
 
 ### GameTrack
 
-GameTrack is the preferred source for a combined multi-platform library. Export
+Steam and PlayStation synchronize directly through their accounts, without
+exporting or importing files. GameTrack is an optional manual source. Export
 your library from GameTrack, then select the official ZIP in Game Sync. The
 import is manual and read-only: Game Sync does not access GameTrack's private
 database, require Full Disk Access or modify the export.
@@ -58,14 +59,14 @@ Reload Obsidian, enable **Game Sync** and open Quick Setup.
 ## First setup
 
 1. Open the command palette and run **Game Sync: Open Quick Setup**.
-2. Choose a library source. For GameTrack, export the library from GameTrack
-   and select the ZIP when prompted.
+2. Connect Steam, PlayStation, or both. Use the optional GameTrack source only
+   if you want to import an exported ZIP.
 3. Review **Preview first sync**.
 4. Apply the changes you accept.
 
 The default destination is `Games/`; change it only if you want another folder. The provider dialogs explain the account-specific steps and the preview is shown before anything is written.
 
-The first sync cannot be applied silently. A later sync may still require review when matching is uncertain. When credentials are still available, opening a connection tries a one-click reconnect first and opens the provider dialog only when repair is needed.
+Quick Setup opens only when you request it; enabling the plugin or starting Obsidian does not open it. The first sync requires a preview and explicit Apply. With the default preview setting, later **Sync now** clicks apply safe changes directly from all connected, enabled accounts. Uncertain matches, conflicts and risky changes still require review; **Preview sync** always opens a preview. When credentials are still available, opening a connection tries a one-click reconnect first and opens the provider dialog only when repair is needed.
 
 The sync preview lets you select individual games and individual changed attributes, inspect create/update details and apply only the changes you accept.
 
@@ -141,11 +142,11 @@ Steam achievements and PlayStation trophies remain separate provider data. Game 
 
 ## Games.base
 
-`Games.base` is optional. If enabled, Game Sync creates it once with managed-property views for the library, Steam, PlayStation, cross-platform games and achievement/trophy views. It is not overwritten on later syncs.
+`Games.base` is optional. If enabled, an explicit completed sync creates it once with views for All games, Recently played, Most played, Steam, PlayStation, Never played, Steam 100% and PlayStation platinum. It is not overwritten on later syncs.
 
 ## Background sync
 
-Background sync is off by default and is disabled on mobile. Supported intervals are 30 minutes, 1 hour, 6 hours, 12 hours and 24 hours. It applies only safe operations; conflicts, uncertain matches and the first sync remain explicit-preview work.
+Background sync is off by default. Supported intervals are 30 minutes, 1 hour, 6 hours, 12 hours and 24 hours. It applies only safe operations; conflicts, uncertain matches and the first sync remain explicit-preview work. Stopping the runtime invalidates pending previews before further writes.
 
 ## Privacy and network access
 
@@ -153,6 +154,7 @@ Background sync is off by default and is disabled on mobile. Supported intervals
 - Vault contents and full note bodies are not uploaded.
 - Provider requests go directly from Obsidian to provider services.
 - Credentials are stored using Obsidian SecretStorage.
+- GameTrack reads only the ZIP export you explicitly select, including a file outside the vault. The selected path is saved in the plugin's local settings; the export is not modified or uploaded.
 - Diagnostic text is allowlisted and excludes credentials, tokens, API responses and note contents.
 
 The current production bundle contains these provider-related hosts:
@@ -176,7 +178,7 @@ PlayStation support is unofficial. Sony does not provide a public consumer API f
 - One Steam account and one PlayStation account are supported per vault.
 - Purchase history, RAWG and providers other than GameTrack, Steam and PlayStation are outside this release.
 - GameTrack requires an official ZIP export; imports are explicit and manual.
-- Full provider connect/sync/background behavior is guaranteed on desktop; mobile bundle loading, settings and Markdown access are supported, while background sync is disabled.
+- This release is desktop-only. The GameTrack file picker and export reader use Electron and Node APIs; mobile support is not claimed.
 - Uncertain cross-provider matches remain review/conflict items. **Manage game matches** provides Merged, Kept separate and Unresolved views. It can prepare and apply a reviewed split/unmerge, allow matching again for kept-separate pairs and resolve unresolved candidates with merge, keep-separate or skip.
 
 ## Troubleshooting
@@ -193,6 +195,8 @@ The refresh session may have expired or been revoked. Reconnect through the Play
 
 Inspect the preview. The game may be ignored, matched ambiguously, or waiting for explicit review. Do not force a merge when the candidates are not clearly the same game.
 
+If the note, settings, property mapping or template changed after the preview, prepare a new preview. Invalid or ambiguous YAML, including duplicate keys and unsafe anchor changes, blocks synchronization rather than guessing the note's identity. Managed frontmatter updates are atomic and preserve user-owned properties, nested YAML, comments and the Markdown body.
+
 ### Diagnostics
 
 Use **Copy diagnostic information** and share the generated report only after checking that it contains no private context. Never paste credentials or tokens into an issue.
@@ -207,8 +211,10 @@ npm run check
 npm run dev
 ```
 
-The check runs lint, typecheck, the full Vitest suite, the production build, the mobile-bundle gate and the release gate.
+The check runs lint, typecheck, the full Vitest suite, the production build and the release gate. The optional `check:mobile-bundle` scanner is not proof of mobile compatibility and is not a release gate.
+
+See [publication audit](docs/publication-audit.md) and [runtime verification](docs/runtime-verification.md) for tested scenarios and remaining release checks. `npm audit --omit=dev` covers shipped dependencies; the full audit also includes the Obsidian development SDK's pinned Moment dependency.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Bundled dependencies retain their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The build embeds these notices in `main.js`, so they accompany the standard three-file Obsidian installation.

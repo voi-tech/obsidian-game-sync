@@ -50,6 +50,13 @@ function candidateWithSuffix(folder: string, stem: string, suffix: string): stri
 	return joinPath(folder, `${stem} [${suffix}].md`);
 }
 
+function availablePath(candidate: string, occupied: ReadonlySet<string>): string {
+	const stem = candidate.replace(/\.md$/iu, '');
+	let counter = 2;
+	while (occupied.has(pathKey(candidate))) candidate = `${stem} (${counter++}).md`;
+	return candidate;
+}
+
 function compareGames(left: CanonicalGame, right: CanonicalGame): number {
 	return normalizeTitle(left.title).localeCompare(normalizeTitle(right.title), 'en-US')
 		|| (releaseYear(left) ?? '').localeCompare(releaseYear(right) ?? '', 'en-US')
@@ -69,7 +76,7 @@ export class NotePathAllocator {
 			const yearPath = joinPath(folder, `${stem} (${year}).md`);
 			if (!occupied.has(pathKey(yearPath))) return { path: yearPath, reason: 'occupied-base' };
 		}
-		return { path: candidateWithSuffix(folder, game.identity.externalIds.igdb === undefined || year === undefined ? stem : `${stem} (${year})`, identityToken(game)), reason: 'stable-id' };
+		return { path: availablePath(candidateWithSuffix(folder, game.identity.externalIds.igdb === undefined || year === undefined ? stem : `${stem} (${year})`, identityToken(game)), occupied), reason: 'stable-id' };
 	}
 
 	allocateBatch(games: readonly CanonicalGame[], context: NotePathAllocationContext): Map<string, string> {
@@ -110,6 +117,7 @@ export class NotePathAllocator {
 				if (occupied.has(pathKey(candidate))) {
 					candidate = candidateWithSuffix(folder, candidate.replace(/^.*\//u, '').replace(/\.md$/iu, ''), sanitizeIdentity(`canonical-${game.identity.canonicalKey}`));
 				}
+				candidate = availablePath(candidate, occupied);
 				occupied.add(pathKey(candidate));
 				assignments.set(game.identity.canonicalKey, candidate);
 			}

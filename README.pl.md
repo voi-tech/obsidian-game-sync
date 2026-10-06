@@ -145,7 +145,7 @@ Osiągnięcia Steam i trofea PlayStation pozostają osobnymi danymi źródeł. G
 
 ## Synchronizacja w tle
 
-Synchronizacja w tle jest domyślnie wyłączona i nie działa na mobile. Obsługiwane interwały to 30 minut, 1 godzina, 6 godzin, 12 godzin i 24 godziny. W tle wykonywane są tylko operacje bezpieczne; konflikty, niepewne dopasowania i pierwsza synchronizacja pozostają pracą z jawnym podglądem.
+Synchronizacja w tle jest domyślnie wyłączona. Obsługiwane interwały to 30 minut, 1 godzina, 6 godzin, 12 godzin i 24 godziny. W tle wykonywane są tylko operacje bezpieczne; konflikty, niepewne dopasowania i pierwsza synchronizacja pozostają pracą z jawnym podglądem. Zatrzymanie runtime unieważnia oczekujące podglądy przed kolejnymi zapisami.
 
 ## Prywatność i sieć
 
@@ -153,6 +153,7 @@ Synchronizacja w tle jest domyślnie wyłączona i nie działa na mobile. Obsłu
 - Treść sejfu i pełne body notatek nie są wysyłane.
 - Żądania źródeł danych idą bezpośrednio z Obsidiana do odpowiednich usług.
 - Dane uwierzytelniające są przechowywane przez Obsidian SecretStorage.
+- GameTrack odczytuje wyłącznie jawnie wybrany eksport ZIP, również gdy plik znajduje się poza sejfem. Ścieżka jest zapisywana w lokalnych ustawieniach pluginu. Eksport nie jest modyfikowany ani wysyłany.
 - Raport diagnostyczny korzysta z allowlisty i nie zawiera credentials, tokenów, odpowiedzi API ani treści notatek.
 
 Aktualny bundle produkcyjny zawiera następujące hosty związane ze źródłami danych:
@@ -176,7 +177,7 @@ Obsługa PlayStation jest nieoficjalna. Sony nie udostępnia publicznego konsume
 - Na jeden sejf przypada jedno konto Steam i jedno konto PlayStation.
 - Historia zakupów, RAWG i źródła inne niż GameTrack, Steam oraz PlayStation są poza tym wydaniem.
 - GameTrack wymaga oficjalnego eksportu ZIP; import jest jawny i ręczny.
-- Pełne connect/sync/background jest gwarantowane na desktopie; ładowanie bundle, ustawienia i dostęp do Markdown działają na mobile, ale synchronizacja w tle jest wyłączona.
+- To wydanie jest desktop-only. Wybór pliku i odczyt eksportu GameTrack korzystają z Electron i Node. Plugin nie deklaruje obsługi mobile.
 - Niepewne dopasowania pozostają elementami review/conflict. **Manage game matches** udostępnia widoki Scalone, Zachowane osobno i Nierozstrzygnięte. Można w nim przygotować i zastosować rozdzielenie po podglądzie, ponownie zezwolić na dopasowanie par zachowanych osobno oraz rozstrzygać nierozstrzygnięte kandydatury przez merge, keep-separate albo skip.
 
 ## Rozwiązywanie problemów
@@ -193,6 +194,8 @@ Sesja odświeżania mogła wygasnąć albo zostać unieważniona. Połącz konto
 
 Obejrzyj podgląd. Gra może być ignorowana, dopasowanie może być niejednoznaczne albo zmiana czekać na jawną decyzję. Nie wymuszaj scalenia, jeśli kandydaci nie są bezsprzecznie tą samą grą.
 
+Po zmianie notatki, ustawień, mapowania properties albo szablonu przygotuj nowy podgląd. Błędny lub niejednoznaczny YAML, w tym zdublowane klucze i niebezpieczne zmiany anchorów, blokuje synchronizację zamiast zgadywać tożsamość notatki. Aktualizacja zarządzanego frontmatter jest atomowa i zachowuje własne properties, zagnieżdżony YAML, komentarze i body Markdown.
+
 ### Diagnostyka
 
 Użyj **Copy diagnostic information** i przed udostępnieniem sprawdź raport pod kątem prywatnego kontekstu. Nigdy nie wklejaj do zgłoszenia credentials ani tokenów.
@@ -207,8 +210,10 @@ npm run check
 npm run dev
 ```
 
-Check uruchamia lint, typecheck, pełny zestaw Vitest, build produkcyjny, kontrolę mobile bundle i release gate.
+Check uruchamia lint, typecheck, pełny zestaw Vitest, build produkcyjny i release gate. Opcjonalny skaner `check:mobile-bundle` nie dowodzi zgodności z mobile i nie jest bramką publikacji.
+
+Scenariusze testowe i pozostałe warunki wydania opisują [audyt publikacji](docs/publication-audit.md) oraz [weryfikacja runtime](docs/runtime-verification.md). `npm audit --omit=dev` obejmuje zależności dostarczane użytkownikom; pełny audyt uwzględnia też przypiętą zależność Moment w deweloperskim SDK Obsidiana.
 
 ## Licencja
 
-MIT. Zobacz [LICENSE](LICENSE).
+MIT. Zobacz [LICENSE](LICENSE). Zależności w bundle zachowują własne licencje, opisane w [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Build osadza te noty w `main.js`, więc są dostarczane także przy standardowej instalacji trzech plików pluginu.

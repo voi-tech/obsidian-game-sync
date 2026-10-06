@@ -179,6 +179,19 @@ describe('Quick Setup', () => {
 		expect(fixture.getState().settings.enabledProviders.steam).toBe(false);
 	});
 
+	it('uses legacy SyncService setup for migrated Steam or PlayStation selections', async () => {
+		const fixture = setupFixture({
+			prepareCanonical: vi.fn(async () => { throw new Error('canonical direct path must stay unreachable'); }),
+		});
+		fixture.getState().settings.libraryProvider = 'steam';
+		await openAndWait(fixture.modal);
+		fixture.modal.contentEl.querySelector<HTMLButtonElement>('[data-quick-setup-preview]')!.click();
+		await vi.waitFor(() => expect(fixture.options.prepareAll).toHaveBeenCalledOnce());
+		expect(fixture.options.prepareCanonical).not.toHaveBeenCalled();
+		fixture.resolvePrepare({} as PreparedSync);
+		await vi.waitFor(() => expect(fixture.options.onPreparedSync).toHaveBeenCalledOnce());
+	});
+
 	it('offers the official export flow when GameTrack has not been selected yet', async () => {
 		let ready = false;
 		const fixture = setupFixture({

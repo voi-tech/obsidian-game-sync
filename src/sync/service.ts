@@ -57,6 +57,7 @@ export interface ProviderPreparation {
 
 export interface PreparedSync {
 	plan: PlannedSyncPlan;
+	writeConfigurationFingerprint?: string;
 	games: NormalizedGame[];
 	providerStatuses: Record<GameProvider, ProviderStatusSummary>;
 	providerResults: Partial<Record<GameProvider, ProviderPreparation>>;
@@ -98,6 +99,7 @@ export interface SyncServiceOptions {
 	onCache?: ExecutorHook;
 	history?: EventHistorySink;
 	secretValues?: readonly string[];
+	isActive?: () => boolean;
 }
 
 export interface EventHistorySink {
@@ -365,6 +367,37 @@ function hashRevision(value: string): string {
 	return `service:${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
+function stableWriteConfiguration(value: unknown): string {
+	if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+	if (Array.isArray(value)) return `[${value.map(stableWriteConfiguration).join(',')}]`;
+	return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, nested]) => `${JSON.stringify(key)}:${stableWriteConfiguration(nested)}`).join(',')}}`;
+}
+
+function writeConfigurationFingerprint(state: GameSyncData): string {
+	const settings = state.settings;
+	return hashRevision(stableWriteConfiguration({
+		enabledProviders: settings.enabledProviders,
+		libraryProvider: settings.libraryProvider,
+		notesFolder: settings.notesFolder,
+		filenamePattern: settings.filenamePattern,
+		templatePath: settings.templatePath,
+		revealHiddenAchievements: settings.revealHiddenAchievements,
+		showAchievementRarity: settings.showAchievementRarity,
+		showUnlockDate: settings.showUnlockDate,
+		showTrophyType: settings.showTrophyType,
+		createBase: settings.createBase,
+		basePath: settings.basePath,
+		recordHistory: settings.recordHistory,
+		historyPath: settings.historyPath,
+		includeUnplayed: settings.includeUnplayed,
+		includeFreeToPlay: settings.includeFreeToPlay,
+		includePreviouslyPlayedNoLongerOwned: settings.includePreviouslyPlayedNoLongerOwned,
+		includeDemosTrials: settings.includeDemosTrials,
+		includeBetasTestApps: settings.includeBetasTestApps,
+		propertyMapping: state.propertyMapping,
+	}));
+}
+
 function unmergeHash(value: string): string {
 	let hash = 2166136261;
 	for (const character of value) {
@@ -476,6 +509,7 @@ export class SyncService {
 	private currentSourceRevision = 'service:empty';
 	private lastPreparedSync?: PreparedSync;
 	private readonly options: SyncServiceOptions;
+	private readonly isActive: () => boolean;
 
 	constructor(options: SyncServiceOptions) {
 		this.options = options;
@@ -491,6 +525,16 @@ export class SyncService {
 		this.enabledProviders = options.enabledProviders === undefined ? undefined : new Set(options.enabledProviders);
 		this.now = options.now ?? (() => new Date().toISOString());
 		this.cache = options.cache;
+		this.isActive = options.isActive ?? (() => true);
+	}
+
+	private async assertWriteContext(prepared: PreparedSync): Promise<void> {
+		if (!this.isActive()) throw new VaultConflictError('Sync runtime is stopped; apply was cancelled.');
+		if (prepared.writeConfigurationFingerprint === undefined) return;
+		const currentState = this.stateStore === undefined ? await this.loadState() : await this.stateStore.load();
+		if (writeConfigurationFingerprint(currentState) !== prepared.writeConfigurationFingerprint) {
+			throw new VaultConflictError('Sync settings changed after the preview; prepare a new plan.');
+		}
 	}
 
 	private async loadState(): Promise<GameSyncData> {
@@ -791,6 +835,7 @@ export class SyncService {
 		const presence = Object.values(providerResults).flatMap((result) => result?.presence ?? []).map(clonePresence);
 		const prepared: PreparedSync = {
 			plan,
+			writeConfigurationFingerprint: writeConfigurationFingerprint(state),
 			games,
 			providerStatuses,
 			providerResults,
@@ -1058,6 +1103,7 @@ export class SyncService {
 			};
 		}
 		const state = await this.loadState();
+		await this.assertWriteContext(prepared);
 		const initialProgress = Object.fromEntries(state.operationJournal.map((entry) => [entry.operation.id, {
 			noteApplied: entry.noteApplied,
 			noteFingerprintAfter: entry.noteFingerprintAfter,
@@ -1071,7 +1117,10 @@ export class SyncService {
 					currentRevision: () => this.currentSourceRevision,
 					currentNoteFingerprints: () => this.planner.currentNoteFingerprints(),
 					initialProgress: progress,
-					onBeforeNote: (operation, game) => this.journalProgress(operation, { noteApplied: false, providerStateApplied: false, historyApplied: false, cacheApplied: false }, game),
+					onBeforeNote: async (operation, game) => {
+						await this.assertWriteContext(prepared);
+						await this.journalProgress(operation, { noteApplied: false, providerStateApplied: false, historyApplied: false, cacheApplied: false }, game);
+					},
 					onProgress: (operation, progressValue, game) => this.journalProgress(operation, progressValue, game),
 					onProviderState: (game, operation) => this.stateHook(game, operation),
 					onHistory: (game, operation) => this.historyHook(game, operation),

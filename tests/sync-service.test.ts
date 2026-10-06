@@ -11,6 +11,7 @@ import { createStateStore } from '../src/state/store';
 import { createCacheStore } from '../src/sync/cache';
 import { VaultConflictError } from '../src/network/errors';
 import { createNormalizedGame, createOperation, createSyncPlan } from '../src/model/operations';
+import type { GameSyncData } from '../src/state/schema';
 
 function providerGame(id: string, playtimeMinutes = 60, achievements?: ProviderGame['achievements']): ProviderGame {
 	return {
@@ -194,6 +195,60 @@ describe('provider-isolated SyncService', () => {
 		const applied = await service.applySelection(prepared, prepared.plan.operations.map((operation) => operation.id), { explicit: true });
 		expect(applied.operationsApplied).toBe(1);
 		expect((await service.getState()).settings.firstSyncCompleted).toBe(true);
+	});
+
+	it('rejects an apply when write settings changed after preview without writing', async () => {
+		const gateway = new FakeVaultGateway();
+		let storedState: GameSyncData = migrateState({ settings: { firstSyncCompleted: true } });
+		const stateStore = createStateStore(async () => structuredClone(storedState), async (value) => { storedState = structuredClone(value); });
+		const steam = adapter(async () => snapshot('complete', [providerGame('1')]));
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const service = new SyncService({ adapters: [steam], planner, writer: new VaultWriter(gateway), stateStore });
+		const prepared = await service.prepareAll();
+		storedState.settings.notesFolder = 'Changed after preview';
+
+		await expect(service.applySelection(prepared, prepared.plan.operations.map((operation) => operation.id), { explicit: true })).rejects.toBeInstanceOf(VaultConflictError);
+		expect(await gateway.listMarkdownFiles()).toEqual([]);
+	});
+
+	it('stops after the first note when write settings change between operations and keeps the journal', async () => {
+		const gateway = new FakeVaultGateway();
+		let storedState: GameSyncData = migrateState({ settings: { firstSyncCompleted: true } });
+		let applyPhase = false;
+		let applyLoads = 0;
+		const stateStore = createStateStore(async () => {
+			if (applyPhase) {
+				applyLoads += 1;
+				if (applyLoads >= 3) return migrateState({ ...storedState, settings: { ...storedState.settings, notesFolder: 'Changed between notes' } });
+			}
+			return structuredClone(storedState);
+		}, async (value) => { storedState = structuredClone(value); });
+		const second = { ...providerGame('2'), title: 'Second Game', identity: { provider: 'steam' as const, appId: 2 } };
+		const steam = adapter(async () => snapshot('complete', [providerGame('1'), second]));
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const service = new SyncService({ adapters: [steam], planner, writer: new VaultWriter(gateway), stateStore });
+		const prepared = await service.prepareAll();
+		applyPhase = true;
+
+		const result = await service.applySelection(prepared, prepared.plan.operations.map((operation) => operation.id), { explicit: true });
+
+		expect(result.operationsApplied).toBe(1);
+		expect(result.pendingOperationIds).toHaveLength(1);
+		expect((await gateway.listMarkdownFiles()).map((note) => note.path)).toHaveLength(1);
+		expect((await service.getState()).operationJournal.filter((entry) => entry.noteApplied)).toHaveLength(1);
+	});
+
+	it('rejects apply after the runtime becomes inactive without writing', async () => {
+		const gateway = new FakeVaultGateway();
+		let active = true;
+		const steam = adapter(async () => snapshot('complete', [providerGame('1')]));
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const service = new SyncService({ adapters: [steam], planner, writer: new VaultWriter(gateway), isActive: () => active });
+		const prepared = await service.prepareAll();
+		active = false;
+
+		await expect(service.applySelection(prepared, prepared.plan.operations.map((operation) => operation.id), { explicit: true })).rejects.toBeInstanceOf(VaultConflictError);
+		expect(await gateway.listMarkdownFiles()).toEqual([]);
 	});
 
 	it('blocks background apply during the first sync without saving or invoking the executor', async () => {

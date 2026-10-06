@@ -23,6 +23,11 @@ export function canonicalGameFingerprint(game: CanonicalGame): string {
 	return `canonical:${hash(stableStringify(payload))}`;
 }
 
+/** Source content revision excludes retrieval timestamps and diagnostics. */
+export function canonicalLibraryRevision(games: readonly CanonicalGame[]): string {
+	return hash(stableStringify([...games].sort((left, right) => left.identity.canonicalKey.localeCompare(right.identity.canonicalKey))));
+}
+
 export interface SyncedCanonicalGameState {
 	readonly canonicalKey: string;
 	readonly externalIds: CanonicalGame['identity']['externalIds'];

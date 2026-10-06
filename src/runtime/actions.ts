@@ -1,6 +1,5 @@
 import type { LibrarySummaryViewModel } from '../model/library-summary';
 import { buildLibrarySummary } from '../model/library-summary';
-import type { GameProvider } from '../model/provider';
 import type { GameSyncData } from '../state/schema';
 import type { StateStore } from '../state/store';
 import type { PreparedSync, SyncApplyResult } from '../sync/service';
@@ -43,17 +42,15 @@ export interface GameSyncCommandActionsOptions {
 	runExclusive?: SyncExclusiveRunner;
 }
 
-type ProviderScope = readonly GameProvider[] | undefined;
-
 function noop(): void {}
 
 export function createGameSyncCommandActions(options: GameSyncCommandActionsOptions): GameSyncCommandActions {
 	const runExclusive = options.runExclusive ?? createSyncConcurrencyGuard();
 	const actions = {} as GameSyncCommandActions;
 
-	const openPreview = async (scope: ProviderScope, force: boolean): Promise<void> => {
+	const openPreview = async (force: boolean): Promise<void> => {
 		const { service, prepared } = await runExclusive(async () => {
-			const service = await options.composition.createService(scope);
+			const service = await options.composition.createService();
 			const prepared = await service.prepareAll(force ? { force: true } : {});
 			return { service, prepared };
 		});
@@ -67,10 +64,10 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 		);
 	};
 
-	const openSelectedPreview = async (force: boolean): Promise<void> => {
+	const openSelectedPreview = async (force: boolean, alwaysPreview = false): Promise<void> => {
 		if (options.stateStore !== undefined) {
 			const state = await options.stateStore.load();
-			if (state.settings.libraryProvider !== undefined) {
+			if (state.settings.libraryProvider === 'gametrack') {
 				if (options.ui.openCanonicalPreview === undefined) {
 					await options.ui.showUnavailable(`${state.settings.libraryProvider}-preview`);
 					return;
@@ -91,8 +88,36 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 				}));
 				return;
 			}
+			const { service, prepared } = await runExclusive(async () => {
+				const service = await options.composition.createService();
+				const prepared = await service.prepareAll(force ? { force: true } : {});
+				return { service, prepared };
+			});
+			const requiresPreview = alwaysPreview
+				|| state.settings.firstSyncCompleted === false
+				|| state.settings.previewMode === 'always'
+				|| prepared.plan.statuses.some((status) => status.status === 'review' || status.status === 'conflict')
+				|| prepared.plan.operations.some((operation) => operation.risk !== 'safe');
+			if (requiresPreview) {
+				await openPreparedPreview(service, prepared);
+				return;
+			}
+			const safeOperationIds = prepared.plan.operations.filter((operation) => operation.risk === 'safe').map((operation) => operation.id);
+			const result = await runExclusive(() => service.applySelection(prepared, safeOperationIds, { explicit: true }));
+			await options.ui.openSummary(result, noop, () => actions.syncAll());
+			return;
 		}
-		await openPreview(undefined, force);
+		await openPreview(force);
+	};
+
+	const openPreparedPreview = async (service: Awaited<ReturnType<GameSyncRuntimeComposition['createService']>>, prepared: PreparedSync): Promise<void> => {
+		await options.ui.openPreview(
+			prepared,
+			(preview, selectedOperationIds) => runExclusive(async () => service.applySelection(preview, selectedOperationIds, { explicit: true }))
+				.then((result) => options.ui.openSummary(result, noop, () => actions.syncAll()))
+				.then(() => undefined),
+			(decision) => runExclusive(async () => { await service.applyReviewDecision?.(decision); }),
+		);
 	};
 
 	const markGameTrackImport = async (): Promise<void> => {
@@ -122,15 +147,15 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 	};
 
 	actions.syncAll = () => openSelectedPreview(false);
-	actions.previewAllChanges = () => openSelectedPreview(false);
-	actions.reviewPendingMatches = () => openSelectedPreview(false);
+	actions.previewAllChanges = () => openSelectedPreview(false, true);
+	actions.reviewPendingMatches = () => openSelectedPreview(false, true);
 	actions.manageGameMatches = async () => {
 		const adapter = await runExclusive(() => options.composition.createMatchManager());
 		await options.ui.openMatchManager(adapter);
 	};
 	actions.manageIgnoredGames = () => options.ui.openIgnoredGames();
 	actions.openLibrarySummary = openLibrarySummary;
-	actions.forceRefreshAllData = () => openSelectedPreview(true);
+	actions.forceRefreshAllData = () => openSelectedPreview(true, true);
 	actions.copyDiagnosticInformation = () => options.ui.copyDiagnostics();
 	actions.runSetupWizard = () => options.ui.openSetupWizard();
 

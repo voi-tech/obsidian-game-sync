@@ -5,6 +5,7 @@ import { migrateState } from '../src/state/migrations';
 import { DEFAULT_SETTINGS } from '../src/state/defaults';
 import type { GameSyncData } from '../src/state/schema';
 import type { StateStore } from '../src/state/store';
+import type { GameProviderAdapter } from '../src/providers/provider';
 import { FakeVaultGateway } from './fake-gateway';
 
 class MemoryStateStore implements StateStore {
@@ -28,18 +29,28 @@ function provider(id: 'steam' | 'playstation'): GameProvider {
 	};
 }
 
-describe('canonical library provider composition', () => {
-	it.each(['steam', 'playstation'] as const)('selects %s through the canonical executor', async (id) => {
-		const state = migrateState({ settings: { ...DEFAULT_SETTINGS, libraryProvider: id } });
+function adapter(id: 'steam' | 'playstation'): GameProviderAdapter {
+	return {
+		id,
+		getConnectionStatus: async () => ({ provider: id, state: 'connected', connected: true }),
+		testConnection: async () => ({ provider: id, displayName: id, accountId: `${id}-account` }),
+		fetchLibrary: async () => ({ provider: id, status: 'complete', games: [], fetchedAt: '2026-09-30T00:00:00.000Z', pagination: { complete: true, pagesFetched: 1 }, paginationComplete: true }),
+		disconnect: async () => undefined,
+	};
+}
+
+describe('direct library provider composition', () => {
+	it('fetches every enabled direct provider through the legacy executor', async () => {
+		const state = migrateState({ settings: { ...DEFAULT_SETTINGS, enabledProviders: { steam: true, playstation: true } } });
 		const composition = new GameSyncRuntimeComposition({
 			stateStore: new MemoryStateStore(state),
 			gateway: new FakeVaultGateway(),
-			canonicalProviderFactories: { [id]: async () => provider(id) },
+			adapters: [adapter('steam'), adapter('playstation')],
 		});
 
 		const preview = await composition.createSyncExecutor().preview();
 
-		expect(preview.providerStatuses).toEqual([{ id, state: 'success' }]);
+		expect(preview.providerStatuses).toEqual([{ id: 'steam', state: 'success' }, { id: 'playstation', state: 'success' }]);
 		expect(preview.status).toBe('complete');
 	});
 
@@ -52,5 +63,30 @@ describe('canonical library provider composition', () => {
 		});
 
 		expect(await composition.createSyncExecutor().canRunAutomatically?.()).toBe(false);
+	});
+
+	it('requires explicit GameTrack approval before a background apply can write', async () => {
+		const gateway = new FakeVaultGateway();
+		const state = migrateState({ settings: { ...DEFAULT_SETTINGS, libraryProvider: 'gametrack' } });
+		const composition = new GameSyncRuntimeComposition({
+			stateStore: new MemoryStateStore(state),
+			gateway,
+			canonicalProvider: { ...provider('steam'), id: 'gametrack' },
+		});
+		const manualService = await composition.createCanonicalService();
+		if (manualService === undefined) throw new Error('Expected a canonical service.');
+		const manualPreview = await manualService.preview();
+		const background = composition.createSyncExecutor({ background: true });
+		const backgroundPreview = await background.preview();
+
+		expect(backgroundPreview.approvalRequired).toBe(true);
+		await expect(background.apply(backgroundPreview, [])).rejects.toThrow(/explicit preview approval/i);
+		expect(await gateway.listMarkdownFiles()).toEqual([]);
+
+		await manualService.applyPreview(manualPreview, { operationIds: [], fieldIdsByOperation: {} });
+		await composition.approveCanonicalBackgroundSync();
+		const approvedPreview = await background.preview();
+		expect(approvedPreview.approvalRequired).toBe(false);
+		await expect(background.apply(approvedPreview, [])).resolves.toEqual(expect.objectContaining({ appliedOperationIds: [] }));
 	});
 });

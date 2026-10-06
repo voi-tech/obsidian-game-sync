@@ -223,15 +223,17 @@ export class GameSyncSettingsTab extends NativePluginSettingTab {
 				: translation(`settings.library.gametrackUnavailable.${status.code}` as TranslationKey));
 		setting.addDropdown((component) => {
 			component.selectEl.dataset.settingsField = 'libraryProvider';
-			component.addOption('steam', translation('sync.providers.steam'));
-			component.addOption('playstation', translation('sync.providers.playstation'));
-				if (status === undefined || status.code !== 'UNSUPPORTED_OS') component.addOption('gametrack', translation('sync.providers.gametrack'));
+			component.addOption('direct', translation('settings.library.direct'));
+			if (status === undefined || status.code !== 'UNSUPPORTED_OS') component.addOption('gametrack', translation('sync.providers.gametrack'));
 			const settings = this.currentSettings();
-			const current = settings.libraryProvider ?? (settings.enabledProviders.steam ? 'steam' : 'playstation');
+			const current = settings.libraryProvider === 'gametrack' ? 'gametrack' : 'direct';
 			component.setValue(current);
 			component.onChange((value) => {
-					if ((value === 'gametrack' || value === 'steam' || value === 'playstation') && (value !== 'gametrack' || (status !== undefined && status.code !== 'UNSUPPORTED_OS'))) {
-					settings.libraryProvider = value;
+					if (value === 'direct') {
+						settings.libraryProvider = undefined;
+						void this.saveSettings();
+					} else if (value === 'gametrack' && (status !== undefined && status.code !== 'UNSUPPORTED_OS')) {
+					settings.libraryProvider = 'gametrack';
 					void this.saveSettings();
 				}
 			});

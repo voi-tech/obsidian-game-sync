@@ -110,14 +110,16 @@ export class CanonicalVaultWriter {
 		}
 	}
 
-	async apply(plan: CanonicalSyncPlan, selection?: CanonicalSyncSelection): Promise<readonly string[]> {
+	async apply(plan: CanonicalSyncPlan, selection?: CanonicalSyncSelection, beforeWrite?: () => Promise<void>): Promise<readonly string[]> {
 		const validation = this.validateSelection(plan, selection);
 		const selectedOperationIds = validation.selectedOperationIds;
 		const selected = new Set(selectedOperationIds);
+		await beforeWrite?.();
 		await this.ensureCreateFolders(plan.operations.filter((operation) => selected.has(operation.id)));
 		const applied: string[] = [];
 		for (const operation of plan.operations) {
 			if (!selected.has(operation.id)) continue;
+			await beforeWrite?.();
 			const selectedFields = validation.fieldsByOperation.get(operation.id) ?? new Set<string>();
 			if (operation.kind === 'create') await this.create(operation, selectedFields);
 			else await this.update(operation, selectedFields);

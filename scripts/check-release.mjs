@@ -60,7 +60,7 @@ if (versions !== undefined && manifest !== undefined) {
 
 if (manifest !== undefined) {
 	if (manifest.minAppVersion !== '1.13.7') errors.push('manifest.json minAppVersion must remain 1.13.7.');
-	if (manifest.isDesktopOnly !== false) errors.push('manifest.json must declare isDesktopOnly as false; the plugin supports mobile.');
+	if (manifest.isDesktopOnly !== true) errors.push('manifest.json must declare isDesktopOnly as true while the export picker uses Node and Electron APIs.');
 	if (manifest.id !== PLUGIN_ID) errors.push(`manifest.json must declare the id "${PLUGIN_ID}".`);
 	if (manifest.name !== PLUGIN_NAME) errors.push(`manifest.json must declare the name "${PLUGIN_NAME}".`);
 	if (typeof manifest.styles !== 'string' || manifest.styles.trim().length === 0) errors.push('manifest.json must declare a non-empty styles asset path.');
@@ -68,7 +68,7 @@ if (manifest !== undefined) {
 
 const requiredFiles = [
 	'package.json', 'package-lock.json', 'manifest.json', 'versions.json', 'CHANGELOG.md',
-	'README.md', 'README.pl.md', 'LICENSE', 'main.js',
+	'README.md', 'README.pl.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'main.js',
 	...(typeof manifest?.styles === 'string' && manifest.styles.trim().length > 0 ? [manifest.styles] : []),
 ];
 for (const path of new Set(requiredFiles)) await requireNonEmptyFile(path);

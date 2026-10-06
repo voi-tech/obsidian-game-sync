@@ -1,5 +1,5 @@
 import { VaultFolderError, type VaultGateway, type VaultNoteRef } from '../src/vault/gateway';
-import { parseFrontmatter, serializeNote } from '../src/vault/frontmatter';
+import { updateFrontmatter } from '../src/vault/frontmatter';
 import { noteFingerprint } from '../src/vault/gateway';
 import { VaultConflictError } from '../src/network/errors';
 
@@ -86,9 +86,7 @@ export class FakeVaultGateway implements VaultGateway {
 		if (expectedFingerprint !== undefined && noteFingerprint(current) !== expectedFingerprint) {
 			throw new VaultConflictError(`Stale note preview for ${path}.`);
 		}
-		const parsed = parseFrontmatter(current);
-		updater(parsed.frontmatter);
-		this.files.set(path, serializeNote(parsed.frontmatter, parsed.body));
+		this.files.set(path, updateFrontmatter(current, updater));
 	}
 
 	async exists(path: string): Promise<boolean> {

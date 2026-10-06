@@ -147,7 +147,7 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 	const resolvedMapping = resolveCanonicalPropertyMapping(options.propertyMapping);
 	const statuses: CanonicalPlannedGame[] = [];
 	const operations: CanonicalOperation[] = [];
-	const assignments = new Map<string, string>();
+	const assignments = new Map<string, string[]>();
 	const orderedGames = [...games].sort((left, right) => left.identity.canonicalKey.localeCompare(right.identity.canonicalKey));
 	const matches = new Map<string, VaultMatch>();
 	const newGames: CanonicalGame[] = [];
@@ -155,7 +155,11 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 		const match = matchCanonicalVaultNote(game, index, { canonicalMappings: options.canonicalMappings });
 		matches.set(game.identity.canonicalKey, match);
 		if (match.status !== 'conflict' && match.status !== 'review' && match.note === undefined) newGames.push(game);
-		if (match.note !== undefined) assignments.set(match.note.path, game.identity.canonicalKey);
+		if (match.note !== undefined) {
+			const assigned = assignments.get(match.note.path) ?? [];
+			assigned.push(game.identity.canonicalKey);
+			assignments.set(match.note.path, assigned);
+		}
 	}
 	const allocatedPaths = (options.pathAllocator ?? new NotePathAllocator()).allocateBatch(newGames, {
 		notesFolder: options.notesFolder,
@@ -175,7 +179,7 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 				continue;
 			}
 			if (assignments.has(path)) throw new Error(`NotePathAllocator returned a duplicate path: ${path}.`);
-			assignments.set(path, game.identity.canonicalKey);
+			assignments.set(path, [game.identity.canonicalKey]);
 			const properties = buildCanonicalWriteProperties(game, options.propertyMapping, { updatedAt });
 			const provisionalId = operationId({ kind: 'create', canonicalKey: game.identity.canonicalKey, path, expectedNoteFingerprint: null, risk: 'safe', summary: `Create ${path}.`, game, preview: { properties, changes: [], requiredIdentityFieldIds: [] } });
 			const changes = addFieldIds(provisionalId, changesFor({}, properties, options.propertyMapping));
@@ -196,11 +200,11 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 			continue;
 		}
 		const notePath = match.note.path;
-		if (assignments.has(notePath) && assignments.get(notePath) !== game.identity.canonicalKey) {
+		if ((assignments.get(notePath)?.length ?? 0) > 1) {
 			statuses.push({ canonicalKey: game.identity.canonicalKey, status: 'conflict', path: notePath, match, reason: 'Multiple games resolve to the same note path.' });
 			continue;
 		}
-		assignments.set(notePath, game.identity.canonicalKey);
+
 		const content = await options.gateway.read(notePath);
 		const existingCanonicalIdValue = propertyValue(match.note.properties, resolvedMapping.gameSyncId);
 		const existingCanonicalId = typeof existingCanonicalIdValue === 'string' || typeof existingCanonicalIdValue === 'number' ? String(existingCanonicalIdValue) : undefined;

@@ -1,7 +1,7 @@
 import { DEFAULT_PROPERTY_MAPPING, resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
 import { resolveCanonicalPropertyMapping, type CanonicalPropertyMapping } from './canonical-projection';
 import { parseFrontmatter } from './frontmatter';
-import type { VaultGateway, VaultNoteRef } from './gateway';
+import { noteFingerprint, type VaultGateway, type VaultNoteRef } from './gateway';
 
 export interface IndexedNote extends VaultNoteRef {
 	properties: Record<string, unknown>;
@@ -88,7 +88,7 @@ export async function buildNoteIndex(
 		const fileTitle = ref.path.split('/').at(-1) ?? ref.path;
 		notes.push({
 			...ref,
-			fingerprint: ref.fingerprint,
+			fingerprint: noteFingerprint(content),
 			properties: parsed.frontmatter,
 			title: typeof titleValue === 'string' ? titleValue : undefined,
 			normalizedTitle: typeof titleValue === 'string' ? normalize(titleValue) : undefined,

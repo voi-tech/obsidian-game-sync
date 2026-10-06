@@ -280,6 +280,7 @@ export const en = {
 		},
 			library: {
 			source: 'Library source',
+			direct: 'Steam + PlayStation accounts',
 			gametrack: 'GameTrack',
 			recommended: 'Recommended',
 			checking: 'Checking GameTrack…',

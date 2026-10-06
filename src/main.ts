@@ -8,14 +8,12 @@ import { createHttpClient, type HttpClient } from './network/http';
 import { createPlayStationAdapter } from './providers/playstation/adapter';
 import type { GameProviderAdapter } from './providers/provider';
 import { createSteamAdapter } from './providers/steam/adapter';
-import { createSteamLibraryProvider } from './providers/steam/library-provider';
 import { createSteamApi } from './providers/steam/api';
 import { createSteamAuth } from './providers/steam/auth';
 import { createSteamEnricher } from './providers/steam/enricher';
 import { createPlayStationApi } from './providers/playstation/api';
 import { createPlayStationAuth } from './providers/playstation/auth';
 import { createPlayStationEnricher } from './providers/playstation/enricher';
-import { createPlayStationLibraryProvider } from './providers/playstation/library-provider';
 import { createGameSyncCommandActions, type RuntimeUiPort } from './runtime/actions';
 import { GameSyncRuntimeComposition } from './runtime/composition';
 import { registerGameSyncCommands, type CommandErrorHandler, type CommandRegistrar, type GameSyncCommandActions } from './runtime/commands';
@@ -125,6 +123,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 	const http = createHttpClient();
 	const gateway = new ObsidianVaultGateway(host.app.vault, host.app.fileManager);
 	const isMobile = options.isMobile ?? (() => Platform.isMobile);
+	let runtimeActive = true;
 	let selectedGameTrackSource: GameTrackCsvSource | undefined;
 	const gameTrackCsvRuntime = new GameTrackCsvRuntime({
 		host: isMobile() ? 'ios' : (Platform as unknown as { isMacOS?: boolean }).isMacOS === true ? 'macos' : 'windows',
@@ -145,23 +144,14 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 		secretValues: secretValues(secretStore),
 		createAdapters: (settings) => createAdapters(http, secretStore, settings),
 		canonicalProviderFactory: () => gameTrackCsvRuntime.getProvider(),
-		canonicalProviderFactories: {
-			steam: async (settings) => {
-				const adapter = createAdapters(http, secretStore, settings).find((candidate) => candidate.id === 'steam');
-				return adapter === undefined ? undefined : createSteamLibraryProvider({ adapter });
-			},
-			playstation: async (settings) => {
-				const adapter = createAdapters(http, secretStore, settings).find((candidate) => candidate.id === 'playstation');
-				return adapter === undefined ? undefined : createPlayStationLibraryProvider({ adapter });
-			},
-		},
 		canonicalStatusFactory: () => gameTrackCsvRuntime.getStatus(),
 		createEnrichers: (settings) => createEnrichers(http, secretStore, settings),
+		isActive: () => runtimeActive,
 	});
 
 	let actions!: GameSyncCommandActions;
 	let setupService: SyncService | undefined;
-	let setupCanonicalService: import('./sync/canonical-service').CanonicalSyncService | undefined;
+	const setupCanonicalServices = new WeakMap<import('./sync/canonical-service').CanonicalPreviewResult, import('./sync/canonical-service').CanonicalSyncService>();
 
 	const saveConnectedAccount = async (account: ProviderAccount, onConnected?: () => void): Promise<void> => {
 		const state = await stateStore.load();
@@ -377,20 +367,25 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 					getGameTrackStatus: () => composition.getGameTrackStatus(),
 					chooseGameTrackExport,
 				prepareGameTrack: async () => {
-					setupCanonicalService = await composition.createCanonicalService();
-					if (setupCanonicalService === undefined) throw new Error('GameTrack provider is unavailable.');
-					return setupCanonicalService.preview();
+					const service = await composition.createCanonicalService();
+					if (service === undefined) throw new Error('GameTrack provider is unavailable.');
+					const preview = await service.preview();
+					setupCanonicalServices.set(preview, service);
+					return preview;
 				},
 				prepareCanonical: async () => {
-					setupCanonicalService = await composition.createCanonicalService();
-					if (setupCanonicalService === undefined) throw new Error('Selected library provider is unavailable.');
-					return setupCanonicalService.preview();
+					const service = await composition.createCanonicalService();
+					if (service === undefined) throw new Error('Selected library provider is unavailable.');
+					const preview = await service.preview();
+					setupCanonicalServices.set(preview, service);
+					return preview;
 				},
 				onGameTrackPreview: async (preview) => {
 					if (ui.openCanonicalPreview === undefined) return;
 					await ui.openCanonicalPreview(preview, async (selection) => {
-						if (setupCanonicalService === undefined) throw new Error('GameTrack provider is unavailable.');
-						await setupCanonicalService.applyPreview(preview, selection);
+						const service = setupCanonicalServices.get(preview);
+						if (service === undefined) throw new Error('GameTrack provider is unavailable.');
+						await service.applyPreview(preview, selection);
 						const importedState = await stateStore.load();
 						importedState.settings.gametrackLastImportedAt = new Date().toISOString();
 						await composition.approveCanonicalBackgroundSync();
@@ -401,8 +396,9 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 					onCanonicalPreview: async (preview) => {
 					if (ui.openCanonicalPreview === undefined) return;
 					await ui.openCanonicalPreview(preview, async (selection) => {
-						if (setupCanonicalService === undefined) throw new Error('Selected library provider is unavailable.');
-						await setupCanonicalService.applyPreview(preview, selection);
+						const service = setupCanonicalServices.get(preview);
+						if (service === undefined) throw new Error('Selected library provider is unavailable.');
+						await service.applyPreview(preview, selection);
 						const importedState = await stateStore.load();
 						if (importedState.settings.libraryProvider === 'gametrack') {
 							importedState.settings.gametrackLastImportedAt = new Date().toISOString();
@@ -420,6 +416,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 						async (preview, selectedOperationIds) => {
 							const result = await service.applySelection(preview, selectedOperationIds, { explicit: true });
 							const state = await stateStore.load();
+							if (state.settings.firstSyncCompleted !== true) return;
 							state.settings.setupCompleted = true;
 							await stateStore.save(state);
 							await ui.openSummary(result, () => undefined, () => actions.syncAll());
@@ -482,7 +479,10 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 		actions,
 		scheduler,
 		ready,
-		stop: () => scheduler.stop(),
+		stop: () => {
+			runtimeActive = false;
+			scheduler.stop();
+		},
 	};
 }
 
@@ -502,12 +502,6 @@ export default class GameSyncPlugin extends Plugin {
 			registerInterval: (timerId) => this.registerInterval(timerId),
 		});
 		await this.runtime.ready;
-		const runtime = this.runtime;
-		this.app.workspace.onLayoutReady(() => {
-			void runtime.stateStore.load().then((state) => {
-				if (!state.settings.setupCompleted) runtime.actions.runSetupWizard();
-			}).catch(() => undefined);
-		});
 	}
 
 	override onunload(): void {

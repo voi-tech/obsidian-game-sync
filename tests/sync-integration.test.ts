@@ -21,7 +21,7 @@ describe('fake-provider sync integration', () => {
 		expect(result.operationsApplied).toBe(1);
 		expect(frontmatter['game-sync-id']).toBe(canonicalId);
 		expect(frontmatter['providers']).toEqual(['steam', 'playstation']);
-		expect(frontmatter['steam-id']).toBe(1);
+		expect(frontmatter['steam-id']).toBe('1');
 		 expect(frontmatter['playstation-id']).toBe('psn-1');
 	});
 

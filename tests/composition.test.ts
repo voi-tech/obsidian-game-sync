@@ -1,15 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { GameProviderAdapter } from '../src/providers/provider';
 import type { GameProvider, ProviderGame, ProviderSnapshot } from '../src/model/provider';
 import type { CanonicalGame } from '../src/model/canonical-game';
 import type { LibraryProvider } from '../src/model/canonical-provider';
 import type { GameSyncData } from '../src/state/schema';
 import type { StateStore } from '../src/state/store';
+import type { PreparedSync } from '../src/sync/service';
 import { DEFAULT_SETTINGS } from '../src/state/defaults';
 import { migrateState } from '../src/state/migrations';
 import { parseFrontmatter } from '../src/vault/frontmatter';
 import { FakeVaultGateway } from './fake-gateway';
 import { GameSyncRuntimeComposition } from '../src/runtime/composition';
+import { createGameSyncCommandActions, type RuntimeUiPort } from '../src/runtime/actions';
 
 class MutableStateStore implements StateStore {
 
@@ -123,8 +125,39 @@ function canonicalProvider(game: CanonicalGame): LibraryProvider {
 	};
 }
 
+function mutableProviderAdapter(initial: ProviderSnapshot, onFetch: () => void): { adapter: GameProviderAdapter; setSnapshot: (snapshot: ProviderSnapshot) => void } {
+	let current = initial;
+	return {
+		adapter: {
+			id: initial.provider,
+			getConnectionStatus: async () => ({ provider: initial.provider, state: 'connected', connected: true }),
+			testConnection: async () => ({ provider: initial.provider, displayName: initial.provider, accountId: `${initial.provider}-account` }),
+			fetchLibrary: async () => { onFetch(); return current; },
+			disconnect: async () => undefined,
+		},
+		setSnapshot: (snapshot) => { current = snapshot; },
+	};
+}
+
+function richProviderGame(provider: GameProvider, id: string, playtimeMinutes: number, earned: number): ProviderGame {
+	return {
+		...providerGame(provider, id),
+		playtimeMinutes,
+		freshness: { metadata: true, ownership: true, playtime: true, achievements: true },
+		achievements: {
+			earned,
+			total: 2,
+			progress: earned * 50,
+			achievements: [
+				{ id: 'first', name: 'First', description: 'First achievement', unlocked: earned > 0, hidden: false },
+				{ id: 'second', name: 'Second', description: 'Second achievement', unlocked: earned > 1, hidden: false },
+			],
+		},
+	};
+}
+
 describe('GameSyncRuntimeComposition', () => {
-	it('reads current settings for each service and applies provider scope', async () => {
+	it('reads current settings and keeps direct sync multi-provider', async () => {
 		const steamFetches = { count: 0 };
 		const playstationFetches = { count: 0 };
 		const steam = adapter(providerGame('steam', '1'), () => { steamFetches.count += 1; });
@@ -141,10 +174,11 @@ describe('GameSyncRuntimeComposition', () => {
 		expect(steamFetches.count).toBe(1);
 		expect(playstationFetches.count).toBe(1);
 
+		store.state.settings.enabledProviders = { steam: true, playstation: true };
 		const explicitlyScoped = await composition.createService(['steam']);
 		await explicitlyScoped.prepareAll();
 		expect(steamFetches.count).toBe(2);
-		expect(playstationFetches.count).toBe(1);
+		expect(playstationFetches.count).toBe(2);
 	});
 
 	it('passes custom property mapping to planning and writing without changing the source state', async () => {
@@ -171,7 +205,7 @@ describe('GameSyncRuntimeComposition', () => {
 		const parsed = parseFrontmatter(await gateway.read('Games/Custom.md'));
 		expect(parsed.frontmatter['logical-id']).toBe('game-sync:one');
 		expect(parsed.frontmatter.name).toBe('New title');
-		expect(parsed.frontmatter['source-id']).toBe(1);
+		expect(parsed.frontmatter['source-id']).toBe('1');
 		expect(parsed.frontmatter.title).toBeUndefined();
 		expect(store.state.settings.firstSyncCompleted).toBe(true);
 	});
@@ -212,5 +246,65 @@ describe('GameSyncRuntimeComposition', () => {
 		const service = await composition.createCanonicalService();
 		await expect(service!.preview()).rejects.toThrow(/template.*missing\.tmpl.*clear|create/i);
 		expect(await gateway.listMarkdownFiles()).toEqual([]);
+	});
+
+	it('runs direct Steam and PlayStation through one durable service lifecycle', async () => {
+		const steamInitial = providerGame('steam', '440', 'steam game');
+		const playStationInitial = providerGame('playstation', 'concept-1', 'playstation game');
+		const steam = mutableProviderAdapter({ ...snapshot(steamInitial), games: [richProviderGame('steam', '440', 60, 1)] }, () => { steamFetches += 1; });
+		const playstation = mutableProviderAdapter({ ...snapshot(playStationInitial), games: [richProviderGame('playstation', 'concept-1', 60, 1)] }, () => { playstationFetches += 1; });
+		let steamFetches = 0;
+		let playstationFetches = 0;
+		const stateStore = new MutableStateStore(state({ enabledProviders: { steam: true, playstation: true } }));
+		stateStore.state.identityMappings = [
+			{ canonicalId: 'game-sync:shared', provider: 'steam', providerGameId: '440' },
+			{ canonicalId: 'game-sync:shared', provider: 'playstation', providerGameId: 'concept-1' },
+		];
+		const gateway = new FakeVaultGateway();
+		const createComposition = () => new GameSyncRuntimeComposition({ stateStore, gateway, adapters: [steam.adapter, playstation.adapter] });
+		let previewPrepared: PreparedSync | undefined;
+		let applyPreview: ((prepared: PreparedSync, ids: readonly string[]) => void | PromiseLike<void>) | undefined;
+		const ui = {
+			openPreview: vi.fn(async (prepared: PreparedSync, onApply: (prepared: PreparedSync, ids: readonly string[]) => void | PromiseLike<void>) => { previewPrepared = prepared; applyPreview = onApply; }),
+			openCanonicalPreview: vi.fn(),
+			openSummary: vi.fn(),
+			openIgnoredGames: vi.fn(),
+			openSetupWizard: vi.fn(),
+			copyDiagnostics: vi.fn(),
+			openMatchManager: vi.fn(),
+			showUnavailable: vi.fn(),
+		} as unknown as RuntimeUiPort;
+
+		const firstActions = createGameSyncCommandActions({ composition: createComposition(), ui, stateStore });
+		await firstActions.syncAll();
+		expect(steamFetches).toBe(1);
+		expect(playstationFetches).toBe(1);
+		expect(await gateway.listMarkdownFiles()).toEqual([]);
+		expect(previewPrepared?.plan.operations).toHaveLength(1);
+		if (previewPrepared === undefined || applyPreview === undefined) throw new Error('Direct preview was not opened.');
+		await applyPreview(previewPrepared, previewPrepared.plan.operations.map((operation) => operation.id));
+		expect((await gateway.listMarkdownFiles())).toHaveLength(1);
+
+		const unchangedOpenPreview = vi.fn();
+		const unchangedOpenSummary = vi.fn();
+		const unchangedUi = { ...ui, openPreview: unchangedOpenPreview, openSummary: unchangedOpenSummary } as unknown as RuntimeUiPort;
+		await createGameSyncCommandActions({ composition: createComposition(), ui: unchangedUi, stateStore }).syncAll();
+		expect(unchangedOpenPreview).not.toHaveBeenCalled();
+		expect(unchangedOpenSummary).toHaveBeenCalledOnce();
+
+		steam.setSnapshot({ ...snapshot(richProviderGame('steam', '440', 90, 2)), provider: 'steam' });
+		playstation.setSnapshot({ ...snapshot(richProviderGame('playstation', 'concept-1', 90, 2)), provider: 'playstation' });
+		const deltaOpenPreview = vi.fn();
+		const deltaOpenSummary = vi.fn();
+		const deltaUi = { ...ui, openPreview: deltaOpenPreview, openSummary: deltaOpenSummary } as unknown as RuntimeUiPort;
+		await createGameSyncCommandActions({ composition: createComposition(), ui: deltaUi, stateStore }).syncAll();
+		expect(steamFetches).toBe(3);
+		expect(playstationFetches).toBe(3);
+		expect(deltaOpenPreview).not.toHaveBeenCalled();
+		expect(deltaOpenSummary).toHaveBeenCalledOnce();
+		const parsed = parseFrontmatter(await gateway.read('Games/steam game.md'));
+		expect(parsed.frontmatter.playtime).toBe(180);
+		expect(parsed.frontmatter['psn-trophies-earned']).toBe(2);
+		expect(stateStore.state.identityMappings).toHaveLength(2);
 	});
 });

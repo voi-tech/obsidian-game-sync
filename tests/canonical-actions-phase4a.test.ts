@@ -41,11 +41,11 @@ describe('GameTrack command routing', () => {
 		expect(value.createService).not.toHaveBeenCalled();
 	});
 
-	it.each(['steam', 'playstation'] as const)('routes explicitly selected %s through the canonical provider', async (provider) => {
+	it.each(['steam', 'playstation'] as const)('treats migrated %s selection as the direct multi-provider path', async (provider) => {
 		const state = migrateState({ settings: { libraryProvider: provider } });
-		const service = { preview: vi.fn(async () => ({ snapshot: { status: 'complete' as const, games: [], diagnostics: { provider, database: 'unavailable' as const, schema: 'unknown' as const, gamesRead: 0, gamesNormalized: 0, diagnostics: [] } }, plan: { id: 'plan', planRevision: 'revision', operations: [], statuses: [], games: [] } })), applyPreview: vi.fn(async () => []) };
+		const service = { prepareAll: vi.fn(async () => ({ plan: { operations: [], statuses: [] }, providerStatuses: {}, games: [], gamesFetched: 0, operationsCreated: 0, warnings: [], reviewRequiredCount: 0, ignored: 0, previewRequired: true, presence: [] })), applySelection: vi.fn(async () => undefined) };
 		const createCanonicalService = vi.fn(async () => service);
-		const createService = vi.fn();
+		const createService = vi.fn(async () => service);
 		const stateStore: StateStore = { load: vi.fn(async () => structuredClone(state)), save: vi.fn(async () => undefined) };
 		const openCanonicalPreview = vi.fn();
 		const ui = { openPreview: vi.fn(), openCanonicalPreview, openSummary: vi.fn(), openIgnoredGames: vi.fn(), openSetupWizard: vi.fn(), copyDiagnostics: vi.fn(), openMatchManager: vi.fn(), showUnavailable: vi.fn() } as unknown as RuntimeUiPort;
@@ -53,9 +53,9 @@ describe('GameTrack command routing', () => {
 
 		await actions.syncAll();
 
-		expect(createCanonicalService).toHaveBeenCalledOnce();
-		expect(createService).not.toHaveBeenCalled();
-		expect(openCanonicalPreview).toHaveBeenCalledOnce();
+		expect(createCanonicalService).not.toHaveBeenCalled();
+		expect(createService).toHaveBeenCalledOnce();
+		expect(openCanonicalPreview).not.toHaveBeenCalled();
 	});
 
 	it('forwards the complete canonical field selection from the preview UI to the service', async () => {
