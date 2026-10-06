@@ -8,7 +8,7 @@ const { exchangeNpssoForAccessCode, exchangeAccessCodeForAuthTokens, exchangeRef
 	exchangeRefreshTokenForAuthTokens: vi.fn(),
 }));
 
-vi.mock('psn-api', () => ({ exchangeNpssoForAccessCode, exchangeAccessCodeForAuthTokens, exchangeRefreshTokenForAuthTokens }));
+vi.mock('../src/providers/playstation/client', () => ({ playStationClient: { exchangeNpssoForAccessCode, exchangeAccessCodeForAuthTokens, exchangeRefreshTokenForAuthTokens } }));
 
 import { createPlayStationAuth, preparePlayStationConnection } from '../src/providers/playstation/auth';
 import { PlayStationAuthError, PlayStationNeedsAuthenticationError } from '../src/providers/playstation/auth';
@@ -96,7 +96,7 @@ describe('PlayStation authentication', () => {
 		exchangeNpssoForAccessCode.mockResolvedValue('access-code');
 		exchangeAccessCodeForAuthTokens.mockImplementation(() => new Promise((resolve) => { finishExchange = resolve; }));
 		const auth = createPlayStationAuth({ secretStore: store });
-		const pending = auth.connectWithNpsso('temporary-npsso');
+		const pending = auth.connectWithNpsso('N'.repeat(64));
 		await Promise.resolve();
 		await auth.disconnect();
 		finishExchange({ accessToken: 'late-access', refreshToken: 'late-refresh', expiresIn: 3600 });
@@ -129,7 +129,7 @@ describe('PlayStation authentication', () => {
 		exchangeAccessCodeForAuthTokens.mockResolvedValue({ accessToken: 'new-access', refreshToken: 'new-refresh', expiresIn: 3600 });
 		const auth = createPlayStationAuth({ secretStore: store });
 		const oldRequest = auth.getAccessToken();
-		await auth.connectWithNpsso('new-npsso');
+		await auth.connectWithNpsso('M'.repeat(64));
 		failRefresh(new Error('old session expired'));
 		await expect(oldRequest).rejects.toBeInstanceOf(PlayStationNeedsAuthenticationError);
 		await expect(auth.getAccessToken()).resolves.toBe('new-access');

@@ -22,7 +22,9 @@ Steam wymaga oficjalnego Steam Web API key i publicznego profilu Steam. Okno po�
 
 ### PlayStation
 
-Obsługa PlayStation jest nieoficjalna. Korzysta z bootstrapu NPSSO i pakietu `psn-api` do aktualnych przepływów PlayStation Network. Przeczytaj ostrzeżenie przed włączeniem tej funkcji.
+Obsługa PlayStation jest nieoficjalna i wymaga konta PlayStation. Wybierz **Zaloguj się do PlayStation**, zaloguj się na stronie Sony w izolowanym oknie desktopowym, a następnie wybierz **Dokończ połączenie**. Ten przepływ nie wymaga kopiowania kodu sesji. Sesja początkowa jest wymieniana przez lokalny klient natywnego HTTPS, a późniejsze tokeny dostępu są odświeżane automatycznie. Aktualizacja notatek w tle nadal wymaga jawnej zgody na zapis podczas synchronizacji w tle.
+
+Sony może odrzucić wbudowane logowanie. Zwinięta sekcja **Zaawansowane: ręczne połączenie** jest ścieżką awaryjną, nie domyślną. Okno logowania używa osobnej, nietrwałej partycji pamięciowej, bez dostępu do Node i popupów. Usunięcie okna nie usuwa natychmiast cookies tej partycji; mogą pozostać do zamknięcia Obsidiana. W SecretStorage zapisywany jest tylko refresh token. Logowanie Sony, MFA i minimalna wersja Obsidiana nadal wymagają uwierzytelnionego testu end-to-end przed stabilną publikacją.
 
 ### GameTrack
 
@@ -164,7 +166,7 @@ Aktualny bundle produkcyjny zawiera następujące hosty związane ze źródłami
 | Uwierzytelnianie Sony | `ca.account.sony.com` |
 | Biblioteka i trofea PlayStation | `web.np.playstation.com`, `m.np.playstation.com` |
 
-Hosty PlayStation są używane przez odizolowaną zależność `psn-api`. Plugin nie dodaje proxy ani backendu.
+Hosty API PlayStation są używane przez lokalny klient natywnego HTTPS, z definicjami endpointów zaadaptowanymi z `psn-api` 2.18.1. Okno logowania korzysta również z `www.playstation.com` i stron logowania Sony w domenach `sony.com`, `sonyentertainmentnetwork.com` oraz `playstation.com`, wraz z zasobami tych stron. Nawigacja poza te domeny zamyka okno, ale nie jest to blokada przekierowań na poziomie sieci. Plugin nie dodaje proxy ani backendu.
 
 ## Zastrzeżenie dotyczące PlayStation
 

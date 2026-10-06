@@ -10,7 +10,7 @@ import { expectNoBodyHeadingMatchingModalTitle } from './ui-helpers';
 const obsidianMock = vi.hoisted(() => {
 	function decorate(element: HTMLElement): HTMLElement { Object.defineProperties(element, { createEl: { value: (tag: string) => { const child = decorate(document.createElement(tag)); element.append(child); return child; } }, createDiv: { value: () => { const child = decorate(document.createElement('div')); element.append(child); return child; } } }); return element; }
 	class Modal {
-		app: unknown; contentEl: HTMLElement; titleEl: HTMLElement;
+		app: unknown; contentEl: HTMLElement; titleEl: HTMLElement; modalEl = document.createElement('div');
 		constructor(app: unknown) { this.app = app; this.contentEl = decorate(document.createElement('div')); this.titleEl = document.createElement('h2'); }
 		setTitle(title: string): this { this.titleEl.textContent = title; return this; } close(): void { this.onClose(); } onOpen(): void {} onClose(): void {}
 	}
@@ -33,20 +33,51 @@ function authThat(connectWithNpsso: PlayStationAuthService['connectWithNpsso']):
 function connectButton(modal: InstanceType<typeof PlayStationConnectModal>): HTMLButtonElement { return Array.from(modal.contentEl.querySelectorAll('button')).find((button) => button.textContent === 'Connect')!; }
 
 describe('PlayStationConnectModal', () => {
-	beforeEach(() => { document.body.replaceChildren(); vi.clearAllMocks(); obsidianMock.getLanguage.mockReturnValue('en'); });
+	beforeEach(() => { document.body.replaceChildren(); vi.clearAllMocks(); obsidianMock.getLanguage.mockReturnValue('en'); vi.stubGlobal('createEl', (tag: string) => document.createElement(tag)); });
+	it('distinguishes authorized sessions from account-settings save failures', async () => {
+		const persistent = secretStore();
+		const save = vi.fn().mockRejectedValueOnce(new Error('Synthetic save failure')).mockResolvedValueOnce(undefined);
+		const authFactory = vi.fn(({ secretStore: store }: { secretStore: SecretStore }) => authThat(async () => { store.set(GAME_SYNC_SECRET_NAMES.psnRefreshToken, 'fixture-refresh'); return account(); }));
+		const modal = new PlayStationConnectModal({} as never, {
+			secretStore: persistent.store, openUrl: vi.fn(),
+			onConnected: save, authFactory,
+		});
+		modal.onOpen();
+		modal.contentEl.querySelector('input')!.value = 'fixture-code';
+		connectButton(modal).click();
+		await vi.waitFor(() => expect(modal.contentEl.textContent).toContain('could not save account settings'));
+		expect(persistent.values.get(GAME_SYNC_SECRET_NAMES.psnRefreshToken)).toBe('fixture-refresh');
+		expect(modal.contentEl.querySelector('[data-connect-done]')).not.toBeNull();
+		const retry = modal.contentEl.querySelector<HTMLButtonElement>('[data-connect-retry-save]');
+		expect(retry).not.toBeNull();
+		retry!.click();
+		await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+		await vi.waitFor(() => expect(modal.contentEl.textContent).toContain('Connected as'));
+		expect(authFactory).toHaveBeenCalledOnce();
+		modal.onClose();
+	});
 
-	it('renders a simple connection-code flow without duplicate headings or NPSSO terminology', () => {
+	it('offers browser sign-in first and keeps manual codes in collapsed advanced settings', () => {
 		const modal = new PlayStationConnectModal({} as never, { secretStore: secretStore().store, openUrl: vi.fn(), onConnected: vi.fn() }); modal.onOpen();
 		expect(modal.titleEl.textContent).toBe('Connect PlayStation'); expectNoBodyHeadingMatchingModalTitle(modal.contentEl, 'Connect PlayStation'); expect(modal.contentEl.textContent).toContain('Sign in to PlayStation.'); expect(modal.contentEl.textContent).toContain('Connection code'); expect(modal.contentEl.textContent).not.toContain('NPSSO');
 		const input = modal.contentEl.querySelector('input')!;
 		expect(input.getAttribute('placeholder')).toBe('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
 		expect(input.closest('.setting-item')?.querySelector('.setting-item-description')?.textContent).toBe('Paste the connection code from PlayStation to create a reusable session.');
-		expect(Array.from(modal.contentEl.querySelectorAll('button')).map((button) => button.textContent)).toEqual(['Sign in to PlayStation', 'Get connection code', 'Connect']);
+		const advanced = modal.contentEl.querySelector('details')!;
+		expect(advanced).not.toBeNull();
+		expect(advanced.open).toBe(false);
+		expect(input.closest('details')).toBe(advanced);
+		const signIn = Array.from(modal.contentEl.querySelectorAll('button')).find((button) => button.textContent === 'Sign in to PlayStation')!;
+		expect(signIn.closest('details')).toBeNull();
+		signIn.click();
+		expect(modal.contentEl.querySelector('webview')).not.toBeNull();
+		modal.onClose();
+		expect(modal.contentEl.querySelector('webview')).toBeNull();
 	});
 
 	it('keeps the unofficial label small and opens the two official pages', () => {
 		const urls: string[] = []; const modal = new PlayStationConnectModal({} as never, { secretStore: secretStore().store, openUrl: (url) => urls.push(url), onConnected: vi.fn() }); modal.onOpen();
-		expect(modal.contentEl.textContent).not.toContain('Unofficial integration'); expect(modal.contentEl.textContent).not.toContain('NPSSO'); const buttons = Array.from(modal.contentEl.querySelectorAll('button')); buttons[0].click(); buttons[1].click(); expect(urls).toEqual([PLAYSTATION_URL, PLAYSTATION_NPSSO_URL]);
+		expect(modal.contentEl.textContent).not.toContain('Unofficial integration'); expect(modal.contentEl.textContent).not.toContain('NPSSO'); const buttons = Array.from(modal.contentEl.querySelector('details')!.querySelectorAll('button')); buttons[0].click(); buttons[1].click(); expect(urls).toEqual([PLAYSTATION_URL, PLAYSTATION_NPSSO_URL]);
 	});
 
 	it('uses one password-style code input and persists only the reusable session after success', async () => {
@@ -59,7 +90,7 @@ describe('PlayStationConnectModal', () => {
 	});
 
 	it('explains an expired session without exposing implementation terms', async () => {
-		const modal = new PlayStationConnectModal({} as never, { secretStore: secretStore().store, openUrl: vi.fn(), onConnected: vi.fn(), authFactory: () => authThat(async () => { throw new PlayStationNeedsAuthenticationError(); }) }); modal.onOpen(); modal.contentEl.querySelector('input')!.value = 'expired-code'; connectButton(modal).click(); await vi.waitFor(() => expect(modal.contentEl.textContent).toContain('session has expired')); expect(modal.contentEl.textContent).toContain('get a new connection code'); expect(modal.contentEl.textContent).not.toContain('NPSSO');
+		const modal = new PlayStationConnectModal({} as never, { secretStore: secretStore().store, openUrl: vi.fn(), onConnected: vi.fn(), authFactory: () => authThat(async () => { throw new PlayStationNeedsAuthenticationError(); }) }); modal.onOpen(); modal.contentEl.querySelector('input')!.value = 'expired-code'; connectButton(modal).click(); await vi.waitFor(() => expect(modal.contentEl.textContent).toContain('session has expired')); expect(modal.contentEl.textContent).toContain('Sign in again to reconnect'); expect(modal.contentEl.textContent).not.toContain('NPSSO');
 	});
 
 	it('ignores duplicate clicks during loading and late results after close', async () => {

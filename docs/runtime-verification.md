@@ -1,5 +1,15 @@
 # Runtime verification
 
+## PSN follow-up, 2026-10-06 (unreleased)
+
+The PSN library previously invoked browser `fetch` with a forbidden Cookie header and manual redirect handling. The old authentication tests mocked that boundary. A scoped native HTTPS client now handles authorization, refresh and all used library/trophy endpoints without altering global fetch.
+
+- Local-server integration tests exercise actual requests, Cookie and authorization headers, callback validation, token exchange/refresh, pagination, malformed and oversized responses.
+- In isolated Obsidian 1.14.4, a synthetic native server completed the actual connection modal, persisted a synthetic refresh session in an in-memory test store, refreshed access and returned one library title. Four requests were observed; the Done action appeared. No real account was used.
+- A separate fresh browser partition loaded `https://www.playstation.com/pl-pl/`, with Node disabled, sandbox/context isolation enabled, no popups and no persistent partition. No session-token callback ran.
+- Sony credential login, MFA, automatic background synchronization with a real account, Windows/Linux and Obsidian 1.13.7 are **not verified** by these results. The code is not part of the published 26.10.0 assets.
+- Removing a browser guest does not prove immediate cookie erasure. The credential commit is the cancellation boundary: after commit, a settings-save failure leaves the new session available for a reconnect retry rather than restoring a stale token.
+
 ## Current publication audit, 2026-10-06
 
 See [publication-audit.md](publication-audit.md) for current evidence and open release checks. The release is now desktop-only. Anonymous GameTrack creation, idempotent reimport, a real YAML update preserving user content, concurrent-edit rejection and configuration-preview invalidation passed in an isolated Obsidian 1.14.4 desktop profile. Authenticated Steam/PSN and the declared minimum application version remain separate checks. The sections below are historical evidence for their stated revisions, not a mobile-support guarantee. Historical private-database/TCC findings do not apply to the current explicit ZIP-export flow.

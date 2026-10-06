@@ -22,7 +22,9 @@ Steam requires an official Steam Web API key and a public Steam profile. The con
 
 ### PlayStation
 
-PlayStation support is unofficial. It uses an NPSSO bootstrap and the `psn-api` package for the current PlayStation Network flows. See the warning below before enabling it.
+PlayStation support is unofficial and requires a PlayStation account. Select **Sign in to PlayStation**, sign in on the Sony page in the isolated desktop browser, then select **Finish connecting**. No session code needs to be copied in this flow. The initial session is exchanged through a scoped native HTTPS client; subsequent access tokens are refreshed automatically. Background note updates still require explicit background-sync write approval.
+
+Sony may reject embedded sign-in. The collapsed **Advanced: manual connection** section is a fallback, not the default. The embedded browser uses a separate, non-persistent memory partition, without Node access or popups. Removing the browser does not immediately erase that partition's cookies; they may remain until Obsidian closes. Only the refresh token is saved in SecretStorage. The Sony login, MFA and minimum Obsidian version still require authenticated end-to-end verification before stable publication.
 
 ### GameTrack
 
@@ -165,7 +167,7 @@ The current production bundle contains these provider-related hosts:
 | Sony authentication | `ca.account.sony.com` |
 | PlayStation library and trophy services | `web.np.playstation.com`, `m.np.playstation.com` |
 
-The PlayStation hosts are reached through the isolated `psn-api` dependency. The plugin does not add a proxy or backend.
+The PlayStation API hosts are reached through the scoped native HTTPS client, using endpoint definitions adapted from `psn-api` 2.18.1. The sign-in window also accesses `www.playstation.com` and Sony-owned login pages under `sony.com`, `sonyentertainmentnetwork.com` and `playstation.com`, including their login-page resources. Navigation outside these domains closes the sign-in window, but this is not a network-level redirect blocker. The plugin does not add a proxy or backend.
 
 ## PlayStation integration disclaimer
 

@@ -3,6 +3,17 @@
 	margin-top: var(--size-4-2);
 }
 
+.game-sync-playstation-modal {
+	width: min(960px, 95vw);
+}
+
+.game-sync-playstation-browser {
+	display: flex;
+	width: 100%;
+	height: min(600px, 65vh);
+	border: 1px solid var(--background-modifier-border);
+}
+
 [data-provider-status] {
 	display: block;
 	margin-top: var(--size-4-2);

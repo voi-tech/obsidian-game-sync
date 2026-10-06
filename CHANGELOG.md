@@ -1,5 +1,13 @@
 # Changelog
 
+## 26.10.1 (BRAT prerelease)
+
+- Replaced browser-fetch PSN requests with a scoped desktop HTTPS transport for authorization, refresh, library and trophy endpoints.
+- Added isolated browser sign-in with a Finish connecting action, keeping code copying behind an advanced fallback.
+- Guarded session reads against navigation races and distinguished credential commit from account-settings save failures.
+- Unified URL-safe session-code validation, closed streaming redirect/error responses and allowed account-settings retries without reauthentication.
+- Added real local-server transport tests and a synthetic native-auth/library check inside Obsidian 1.14.4. Authenticated Sony login and MFA remain unverified.
+
 ## 26.10.0 (BRAT prerelease)
 
 - Made preview fingerprint validation and YAML updates atomic, preserving comments, nested properties, string identifiers, empty lists and Markdown body bytes.

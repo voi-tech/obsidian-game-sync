@@ -1,11 +1,7 @@
-import {
-	exchangeAccessCodeForAuthTokens,
-	exchangeNpssoForAccessCode,
-	exchangeRefreshTokenForAuthTokens,
-} from 'psn-api';
+import { playStationClient } from './client';
 import type { ProviderAccount } from '../../model/provider';
 import type { SecretStore } from '../../auth/secrets';
-import { GAME_SYNC_SECRET_NAMES } from '../../auth/secrets';
+import { GAME_SYNC_SECRET_NAMES, isNpssoValue } from '../../auth/secrets';
 import type { ProviderConnectionStatus } from '../provider';
 import type { PlayStationAuthOptions, PlayStationAuthService, PlayStationAuthTokens } from './types';
 
@@ -74,6 +70,7 @@ export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStat
 	let generation = 0;
 	let refreshInFlight: Promise<void> | undefined;
 	const skew = options.accessTokenLifetimeSkewMs ?? 30_000;
+	const client = options.client ?? playStationClient;
 
 	const storeTokens = (tokens: PlayStationAuthTokens): void => {
 		accessToken = tokens.accessToken;
@@ -85,13 +82,13 @@ export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStat
 
 	const auth: PlayStationAuthService = {
 		async connectWithNpsso(npsso: string): Promise<ProviderAccount> {
-			if (npsso.trim().length === 0) throw new PlayStationAuthError();
+			if (!isNpssoValue(npsso)) throw new PlayStationAuthError();
 			const startedAt = ++generation;
 			refreshInFlight = undefined;
 			try {
-				const accessCode = await exchangeNpssoForAccessCode(npsso);
+				const accessCode = await client.exchangeNpssoForAccessCode(npsso);
 				if (startedAt !== generation) throw new PlayStationAuthError();
-				const tokens = await exchangeAccessCodeForAuthTokens(accessCode) as PlayStationAuthTokens;
+				const tokens = await client.exchangeAccessCodeForAuthTokens(accessCode) as PlayStationAuthTokens;
 				if (startedAt !== generation) throw new PlayStationAuthError();
 				storeTokens(tokens);
 				return account as ProviderAccount;
@@ -115,7 +112,7 @@ export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStat
 			const startedAt = generation;
 			const pending = (async () => {
 				try {
-					const tokens = await exchangeRefreshTokenForAuthTokens(refreshToken) as PlayStationAuthTokens;
+					const tokens = await client.exchangeRefreshTokenForAuthTokens(refreshToken) as PlayStationAuthTokens;
 					if (startedAt !== generation) throw new PlayStationNeedsAuthenticationError();
 					storeTokens(tokens);
 				} catch {

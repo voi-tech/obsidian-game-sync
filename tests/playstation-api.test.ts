@@ -17,13 +17,15 @@ const {
 	getUserTrophiesEarnedForTitle: vi.fn(),
 }));
 
-vi.mock('psn-api', () => ({
-	getPurchasedGames,
-	getUserTitles,
-	getTitleTrophies,
-	getUserTrophiesEarnedForTitle,
-	getUserPlayedGames,
-	getRecentlyPlayedGames,
+vi.mock('../src/providers/playstation/client', () => ({
+	playStationClient: {
+		getPurchasedGames,
+		getUserTitles,
+		getTitleTrophies,
+		getUserTrophiesEarnedForTitle,
+		getUserPlayedGames,
+		getRecentlyPlayedGames,
+	},
 }));
 
 import { createPlayStationApi } from '../src/providers/playstation/api';

@@ -1,4 +1,5 @@
 import type { SecretStore } from '../../auth/secrets';
+import type { PlayStationClient } from './client';
 import type { ProviderAccount } from '../../model/provider';
 import type { ProviderConnectionStatus } from '../provider';
 
@@ -15,6 +16,7 @@ export interface PlayStationAuthTokens {
 export interface PlayStationAuthOptions {
 	secretStore: SecretStore;
 	accessTokenLifetimeSkewMs?: number;
+	client?: PlayStationClient;
 }
 
 export interface PlayStationAuthService {
