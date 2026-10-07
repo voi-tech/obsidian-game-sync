@@ -82,6 +82,24 @@ describe('PlayStation paginated API boundary', () => {
 		expect(earned.trophies).toHaveLength(2);
 	});
 
+	it('requests played games in pages Sony accepts, even when a larger limit is asked for', async () => {
+		getUserPlayedGames.mockReset();
+		getUserPlayedGames
+			.mockResolvedValueOnce({ titles: Array.from({ length: 200 }, (_, index) => ({ titleId: `CUSA${index}`, name: `Game ${index}` })), totalItemCount: 201, nextOffset: 200 })
+			.mockResolvedValueOnce({ titles: [{ titleId: 'CUSA200', name: 'Last' }], totalItemCount: 201 });
+		const result = await createPlayStationApi(auth).getUserPlayedGames({ limit: 800 });
+		expect(result).toMatchObject({ complete: true, pagesFetched: 2 });
+		expect(result.titles).toHaveLength(201);
+		expect(getUserPlayedGames).toHaveBeenNthCalledWith(1, { accessToken: 'access-token' }, 'me', expect.objectContaining({ limit: 200, offset: 0 }));
+		expect(getUserPlayedGames).toHaveBeenNthCalledWith(2, { accessToken: 'access-token' }, 'me', expect.objectContaining({ limit: 200, offset: 200 }));
+	});
+
+	it('marks schema failures with a diagnostic code', async () => {
+		getUserPlayedGames.mockReset();
+		getUserPlayedGames.mockResolvedValue({ titles: 'not-an-array' });
+		await expect(createPlayStationApi(auth).getUserPlayedGames()).rejects.toMatchObject({ code: 'playstation-invalid-response' });
+	});
+
 	it('does not claim completeness when total count exceeds a stopped offset', async () => {
 		getUserPlayedGames.mockResolvedValue({ titles: [{ titleId: 'CUSA00001_00', name: 'Game' }], totalItemCount: 2, nextOffset: 0 });
 		getUserTitles.mockResolvedValue({ trophyTitles: [{ npServiceName: 'trophy', npCommunicationId: 'NPWR1', trophyTitleName: 'Game' }], totalItemCount: 2, nextOffset: 0 });

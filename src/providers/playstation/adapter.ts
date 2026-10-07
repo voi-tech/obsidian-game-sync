@@ -63,7 +63,8 @@ export function createPlayStationAdapter(options: PlayStationAdapterOptions): Ga
 
 	const getApi = (): PlayStationApi => {
 		if (api !== undefined) return api;
-		api = createPlayStationApi(auth, auth.getAccount()?.accountId ?? 'me');
+		// Always query the signed-in account as "me"; token payloads do not reliably carry a numeric account ID.
+		api = createPlayStationApi(auth, 'me');
 		return api;
 	};
 
@@ -81,7 +82,7 @@ export function createPlayStationAdapter(options: PlayStationAdapterOptions): Ga
 			const previous = options.previousGames ?? [];
 			try {
 				const activeApi = getApi();
-				const playedResult = await activeApi.getUserPlayedGames({ limit: 800 });
+				const playedResult = await activeApi.getUserPlayedGames();
 				let purchased: Awaited<ReturnType<PlayStationApi['getPurchasedGames']>>['games'] = [];
 				let purchasesComplete = false;
 				let purchasesPages = 0;

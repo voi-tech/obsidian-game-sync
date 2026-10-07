@@ -137,7 +137,8 @@ export function buildTemplateContext(game: NormalizedGame, options: TemplateCont
 
 function createHandlebars(options: TemplateRenderOptions): typeof Handlebars {
 	const handlebars = Handlebars.create();
-	handlebars.registerHelper('join', (value: unknown, separator = ', ') => Array.isArray(value) ? value.join(String(separator)) : '');
+	// Handlebars passes its options object as the last argument, so `{{join list}}` must fall back to the default separator.
+	handlebars.registerHelper('join', (value: unknown, separator: unknown) => Array.isArray(value) ? value.join(typeof separator === 'string' ? separator : ', ') : '');
 	handlebars.registerHelper('hours', hours);
 	handlebars.registerHelper('percent', percent);
 	handlebars.registerHelper('date', (value: unknown, formatOrOptions: unknown) => {

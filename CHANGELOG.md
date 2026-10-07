@@ -1,5 +1,13 @@
 # Changelog
 
+## 26.10.3 (BRAT prerelease)
+
+- Rebuilt settings on the declarative Obsidian 1.13 settings API: native groups, native sub-pages instead of the Additional settings modal, folder and file pickers, and Game Sync entries in the Obsidian settings search. Versions older than 1.13 are not supported.
+- Turned template keys into a grouped sub-page indexed by the Obsidian settings search. Clicking a key copies a ready-to-paste snippet (lists use `join`, achievements and trophies use partials).
+- Fixed `{{join list}}` without an explicit separator, which joined items with the Handlebars options object instead of `, `.
+- PlayStation library requests now use 200-title pages (Sony rejects larger pages) and always query the signed-in account as `me`. Suspected cause of PSN sync failing after connection; not yet verified against a real account.
+- PSN transport failures now carry a sanitized code (HTTP status, timeout, network, oversized or invalid response). Sync warnings and the diagnostic report show the last attempt's status, game count and error code.
+
 ## 26.10.2 (BRAT prerelease)
 
 - Fixed an Obsidian crash when starting PlayStation sign-in from Settings. Obsidian 1.14 shows Settings in a separate window, and an embedded browser there terminates Electron's main process. Game Sync now never creates the sign-in browser outside the main window: it closes Settings and continues sign-in in the main window. Reproduced and verified in Obsidian 1.14.4 with an identical crash signature before the fix.

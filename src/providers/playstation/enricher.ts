@@ -21,7 +21,7 @@ async function enrichPlayStation(snapshot: CanonicalLibrarySnapshot, options: Pl
 	if (snapshot.status !== 'complete') return { source: 'playstation', status: 'failed', retrievedAt, patches: [], diagnostics: [{ code: 'LIBRARY_SNAPSHOT_INCOMPLETE', message: 'PlayStation enrichment requires a complete library snapshot.' }] };
 	try {
 		await options.auth.getAccessToken();
-		const played = await options.api.getUserPlayedGames({ limit: 800 });
+		const played = await options.api.getUserPlayedGames();
 		const diagnostics: GameEnrichmentResult['diagnostics'][number][] = [];
 		const patches: NonNullable<GameEnrichmentResult['patches'][number]>[] = [];
 		let trophyFailure = false;

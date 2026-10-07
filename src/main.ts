@@ -22,7 +22,7 @@ import { createStateStore, type StateStore } from './state/store';
 import { BackgroundSyncScheduler } from './sync/scheduler';
 import { createSyncConcurrencyGuard } from './sync/concurrency';
 import { retry } from './sync/retry';
-import type { SyncService } from './sync/service';
+import type { ProviderStatusSummary, SyncService } from './sync/service';
 import type { CanonicalSyncSelection } from './sync/canonical-planner';
 import { PlayStationConnectModal } from './ui/playstation-connect-modal';
 import { PreviewModal } from './ui/preview-modal';
@@ -32,7 +32,6 @@ import { MatchManagerModal } from './ui/match-manager';
 import { SetupModal } from './ui/setup/setup-modal';
 import { SteamConnectModal } from './ui/steam-connect-modal';
 import { SummaryModal } from './ui/summary-modal';
-import { AdditionalSettingsModal } from './ui/settings/additional-settings-modal';
 import { CanonicalPreviewModal } from './ui/canonical-preview-modal';
 import { GameSyncSettingsTab } from './ui/settings/game-sync-settings';
 import { ObsidianVaultGateway } from './vault/gateway';
@@ -104,16 +103,24 @@ function createEnrichers(http: HttpClient, secretStore: SecretStore, settings: G
 	}
 	if (settings.playstationEnricherEnabled) {
 		const auth = createPlayStationAuth({ secretStore });
-		const api = createPlayStationApi(auth, auth.getAccount()?.accountId ?? 'me');
+		const api = createPlayStationApi(auth, 'me');
 		enrichers.push(createPlayStationEnricher({ auth, api }));
 	}
 	return enrichers;
 }
 
-function providerStatusInput(state: Awaited<ReturnType<StateStore['load']>>, provider: GameProvider): { enabled: boolean; status: string } {
+function providerStatusInput(
+	state: Awaited<ReturnType<StateStore['load']>>,
+	provider: GameProvider,
+	lastAttempt: ProviderStatusSummary | undefined,
+): { enabled: boolean; status: string; games?: number; errorCodes?: string[] } {
 	return {
 		enabled: state.settings.enabledProviders[provider],
-		status: state.lastSuccessfulProviderStates[provider]?.status ?? 'unknown',
+		status: lastAttempt === undefined
+			? state.lastSuccessfulProviderStates[provider]?.status ?? 'unknown'
+			: `last-attempt-${lastAttempt.state}`,
+		...(lastAttempt === undefined ? {} : { games: lastAttempt.gamesFetched }),
+		...(lastAttempt?.error === undefined ? {} : { errorCodes: [lastAttempt.error.code] }),
 	};
 }
 
@@ -138,6 +145,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 			try { await source.getFingerprint?.(); return source; } catch { return undefined; }
 		},
 	});
+	const lastProviderAttempts = new Map<GameProvider, ProviderStatusSummary>();
 	const composition = new GameSyncRuntimeComposition({
 		stateStore,
 		gateway,
@@ -147,6 +155,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 		canonicalStatusFactory: () => gameTrackCsvRuntime.getStatus(),
 		createEnrichers: (settings) => createEnrichers(http, secretStore, settings),
 		isActive: () => runtimeActive,
+		onProviderPrepared: (status) => { lastProviderAttempts.set(status.provider, status); },
 	});
 
 	let actions!: GameSyncCommandActions;
@@ -279,6 +288,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 	let ui!: RuntimeUiPort;
 	const syncLock = createSyncConcurrencyGuard();
 	let schedulerRef: BackgroundSyncScheduler | undefined;
+	let settingsTab: GameSyncSettingsTab | undefined;
 
 	const settingsHost = {
 		readSettings: async () => (await stateStore.load()).settings,
@@ -299,23 +309,16 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 		disconnect: disconnectProvider,
 		syncNow: () => Promise.resolve(actions.syncAll()).then(() => undefined),
 		confirm,
-		openAdditionalSettings: (view?: import('./ui/settings/additional-settings-modal').AdditionalSettingsView) => {
-			new AdditionalSettingsModal(host.app, {
-				readSettings: settingsHost.readSettings,
-				writeSettings: settingsHost.writeSettings,
-				readPropertyMapping: settingsHost.readPropertyMapping,
-				writePropertyMapping: settingsHost.writePropertyMapping,
-				openIgnoredGames: () => Promise.resolve(ui.openIgnoredGames()),
-				openMatchManager: async () => ui.openMatchManager(await composition.createMatchManager()),
-				copyDiagnostics: () => Promise.resolve(ui.copyDiagnostics()),
-			}, view === undefined ? {} : { initialView: view }).open();
-		},
+		copyDiagnostics: () => Promise.resolve(ui.copyDiagnostics()),
 		openIgnoredGames: () => Promise.resolve(ui.openIgnoredGames()),
 		openMatchManager: async () => ui.openMatchManager(await composition.createMatchManager()),
 		getGameTrackStatus: () => composition.getGameTrackStatus(),
 		chooseGameTrackExport,
 	};
-	if (host.addSettingTab !== undefined && host.plugin !== undefined) host.addSettingTab(new GameSyncSettingsTab(host.app, host.plugin, settingsHost));
+	if (host.addSettingTab !== undefined && host.plugin !== undefined) {
+		settingsTab = new GameSyncSettingsTab(host.app, host.plugin, settingsHost);
+		host.addSettingTab(settingsTab);
+	}
 
 	ui = {
 		openPreview: (prepared, onApply, onReviewDecision) => {
@@ -450,8 +453,8 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 				osPlatform: Platform.isMobile ? 'mobile' : 'desktop',
 				providerStatuses: {
 					gametrack: { enabled: state.settings.libraryProvider === 'gametrack', status: gameTrackStatus.code, readiness: gameTrackStatus.code, games: gameTrackStatus.games, warnings: gameTrackStatus.warningCount ?? 0, errorCodes: gameTrackStatus.errorCodes ?? [] },
-					steam: providerStatusInput(state, 'steam'),
-					playstation: providerStatusInput(state, 'playstation'),
+					steam: providerStatusInput(state, 'steam', lastProviderAttempts.get('steam')),
+					playstation: providerStatusInput(state, 'playstation', lastProviderAttempts.get('playstation')),
 				},
 				lastSyncState: Object.keys(state.lastSuccessfulProviderStates).length > 0 ? 'complete' : 'unknown',
 				stateSchemaVersion: state.schemaVersion,

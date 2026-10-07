@@ -155,11 +155,13 @@ describe('scoped native PSN transport', () => {
 		const transport = client();
 		const token = { accessToken: 'access-token' };
 		responder = (_request, _body, response) => response.writeHead(401).end('secret HTTP response body');
-		await expect(transport.getUserPlayedGames(token, 'me', { limit: 1, offset: 0, categories: 'ps4_game' })).rejects.toThrow('PlayStation request failed');
+		const httpError = await transport.getUserPlayedGames(token, 'me', { limit: 1, offset: 0, categories: 'ps4_game' }).catch((error: unknown) => error);
+		expect(httpError).toMatchObject({ message: 'PlayStation request failed', code: 'playstation-http-401' });
+		expect(String((httpError as Error).message)).not.toContain('secret');
 		responder = (_request, _body, response) => response.writeHead(200).end('secret invalid JSON body');
 		await expect(transport.getUserPlayedGames(token, 'me', { limit: 1, offset: 0, categories: 'ps4_game' })).rejects.toThrow('Invalid PlayStation response');
 		responder = (_request, _body, response) => response.writeHead(200).end('x'.repeat(4 * 1024 * 1024 + 1));
-		await expect(transport.getUserPlayedGames(token, 'me', { limit: 1, offset: 0, categories: 'ps4_game' })).rejects.toThrow('PlayStation request failed');
+		await expect(transport.getUserPlayedGames(token, 'me', { limit: 1, offset: 0, categories: 'ps4_game' })).rejects.toMatchObject({ code: 'playstation-response-too-large' });
 		expect(seen).toHaveLength(3);
 	});
 

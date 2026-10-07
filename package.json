@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-game-sync",
-	"version": "26.10.2",
+	"version": "26.10.3",
 	"description": "Sync GameTrack exports, Steam and PlayStation game libraries, playtime and achievements into ordinary Obsidian Markdown notes.",
 	"author": "voitech",
 	"license": "MIT",

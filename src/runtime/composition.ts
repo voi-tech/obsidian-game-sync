@@ -3,7 +3,7 @@ import type { GameSyncSettings } from '../model/settings';
 import type { GameProviderAdapter } from '../providers/provider';
 import type { StateStore } from '../state/store';
 import type { DisposableCache } from '../sync/cache';
-import { SyncService } from '../sync/service';
+import { SyncService, type SyncServiceOptions } from '../sync/service';
 import { SyncPlanner } from '../sync/planner';
 import { buildNoteIndex } from '../vault/note-index';
 import type { VaultGateway } from '../vault/gateway';
@@ -34,6 +34,7 @@ export interface RuntimeCompositionOptions {
 	canonicalStatusFactory?: () => Promise<GameTrackRuntimeStatus>;
 	createEnrichers?: (settings: GameSyncSettings) => readonly GameEnricher[];
 	isActive?: () => boolean;
+	onProviderPrepared?: SyncServiceOptions['onProviderPrepared'];
 }
 
 const PROVIDERS = ['steam', 'playstation'] as const satisfies readonly GameProvider[];
@@ -82,6 +83,7 @@ export class GameSyncRuntimeComposition {
 			now: this.options.now,
 			secretValues: this.options.secretValues,
 			isActive: this.options.isActive,
+			onProviderPrepared: this.options.onProviderPrepared,
 		});
 	}
 

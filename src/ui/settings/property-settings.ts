@@ -1,4 +1,4 @@
-import { Setting } from 'obsidian';
+import type { SettingDefinitionGroup } from 'obsidian';
 import { t, type TranslationKey } from '../../i18n';
 import {
 	DEFAULT_PROPERTY_MAPPING,
@@ -7,19 +7,11 @@ import {
 	type PropertyMapping,
 } from '../../model/property-mapping';
 
-export interface PropertySettingsOptions {
-	mapping: PropertyMapping;
-	writeMapping: (mapping: PropertyMapping) => void | Promise<void>;
-}
-
-type PropertySettingsCallback = PropertySettingsOptions['writeMapping'];
-
 export const PROPERTY_MAPPING_GROUPS = [
 	{
 		id: 'general',
 		labelKey: 'settings.properties.groups.general',
 		descriptionKey: 'settings.properties.groupDescriptions.general',
-		expanded: true,
 		keys: [
 			'gameSyncId', 'igdbId', 'gametrackId', 'type', 'title', 'released', 'developers', 'publishers', 'genres', 'cover',
 			'platforms', 'providers', 'owned', 'acquisitionType', 'playtime', 'lastPlayed',
@@ -29,7 +21,6 @@ export const PROPERTY_MAPPING_GROUPS = [
 		id: 'steam',
 		labelKey: 'settings.properties.groups.steam',
 		descriptionKey: 'settings.properties.groupDescriptions.steam',
-		expanded: false,
 		keys: [
 			'steamId', 'steamOwned', 'steamPlaytime', 'steamLastPlayed', 'steamAchievementsEarned', 'steamAchievementsTotal', 'steamAchievementsProgress',
 		] as const,
@@ -38,7 +29,6 @@ export const PROPERTY_MAPPING_GROUPS = [
 		id: 'playstation',
 		labelKey: 'settings.properties.groups.playstation',
 		descriptionKey: 'settings.properties.groupDescriptions.playstation',
-		expanded: false,
 		keys: [
 			'playstationId', 'playstationOwned', 'playstationPlaytime', 'playstationLastPlayed', 'psnTrophiesEarned', 'psnTrophiesTotal',
 			'psnTrophiesProgress', 'psnBronze', 'psnSilver', 'psnGold', 'psnPlatinum',
@@ -48,10 +38,9 @@ export const PROPERTY_MAPPING_GROUPS = [
 		id: 'technical',
 		labelKey: 'settings.properties.groups.technical',
 		descriptionKey: 'settings.properties.groupDescriptions.technical',
-		expanded: false,
 		keys: ['updated'] as const,
 	},
-] as const satisfies readonly { id: string; labelKey: string; descriptionKey: string; expanded: boolean; keys: readonly ManagedPropertyKey[] }[];
+] as const satisfies readonly { id: string; labelKey: string; descriptionKey: string; keys: readonly ManagedPropertyKey[] }[];
 
 export const PROPERTY_MAPPING_KEYS: readonly ManagedPropertyKey[] = PROPERTY_MAPPING_GROUPS.flatMap((group) => group.keys);
 
@@ -60,8 +49,15 @@ if (propertyMappingKeys.size !== PROPERTY_MAPPING_KEYS.length || propertyMapping
 	throw new Error('Property mapping groups must contain every managed property key exactly once.');
 }
 
+/** Control keys for mapping fields are namespaced so the settings tab can route them away from plugin settings. */
+export const PROPERTY_CONTROL_PREFIX = 'property:';
+
 function translation(key: string, params?: Record<string, string | number>): string {
 	return t(key as TranslationKey, params as never);
+}
+
+function isManagedKey(key: string): key is ManagedPropertyKey {
+	return propertyMappingKeys.has(key as ManagedPropertyKey);
 }
 
 function localizedValidationMessage(error: unknown): string {
@@ -71,84 +67,81 @@ function localizedValidationMessage(error: unknown): string {
 	return message;
 }
 
-function specialDestinationWarning(key: ManagedPropertyKey, destination: string): string | undefined {
+const ARRAY_SOURCES = new Set<ManagedPropertyKey>(['developers', 'publishers', 'genres', 'platforms', 'providers']);
+
+export function specialDestinationWarning(key: ManagedPropertyKey, destination: string): string | undefined {
 	const special = destination.trim().toLocaleLowerCase();
 	if (!['aliases', 'tags', 'cssclasses'].includes(special)) return undefined;
-	const arraySources = new Set<ManagedPropertyKey>(['developers', 'publishers', 'genres', 'platforms', 'providers']);
-	return arraySources.has(key) ? undefined : translation('settings.common.mappingTypeWarning');
+	return ARRAY_SOURCES.has(key) ? undefined : translation('settings.common.mappingTypeWarning');
 }
 
-export class PropertySettings {
-	private readonly mapping: PropertyMapping;
-	private statusEl?: HTMLElement;
-	private pendingSave: Promise<void> = Promise.resolve();
+/** In-memory property mapping with validation and serialized persistence. */
+export class PropertyMappingStore {
+	private mapping: PropertyMapping = {};
+	private pendingSave: Promise<boolean> = Promise.resolve(true);
 
-	constructor(private readonly containerEl: HTMLElement, options: PropertySettingsOptions) {
-		this.mapping = { ...options.mapping };
-		this.writeMapping = options.writeMapping;
+	constructor(private readonly write: (mapping: PropertyMapping) => void | Promise<void>) {}
+
+	reset(mapping: PropertyMapping): void {
+		this.mapping = { ...mapping };
 	}
 
-	private readonly writeMapping: PropertySettingsCallback;
-
-	render(): void {
-		this.containerEl.replaceChildren();
-		this.statusEl = this.containerEl.createEl('p');
-		this.statusEl.dataset.propertyMappingStatus = 'true';
-		this.containerEl.append(this.statusEl);
-
-		for (const group of PROPERTY_MAPPING_GROUPS) {
-			const details = this.containerEl.createEl('details');
-			details.dataset.propertyMappingGroup = group.id;
-			details.open = group.expanded;
-			const summary = details.createEl('summary');
-			summary.textContent = translation(group.labelKey);
-			const description = details.createEl('p');
-			description.textContent = translation(group.descriptionKey);
-			for (const key of group.keys) this.renderField(details, key);
-		}
-	}
-
-	private renderField(parent: HTMLElement, key: ManagedPropertyKey): void {
+	/** Current destination; an empty string means the property is not written. */
+	destination(key: string): string {
+		if (!isManagedKey(key)) return '';
 		const raw = this.mapping[key];
-		const disabled = raw === null || raw === false;
-		const destination = disabled ? '' : typeof raw === 'string' ? raw : DEFAULT_PROPERTY_MAPPING[key];
-		const setting = new Setting(parent)
-			.setName(translation(`settings.properties.fields.${key}`))
-			.setDesc(`${translation(`settings.properties.descriptions.${key}`)} ${translation(`settings.properties.examples.${key}`)}${destination.length > 0 ? ` ${specialDestinationWarning(key, destination) ?? ''}` : ''}`.trim());
-		setting.addText((component) => {
-			const input = component.inputEl;
-			input.dataset.propertyDestination = key;
-			input.value = destination;
-			component.setPlaceholder?.(destination);
-			input.addEventListener('input', () => {
-				const value = input.value.trim();
-				this.mapping[key] = value.length === 0 ? null : value;
-				void this.queuePersist();
-			});
-		});
+		if (raw === null || raw === false) return '';
+		return typeof raw === 'string' ? raw : DEFAULT_PROPERTY_MAPPING[key];
 	}
 
-	private setStatus(message: string): void {
-		if (this.statusEl !== undefined) this.statusEl.textContent = message;
-	}
-
-	private async persist(): Promise<void> {
+	/** Returns a localized error when the candidate destination would make the mapping invalid. */
+	validate(key: string, value: string): string | undefined {
+		if (!isManagedKey(key)) return undefined;
 		try {
-			validatePropertyMapping(this.mapping);
+			validatePropertyMapping(this.candidate(key, value));
+			return undefined;
 		} catch (error) {
-			this.setStatus(translation('settings.common.mappingValidation', { message: localizedValidationMessage(error) }));
-			return;
-		}
-		try {
-			await this.writeMapping({ ...this.mapping });
-			this.setStatus(translation('settings.common.mappingSaved'));
-		} catch {
-			this.setStatus(translation('settings.common.mappingSaveError'));
+			return localizedValidationMessage(error);
 		}
 	}
 
-	private queuePersist(): Promise<void> {
-		this.pendingSave = this.pendingSave.then(() => this.persist());
+	set(key: string, value: string): Promise<boolean> {
+		if (!isManagedKey(key) || this.validate(key, value) !== undefined) return Promise.resolve(false);
+		this.mapping = this.candidate(key, value);
+		const snapshot = { ...this.mapping };
+		this.pendingSave = this.pendingSave.then(async () => {
+			try { await this.write(snapshot); return true; }
+			catch { return false; }
+		});
 		return this.pendingSave;
 	}
+
+	private candidate(key: ManagedPropertyKey, value: string): PropertyMapping {
+		const trimmed = value.trim();
+		return { ...this.mapping, [key]: trimmed.length === 0 ? null : trimmed };
+	}
+}
+
+export function propertyMappingGroups(store: PropertyMappingStore): SettingDefinitionGroup[] {
+	return PROPERTY_MAPPING_GROUPS.map((group): SettingDefinitionGroup => ({
+		type: 'group',
+		heading: translation(group.labelKey),
+		items: [
+			{ name: '', desc: translation(group.descriptionKey), searchable: false },
+			...group.keys.map((key) => {
+				const warning = specialDestinationWarning(key, store.destination(key));
+				return {
+					name: translation(`settings.properties.fields.${key}`),
+					desc: [translation(`settings.properties.descriptions.${key}`), translation(`settings.properties.examples.${key}`), warning].filter((part) => part !== undefined).join(' '),
+					aliases: [key, DEFAULT_PROPERTY_MAPPING[key]],
+					control: {
+						type: 'text' as const,
+						key: `${PROPERTY_CONTROL_PREFIX}${key}`,
+						placeholder: translation('settings.properties.disabledPlaceholder'),
+						validate: (value: string) => store.validate(key, value),
+					},
+				};
+			}),
+		],
+	}));
 }

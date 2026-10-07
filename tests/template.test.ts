@@ -119,6 +119,7 @@ describe('stable Handlebars template contract', () => {
 
 		const rendered = renderTemplate('{{title}}|{{join genres ", "}}|{{steamId}}|{{playtime}}', context);
 		expect(rendered).toBe('Cyberpunk 2077|RPG, Action|1091500|120');
+		expect(renderTemplate('{{join genres}}', context)).toBe('RPG, Action');
 	});
 
 	it('does not expose locked hidden achievement fields without explicit reveal', () => {

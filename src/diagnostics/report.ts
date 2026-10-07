@@ -123,7 +123,7 @@ export function buildDiagnosticReport(input: DiagnosticReportInput, secrets: rea
 		const status = safe.providers[provider];
 		const details = provider === 'gametrack'
 			? `; readiness=${asText(status.readiness)}; games=${asText(status.games)}; warnings=${asText(status.warnings)}; errors=${asText(status.errorCodes)}`
-			: '';
+			: `${status.games === undefined ? '' : `; games=${asText(status.games)}`}${status.errorCodes === undefined ? '' : `; errors=${asText(status.errorCodes)}`}`;
 		lines.push(`${provider}: enabled=${asText(status.enabled)}; status=${asText(status.status)}${details}`);
 	}
 	lines.push(

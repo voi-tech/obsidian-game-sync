@@ -49,17 +49,25 @@ function assertEndpoint(url: URL, method: string): void {
 	throw new Error('Invalid PlayStation endpoint');
 }
 
+/** Sanitized transport failure. The code carries only the failure class or HTTP status, never a response body. */
+export class PlayStationRequestError extends Error {
+	constructor(readonly code: string) {
+		super('PlayStation request failed');
+		this.name = 'PlayStationRequestError';
+	}
+}
+
 function request(requester: NativeRequest, url: URL, method: 'GET' | 'POST', headers: Record<string, string>, body?: string): Promise<{ status: number; location?: string; body: string }> {
 	assertEndpoint(url, method);
 	return new Promise((resolve, reject) => {
 		let outgoing: ClientRequest | undefined;
 		let settled = false;
-		const timer = setNativeTimeout(() => { fail(); outgoing?.destroy(); }, REQUEST_TIMEOUT_MS);
-		const fail = () => {
+		const timer = setNativeTimeout(() => { fail('playstation-timeout'); outgoing?.destroy(); }, REQUEST_TIMEOUT_MS);
+		const fail = (code = 'playstation-network-error') => {
 			if (settled) return;
 			settled = true;
 			clearNativeTimeout(timer);
-			reject(new Error('PlayStation request failed'));
+			reject(new PlayStationRequestError(code));
 		};
 		const finish = (result: { status: number; location?: string; body: string }) => {
 			if (settled) return;
@@ -70,25 +78,25 @@ function request(requester: NativeRequest, url: URL, method: 'GET' | 'POST', hea
 		try {
 			outgoing = requester(url, { method, headers, timeout: REQUEST_TIMEOUT_MS }, (response) => {
 				const status = response.statusCode ?? 0;
-				response.on('error', fail);
+				response.on('error', () => fail());
 				// Never follow any redirect, including to another approved Sony host.
 				if (status >= 300 && status < 400) {
 					finish({ status, location: response.headers.location, body: '' });
 					response.destroy();
 					return;
 				}
-				if (status < 200 || status >= 300) { fail(); response.destroy(); return; }
+				if (status < 200 || status >= 300) { fail(`playstation-http-${status}`); response.destroy(); return; }
 				let size = 0;
 				const chunks: Buffer[] = [];
 				response.on('data', (chunk: Buffer) => {
 					size += chunk.length;
-					if (size > MAX_RESPONSE_BYTES) { fail(); outgoing?.destroy(); return; }
+					if (size > MAX_RESPONSE_BYTES) { fail('playstation-response-too-large'); outgoing?.destroy(); return; }
 					chunks.push(chunk);
 				});
 				response.on('end', () => finish({ status, body: Buffer.concat(chunks).toString('utf8') }));
 			});
-			outgoing.on('error', fail);
-			outgoing.setTimeout(REQUEST_TIMEOUT_MS, () => { fail(); outgoing?.destroy(); });
+			outgoing.on('error', () => fail());
+			outgoing.setTimeout(REQUEST_TIMEOUT_MS, () => { fail('playstation-timeout'); outgoing?.destroy(); });
 			if (body !== undefined) outgoing.write(body);
 			outgoing.end();
 		} catch { fail(); outgoing?.destroy(); }
@@ -139,7 +147,7 @@ export function createPlayStationClient(requester: NativeRequest = nativeRequest
 	async function apiGet<T>(authorization: { accessToken: string }, url: URL): Promise<T> {
 		if (!authorization.accessToken || /[\r\n]/.test(authorization.accessToken)) throw new Error('Invalid PlayStation authorization');
 		const response = await request(requester, url, 'GET', { Authorization: `Bearer ${authorization.accessToken}`, 'Content-Type': 'application/json' });
-		if (response.status !== 200) throw new Error('PlayStation request failed');
+		if (response.status !== 200) throw new PlayStationRequestError(`playstation-http-${response.status}`);
 		return parseJson(response.body) as T;
 	}
 	const path = (value: string): string => encodeURIComponent(value);

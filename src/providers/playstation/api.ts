@@ -11,10 +11,12 @@ import {
 } from './schemas';
 
 export const PLAYSTATION_MAX_PAGES = 100;
+/** Sony's gamelist endpoint rejects pages above 500 titles with HTTP 400; 200 matches other PSN clients. */
+export const PLAYSTATION_PLAYED_GAMES_PAGE_SIZE = 200;
 
 function validated<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown): T {
 	const parsed = schema.safeParse(value);
-	if (!parsed.success) throw new Error('Invalid PlayStation response');
+	if (!parsed.success) throw Object.assign(new Error('Invalid PlayStation response'), { code: 'playstation-invalid-response' });
 	return parsed.data;
 }
 
@@ -28,7 +30,7 @@ export function createPlayStationApi(auth: PlayStationAuthService, accountId = '
 
 	return {
 		async getUserPlayedGames(options = {}) {
-			const limit = options.limit ?? 800;
+			const limit = Math.min(options.limit ?? PLAYSTATION_PLAYED_GAMES_PAGE_SIZE, PLAYSTATION_PLAYED_GAMES_PAGE_SIZE);
 			let offset = options.offset ?? 0;
 			const titles = [];
 			let totalItemCount: number | undefined;

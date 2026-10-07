@@ -100,6 +100,8 @@ export interface SyncServiceOptions {
 	history?: EventHistorySink;
 	secretValues?: readonly string[];
 	isActive?: () => boolean;
+	/** Receives the sanitized outcome of every provider fetch, e.g. for the diagnostic report. */
+	onProviderPrepared?: (status: ProviderStatusSummary) => void;
 }
 
 export interface EventHistorySink {
@@ -178,8 +180,9 @@ function providerLabel(provider: GameProvider): string {
 	return provider === 'steam' ? 'Steam' : 'PlayStation';
 }
 
-function providerWarning(provider: GameProvider, kind: 'connectionFailed' | 'fetchFailed' | 'incomplete'): string {
-	return t(`sync.warnings.${kind}` as TranslationKey, { provider: providerLabel(provider) });
+function providerWarning(provider: GameProvider, kind: 'connectionFailed' | 'fetchFailed' | 'incomplete', errorCode?: string): string {
+	const message = t(`sync.warnings.${kind}` as TranslationKey, { provider: providerLabel(provider) });
+	return errorCode === undefined ? message : `${message} ${t('sync.warnings.errorCode', { code: errorCode })}`;
 }
 
 function errorDetails(error: unknown, secretValues: readonly string[] = []): { code: string; message: string } {
@@ -735,6 +738,7 @@ export class SyncService {
 			connection: safeConnection,
 			...(safeSnapshot.error === undefined ? {} : { error: safeSnapshot.error }),
 		};
+		this.options.onProviderPrepared?.(providerStatus);
 		const statuses = { [provider]: providerStatus } as Record<GameProvider, ProviderStatusSummary>;
 		return {
 			provider,
@@ -789,14 +793,14 @@ export class SyncService {
 				paginationComplete: false,
 				error: details,
 			};
-			return this.buildProviderPreparation(provider, failedSnapshot, state, previous, connection, [providerWarning(provider, 'fetchFailed'), ...warnings]);
+			return this.buildProviderPreparation(provider, failedSnapshot, state, previous, connection, [providerWarning(provider, 'fetchFailed', details.code), ...warnings]);
 		}
 		if (snapshot.status === 'failed') {
 			const safeSnapshot = sanitizeProviderSnapshot(snapshot, this.options.secretValues ?? []);
-			return this.buildProviderPreparation(provider, safeSnapshot, state, previous, connection, [providerWarning(provider, 'fetchFailed'), ...warnings]);
+			return this.buildProviderPreparation(provider, safeSnapshot, state, previous, connection, [providerWarning(provider, 'fetchFailed', safeSnapshot.error?.code), ...warnings]);
 		}
 		const safeSnapshot = sanitizeProviderSnapshot(snapshot, this.options.secretValues ?? []);
-		if (safeSnapshot.error !== undefined) warnings.push(providerWarning(provider, 'incomplete'));
+		if (safeSnapshot.error !== undefined) warnings.push(providerWarning(provider, 'incomplete', safeSnapshot.error.code));
 		return this.buildProviderPreparation(provider, safeSnapshot, state, previous, connection, warnings, this.achievementSourceFetchedAt(safeSnapshot));
 	}
 
