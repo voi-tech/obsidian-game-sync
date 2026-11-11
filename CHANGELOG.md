@@ -1,5 +1,20 @@
 # Changelog
 
+## 26.11.0 (BRAT prerelease)
+
+- Added an import of PlayStation purchases: a console script copies the Sony transaction history (without payment or address data) and the import writes purchase date, price and currency to existing game notes. Writes check that the note was not edited after the preview, a missing price or currency keeps existing values, refunds are matched by time, transaction, SKU and amount (ambiguous refunds are reported, not guessed), and an incomplete export is not copied.
+- Reworked the sync preview: sections ordered from least to most effort, bulk and per-section selection, "Decide later" that skips only the current sync, and colliding library entries combined into one game. Progress notices while preparing and applying.
+- Settings and ignored games no longer revert when a preview or the setup wizard was open while they changed (three-way merge on save).
+- Stable identifiers of one game that point to different notes now require a decision instead of updating the first note found. Property names that differ only in case (`Title`, `title`) are treated as one property.
+- One malformed note becomes a conflict for that game instead of stopping the whole sync. Achievement blocks follow CommonMark code fence rules, so marker examples inside code blocks are never replaced.
+- Match manager actions (unmerge, resolve, allow matching) wait for a running sync. In GameTrack imports, a note edited after the preview is skipped and reported while the rest is written.
+- Steam: requests are retried after 429, 502, 503, 504 and network errors (honouring Retry-After up to 30 s); an incomplete library or failed achievement response is reported as partial; achievements use the stable `apiname` ID.
+- PlayStation: a temporary token refresh failure keeps the stored session instead of disconnecting.
+- Trophy counters count only earned trophies. Title matching in enrichers handles Unicode and trademark signs.
+- Library filters (unplayed, free-to-play, no longer owned) now decide which games get new notes; games that already have a note keep syncing. Settings without effect (metadata language, history, demos and betas) are hidden. "Open Games.base" creates the base on first use.
+- main.js shrank from 1.06 MB to 0.70 MB. Tooling: eslint-plugin-obsidianmd 0.5, CI on Node 20, 24 and 26.
+- Verified with 640 automated tests and CI. Not yet verified in Obsidian with real Steam or PlayStation accounts.
+
 ## 26.10.3 (BRAT prerelease)
 
 - Rebuilt settings on the declarative Obsidian 1.13 settings API: native groups, native sub-pages instead of the Additional settings modal, folder and file pickers, and Game Sync entries in the Obsidian settings search. Versions older than 1.13 are not supported.
