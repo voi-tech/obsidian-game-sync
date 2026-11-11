@@ -12,6 +12,30 @@ import type { SecretStore } from '../src/auth/secrets';
 import type { ProviderGame } from '../src/model/provider';
 
 describe('PlayStation normalization', () => {
+	it('joins a purchase without a concept ID to the played concept that lists its title ID', () => {
+		const { games } = normalizePlayStationLibrary({
+			played: [{ titleId: 'PPSA04609_00', name: 'ELDEN RING', category: 'ps5_native_game', playDuration: 'PT39H53M', lastPlayedDateTime: '2024-01-01T10:00:00Z', concept: { id: 10000333, name: 'ELDEN RING', titleIds: ['CUSA18723_00', 'PPSA04609_00'] } }],
+			purchased: [
+				{ titleId: 'CUSA18723_00', name: 'ELDEN RING', platform: 'PS4', conceptId: null },
+				{ titleId: 'PPSA04609_00', name: 'ELDEN RING', platform: 'PS5', conceptId: null },
+			],
+			trophyTitles: [{ npCommunicationId: 'NPWR22810_00', npServiceName: 'trophy2', trophyTitleName: 'ELDEN RING™' }] as PlayStationTrophyTitle[],
+		});
+
+		expect(games).toHaveLength(1);
+		expect(games[0]).toMatchObject({ providerGameId: '10000333', owned: true, acquisitionType: 'purchased', playtimeMinutes: 2393, platforms: ['ps4', 'ps5'], identity: { npCommunicationIds: ['NPWR22810_00'] } });
+	});
+
+	it('assigns trophies with Unicode titles and prefers the played entry over an unplayed duplicate', () => {
+		const { games } = normalizePlayStationLibrary({
+			played: [{ titleId: 'PPSA08332_00', name: 'God of War Ragnarök', category: 'ps5_native_game', playDuration: 'PT1H', concept: { id: 10001850, name: 'God of War Ragnarök' } }],
+			purchased: [{ titleId: 'CUSA34390_00', name: 'God of War Ragnarök', platform: 'PS4', conceptId: null }],
+			trophyTitles: [{ npCommunicationId: 'NPWR21471_00', trophyTitleName: 'God of War Ragnarök' }] as PlayStationTrophyTitle[],
+		});
+
+		expect(games.find((game) => game.providerGameId === '10001850')?.identity).toMatchObject({ npCommunicationIds: ['NPWR21471_00'] });
+	});
+
 	it('merges PS4 and PS5 records by concept while preserving all identifiers', () => {
 		const normalized = normalizePlayStationLibrary({ played: played.titles, purchased: purchased.data.purchasedTitlesRetrieve.games, recentlyPlayed: recentlyPlayed.data.gameLibraryTitlesRetrieve.games, trophyTitles: trophyTitles.titles as PlayStationTrophyTitle[] });
 		const games = normalized.games;

@@ -1,5 +1,13 @@
 # Changelog
 
+## 26.11.1 (BRAT prerelease)
+
+- PlayStation: purchases reported without a concept ID now join the game that already lists their title ID. Before, one game was split into two or three entries, the played one was marked as not owned, and trophies were not attached. Trophy lists are matched with Unicode-aware titles and prefer the played entry.
+- Existing notes named by hand with a year and simplified punctuation (`Detroit - Become Human (2018)` for `Detroit: Become Human™`) are offered for review instead of getting a duplicate note. Never merged automatically; whole-title match only, so sequels do not match.
+- Game Sync remembers which note each game was written to or merged with, so it recognises its notes when the ID properties are turned off in the property mapping. The link follows renamed and moved notes and is dropped when the note is deleted. Links for notes created by 26.11.0 are recovered from the operation journal.
+- "Merge" and "Keep separate" in the review now work for notes without a `game-sync-id` (before: "The review candidate has no stable identity"). Merging a second platform into a note that already belongs to a game combines them into one game; unmerge links both notes.
+- Verified with 655 automated tests, including a read-only simulation against a real vault (all 36 duplicates from 26.11.0 found their original note). Not yet verified in Obsidian with real accounts.
+
 ## 26.11.0 (BRAT prerelease)
 
 - Added an import of PlayStation purchases: a console script copies the Sony transaction history (without payment or address data) and the import writes purchase date, price and currency to existing game notes. Writes check that the note was not edited after the preview, a missing price or currency keeps existing values, refunds are matched by time, transaction, SKU and amount (ambiguous refunds are reported, not guessed), and an incomplete export is not copied.

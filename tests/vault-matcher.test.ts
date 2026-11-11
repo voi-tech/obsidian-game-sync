@@ -12,6 +12,18 @@ const game: NormalizedGame = {
 };
 
 describe('vault note matcher', () => {
+	it('offers a hand-named note with a year and simplified punctuation for review instead of creating a duplicate', async () => {
+		const psn = { ...game, title: 'Detroit: Become Human™', releaseDate: undefined };
+		const gateway = new FakeVaultGateway({
+			'resources/gry/Detroit - Become Human (2018).md': '---\nend: 2023-01-01\n---\n# Detroit - Become Human (2018)',
+			'resources/gry/Detroit Evolution (2018).md': '---\n---\nother',
+		});
+		const match = matchVaultNote(psn, await buildNoteIndex(gateway), { candidateFolder: 'resources/gry', targetPath: 'resources/gry/Detroit Become Human™.md' });
+
+		expect(match).toMatchObject({ status: 'review', method: 'filename-title', note: { path: 'resources/gry/Detroit - Become Human (2018).md' } });
+		expect(matchVaultNote(psn, await buildNoteIndex(gateway), { candidateFolder: 'Games' }).status).toBe('none');
+	});
+
 	it('never offers notes outside the games folder as title guesses, but still honours stable IDs anywhere', async () => {
 		const gateway = new FakeVaultGateway({
 			'resources/filmy/Example Game (2024).md': '---\naliases: "Example Game"\nreleased: 2024\n---\nfilm',

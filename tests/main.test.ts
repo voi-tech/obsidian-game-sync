@@ -69,6 +69,8 @@ vi.mock('obsidian', () => ({
 		constructor(app: unknown) {
 			this.app = app;
 		}
+
+		registerEvent(): void { /* events are released with the plugin */ }
 	},
 	Notice: class {
 		constructor(message: string) {
@@ -87,11 +89,14 @@ function createHost(rawState: unknown, secrets: Record<string, string> = {}) {
 	const settingTabs: unknown[] = [];
 	const registeredIntervals: number[] = [];
 	const layoutCallbacks: Array<() => void> = [];
+	const vaultEvents: Array<{ name: string; callback: (file: { path: string }, oldPath: string) => void }> = [];
+	const registerEvent = vi.fn();
 	const host = {
 		app: {
 			vault: {
 				getAbstractFileByPath: () => null,
 				getMarkdownFiles: () => [],
+				on: (name: string, callback: (file: { path: string }, oldPath: string) => void) => { vaultEvents.push({ name, callback }); return {}; },
 			},
 			fileManager: {},
 			secretStorage: {
@@ -100,7 +105,7 @@ function createHost(rawState: unknown, secrets: Record<string, string> = {}) {
 			},
 			workspace: { openLinkText: vi.fn(), onLayoutReady: (callback: () => void) => { layoutCallbacks.push(callback); } },
 		} as unknown as import('obsidian').App,
-		plugin: {} as import('obsidian').Plugin,
+		plugin: { registerEvent } as unknown as import('obsidian').Plugin,
 		loadData: vi.fn(async () => rawState),
 		saveData: vi.fn(async () => undefined),
 		addCommand: (command: { id: string; name: string; callback: () => void }) => { commands.push(command); },
@@ -110,7 +115,7 @@ function createHost(rawState: unknown, secrets: Record<string, string> = {}) {
 			return timerId;
 		},
 	};
-	return { host, commands, settingTabs, registeredIntervals, layoutCallbacks };
+	return { host, commands, settingTabs, registeredIntervals, layoutCallbacks, vaultEvents, registerEvent };
 }
 
 describe('main runtime integration', () => {
@@ -119,6 +124,18 @@ describe('main runtime integration', () => {
 		mainTestMocks.setupOptions = undefined;
 		mainTestMocks.previewOptions = undefined;
 		vi.clearAllMocks();
+	});
+
+	it('moves a note link when the linked note is renamed', async () => {
+		const fixture = createHost({ noteLinks: [{ canonicalId: 'game-sync:a', path: 'Games/A.md' }] });
+		const runtime = createGameSyncRuntime(fixture.host, { isMobile: () => false });
+		await runtime.ready;
+
+		const rename = fixture.vaultEvents.find((event) => event.name === 'rename');
+		expect(fixture.registerEvent).toHaveBeenCalled();
+		rename?.callback({ path: 'Games/A (2020).md' }, 'Games/A.md');
+		await vi.waitFor(() => expect(fixture.host.saveData).toHaveBeenCalledWith(expect.objectContaining({ noteLinks: [{ canonicalId: 'game-sync:a', path: 'Games/A (2020).md' }] })));
+		runtime.stop();
 	});
 
 	it('registers exactly 13 commands and stops the scheduler on dispose', async () => {

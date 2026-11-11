@@ -2,11 +2,11 @@ import type { NormalizedGame } from '../model/game';
 import type { CanonicalGame } from '../model/canonical-game';
 import type { GameProvider } from '../model/provider';
 import type { IdentityMapping } from '../model/identity';
-import { normalizeTitle } from '../identity/normalize-title';
+import { normalizeTitle, titleMatchKey } from '../identity/normalize-title';
 import { isSafeForAutomaticMerge, type MatchConfidence } from '../identity/confidence';
 import { resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
 import type { IndexedNote, NoteIndex } from './note-index';
-import type { NegativeIdentityMapping } from '../state/schema';
+import type { NegativeIdentityMapping, NoteLink } from '../state/schema';
 
 export type MatchMethod =
 	| 'game-sync-id'
@@ -14,10 +14,12 @@ export type MatchMethod =
 	| 'gametrack-id'
 	| 'provider-id'
 	| 'durable-mapping'
+	| 'note-link'
 	| 'exact-title'
 	| 'exact-filename'
 	| 'title-year'
 	| 'normalized-title-year'
+	| 'filename-title'
 	| 'ambiguous';
 
 export type VaultMatchStatus = 'matched' | 'review' | 'conflict' | 'none';
@@ -35,12 +37,22 @@ export interface VaultMatcherOptions {
 	targetPath?: string;
 	mappings?: readonly IdentityMapping[];
 	negativeMappings?: readonly NegativeIdentityMapping[];
+	/** Notes this game was written to or merged with before; trusted like a stable ID while the note exists. */
+	noteLinks?: readonly NoteLink[];
 	propertyMapping?: PropertyMapping;
 	/**
 	 * Limits title/filename guesses to this folder. Stable IDs still match anywhere, but a film or book
 	 * note elsewhere in the vault must never be offered as "the same game" just because titles match.
 	 */
 	candidateFolder?: string;
+}
+
+/**
+ * Stand-in identity of a note without a game-sync-id, used to record "this game is not that note" decisions.
+ * The decision follows the path; renaming the note offers it again, which errs on the side of asking.
+ */
+export function noteRefId(path: string): string {
+	return `note:${path}`;
 }
 
 function inFolder(folder: string | undefined): (note: IndexedNote) => boolean {
@@ -104,6 +116,25 @@ function filenameStem(path: string): string {
 	return path.split('/').at(-1)?.replace(/\.md$/iu, '') ?? path;
 }
 
+/**
+ * Notes named by hand often carry the year and replace characters that file names cannot hold
+ * ("Detroit - Become Human (2018)" for "Detroit: Become Human™"). Compared loosely, these are only
+ * candidates for review, never an automatic merge.
+ */
+function filenameYear(path: string): string | undefined {
+	return /\((\d{4})\)\s*$/u.exec(filenameStem(path))?.[1];
+}
+
+function filenameTitleCandidates(notes: readonly IndexedNote[], titles: readonly string[]): IndexedNote[] {
+	const wanted = new Set(titles.map(titleMatchKey).filter((key) => key.length > 0));
+	if (wanted.size === 0) return [];
+	return uniqueNotes(notes.filter((note) => {
+		const stem = filenameStem(note.path).replace(/\s*\(\d{4}\)\s*$/u, '');
+		const names = [stem, note.title, ...values(note.properties, ['aliases', 'alias'])].filter((value): value is string => value !== undefined);
+		return names.some((name) => wanted.has(titleMatchKey(name)));
+	}));
+}
+
 function matchByPriority(notes: readonly IndexedNote[], method: MatchMethod, confidence: MatchConfidence, reason?: string): VaultMatch {
 	const candidates = uniqueNotes(notes);
 	if (candidates.length > 1) return { status: 'conflict', method: 'ambiguous', confidence: 'ambiguous', candidates, reason: reason ?? `Multiple notes matched ${method}.` };
@@ -122,8 +153,7 @@ export function matchVaultNote(game: NormalizedGame, index: NoteIndex, options: 
 	const gameSyncIdKey = resolvePropertyMapping(options.propertyMapping).gameSyncId;
 	const negativeMappings = options.negativeMappings ?? [];
 	const isNegative = (note: IndexedNote): boolean => {
-		const noteCanonicalId = values(note.properties, gameSyncIdKey === undefined ? [] : [gameSyncIdKey])[0];
-		if (noteCanonicalId === undefined) return false;
+		const noteCanonicalId = values(note.properties, gameSyncIdKey === undefined ? [] : [gameSyncIdKey])[0] ?? noteRefId(note.path);
 		return negativeMappings.some((mapping) =>
 			(mapping.leftCanonicalId === game.canonicalId && mapping.rightCanonicalId === noteCanonicalId)
 			|| (mapping.rightCanonicalId === game.canonicalId && mapping.leftCanonicalId === noteCanonicalId),
@@ -167,6 +197,12 @@ export function matchVaultNote(game: NormalizedGame, index: NoteIndex, options: 
 	}
 	if (durable.length > 0) return matchByPriority(durable, 'durable-mapping', 'explicit');
 
+	const linkedPaths = new Set((options.noteLinks ?? []).filter((link) => link.canonicalId === game.canonicalId).map((link) => link.path));
+	const linked = filterNegative(index.notes.filter((note) => linkedPaths.has(note.path)
+		// A note that meanwhile carries another game's ID is not ours any more.
+		&& (gameSyncIdKey === undefined || values(note.properties, [gameSyncIdKey]).every((id) => id === game.canonicalId))));
+	if (linked.length > 0) return matchByPriority(linked, 'note-link', 'explicit');
+
 	const heuristic = inFolder(options.candidateFolder);
 	const byTitle = filterNegative(titleCandidates(index, game).filter(heuristic));
 	if (byTitle.length > 0) return matchByPriority(byTitle, 'exact-title', 'likely');
@@ -184,6 +220,9 @@ export function matchVaultNote(game: NormalizedGame, index: NoteIndex, options: 
 		const normalizedTitleYear = filterNegative(index.notes.filter((note) => heuristic(note) && note.title !== undefined && normalizeTitle(note.title) === normalizeTitle(game.title) && noteYear(note) === year));
 		if (normalizedTitleYear.length > 0) return matchByPriority(normalizedTitleYear, 'normalized-title-year', 'likely');
 	}
+
+	const byLooseTitle = filterNegative(filenameTitleCandidates(index.notes.filter(heuristic), [game.title]));
+	if (byLooseTitle.length > 0) return matchByPriority(byLooseTitle, 'filename-title', 'likely', 'The note name matches the game title without its year or punctuation.');
 
 	return { status: 'none', confidence: 'none', candidates: [] };
 }
@@ -257,5 +296,9 @@ export function matchCanonicalVaultNote(game: CanonicalGame, index: NoteIndex, o
 		const target = index.notes.filter((note) => note.path === options.targetPath);
 		if (target.length > 0) return matchByPriority(target, 'exact-filename', 'likely', 'Target path fallback requires review.');
 	}
+	const loose = filenameTitleCandidates(index.notes.filter(inFolder(options.candidateFolder)), [game.title, ...(game.aliases ?? [])])
+		// Only names carrying a year: a bare file at the target path is handled above and may be unrelated.
+		.filter((note) => filenameYear(note.path) !== undefined && (year === undefined || (filenameYear(note.path) === year && (noteYear(note) ?? year) === year)));
+	if (loose.length > 0) return matchByPriority(loose, 'filename-title', 'likely', 'The note name matches the game title without its year or punctuation.');
 	return { status: 'none', confidence: 'none', candidates: [] };
 }

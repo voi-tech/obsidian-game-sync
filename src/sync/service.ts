@@ -1,7 +1,7 @@
 import { resolveCanonicalGameId } from '../model/identity';
 import { t, type TranslationKey } from '../i18n';
 import type { NormalizedGame, NormalizedProviderGame } from '../model/game';
-import type { GameSyncData, LastSuccessfulProviderState, OperationJournalEntry } from '../state/schema';
+import type { GameSyncData, LastSuccessfulProviderState, NoteLink, OperationJournalEntry } from '../state/schema';
 import { migrateState } from '../state/migrations';
 import type { StateStore } from '../state/store';
 import type {
@@ -27,6 +27,7 @@ import { addNegativeMapping, addPositiveMapping, removeNegativeMapping } from '.
 import type { ReviewDecision } from '../ui/preview-modal';
 import type { MatchManagerAdapter, MatchManagerRow, MatchResolutionAction, PreparedUnmerge, UnmergePreview } from '../model/match-manager';
 import { buildManagedProperties, resolvePropertyMapping } from '../model/property-mapping';
+import { noteRefId } from '../vault/matcher';
 import { buildNoteIndex, type IndexedNote } from '../vault/note-index';
 import { parseFrontmatter } from '../vault/frontmatter';
 import { VaultConflictError } from '../network/errors';
@@ -125,6 +126,11 @@ interface ProviderFetchRecord {
 interface RecoveryOperationsResult {
 	operations: Array<{ operation: Operation; progress: ExecutorProgress }>;
 	rejectedOperationIds: string[];
+}
+
+/** Records that `canonicalId` lives in the note at `path`; one note per game. */
+function linkNote(state: GameSyncData, canonicalId: string, path: string): void {
+	state.noteLinks = [...state.noteLinks.filter((link) => link.canonicalId !== canonicalId), { canonicalId, path }];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -543,6 +549,22 @@ export class SyncService {
 		}
 	}
 
+	/**
+	 * Note links as persisted now (a rename handled elsewhere may have moved one), without links whose note is
+	 * gone: a later, unrelated note at that path must never be adopted as the game's note.
+	 */
+	private async currentNoteLinks(state: GameSyncData): Promise<NoteLink[]> {
+		if (this.stateStore !== undefined) {
+			const persisted = (await this.stateStore.load()).noteLinks;
+			state.noteLinks = persisted.map((link) => ({ ...link }));
+			if (this.stateBaseline !== undefined) this.stateBaseline.noteLinks = persisted.map((link) => ({ ...link }));
+		}
+		const existing: NoteLink[] = [];
+		for (const link of state.noteLinks) if (await this.planner.gateway.exists(link.path)) existing.push(link);
+		state.noteLinks = existing;
+		return existing;
+	}
+
 	private async loadState(): Promise<GameSyncData> {
 		if (this.stateValue === undefined) {
 			this.stateValue = this.stateStore !== undefined
@@ -639,6 +661,7 @@ export class SyncService {
 		const state = await this.loadState();
 		return this.planner.plan(games, planRevision, {
 			identityMappings: state.identityMappings,
+			noteLinks: await this.currentNoteLinks(state),
 			negativeMappings: state.negativeMappings,
 			ignoredCanonicalIds: state.ignoredCanonicalIds,
 			ignoredProviderRefs: state.ignoredProviderRefs,
@@ -852,6 +875,7 @@ export class SyncService {
 		this.currentSourceRevision = planRevision;
 		const plan = await this.planner.plan(games, planRevision, {
 			identityMappings: state.identityMappings,
+			noteLinks: await this.currentNoteLinks(state),
 			negativeMappings: state.negativeMappings,
 			ignoredCanonicalIds: state.ignoredCanonicalIds,
 			ignoredProviderRefs: state.ignoredProviderRefs,
@@ -885,6 +909,7 @@ export class SyncService {
 		const identityIndex = state.identityIndex.filter((identity) => identity.canonicalId !== game.canonicalId);
 		identityIndex.push({ ...game.identity, canonicalId: game.canonicalId });
 		state.identityIndex = identityIndex;
+		if (_operation.kind !== 'create-base' && _operation.path !== undefined) linkNote(state, game.canonicalId, _operation.path);
 		if (this.options.onProviderState !== undefined) await this.options.onProviderState(game, _operation);
 		await this.saveState();
 	}
@@ -1342,6 +1367,7 @@ export class SyncService {
 		this.currentSourceRevision = planRevision;
 		const plan = await this.planner.plan(games, planRevision, {
 			identityMappings: state.identityMappings,
+			noteLinks: await this.currentNoteLinks(state),
 			negativeMappings: state.negativeMappings,
 			ignoredCanonicalIds: state.ignoredCanonicalIds,
 			ignoredProviderRefs: state.ignoredProviderRefs,
@@ -1498,6 +1524,8 @@ export class SyncService {
 				: mapping);
 			nextState.identityIndex = nextState.identityIndex.filter((identity) => identity.canonicalId !== operation.canonicalGameId && identity.canonicalId !== newCanonicalId);
 			nextState.identityIndex.push({ ...keptGame.identity, canonicalId: operation.canonicalGameId }, { ...splitGame.identity, canonicalId: newCanonicalId });
+			linkNote(nextState, operation.canonicalGameId, operation.path);
+			linkNote(nextState, newCanonicalId, operation.newPath);
 			this.stateValue = nextState;
 			await this.saveState();
 			this.canonicalIds.set(providerRef(operation.providerToSplit, operation.providerToSplitId), newCanonicalId);
@@ -1547,11 +1575,36 @@ export class SyncService {
 		if (decision.candidatePath === undefined) throw new VaultConflictError('The review candidate is unavailable.');
 		const index = await buildNoteIndex(this.planner.gateway, state.propertyMapping);
 		const note = index.notes.find((candidate) => candidate.path === decision.candidatePath);
-		const gameSyncIdKey = resolvePropertyMapping(state.propertyMapping).gameSyncId ?? 'game-sync-id';
-		const candidateValue = note?.properties[gameSyncIdKey];
+		// Same key the matcher reads: with the ID property turned off, an old leftover ID on the note is ignored
+		// and the decision is recorded against the note itself.
+		const gameSyncIdKey = resolvePropertyMapping(state.propertyMapping).gameSyncId;
+		const candidateValue = gameSyncIdKey === undefined ? undefined : note?.properties[gameSyncIdKey];
 		const candidateId = typeof candidateValue === 'string' ? candidateValue : undefined;
-		if (candidateId === undefined) throw new VaultConflictError('The review candidate has no stable identity.');
 		if (note === undefined || noteFingerprint(await this.planner.gateway.read(note.path)) !== candidate.fingerprint) throw new VaultConflictError('The review candidate changed after the preview.');
+		if (candidateId === undefined) {
+			// A note without a game-sync-id (written by hand, or IDs turned off in the property mapping): remember
+			// the note for this game. Keeping them separate needs no record, the next plan simply creates a note.
+			const owners = [...new Set(state.noteLinks.filter((link) => link.path === note.path && link.canonicalId !== game.canonicalId).map((link) => link.canonicalId))];
+			if (decision.action === 'merge' && owners.length > 1) throw new VaultConflictError('The review candidate already belongs to more than one game.');
+			if (decision.action === 'merge' && owners.length === 1) {
+				// The note already belongs to another game (e.g. the Steam entry): one game with both providers.
+				this.mergeGameInto(state, game, owners[0]);
+				await this.saveState();
+				return;
+			}
+			if (decision.action === 'merge') {
+				for (const [provider, providerGame] of Object.entries(game.providers) as [GameProvider, NormalizedProviderGame | undefined][]) {
+					if (providerGame !== undefined) state.identityMappings = addPositiveMapping(state, { canonicalId: game.canonicalId, provider, providerGameId: providerGame.providerGameId }).identityMappings as GameSyncData['identityMappings'];
+				}
+				linkNote(state, game.canonicalId, note.path);
+			} else {
+				state.noteLinks = state.noteLinks.filter((link) => !(link.canonicalId === game.canonicalId && link.path === note.path));
+				state.negativeMappings = addNegativeMapping(state, game.canonicalId, noteRefId(note.path)).negativeMappings as GameSyncData['negativeMappings'];
+			}
+			this.stateValue = state;
+			await this.saveState();
+			return;
+		}
 		if (decision.action === 'merge') {
 			this.mergeGameInto(state, game, candidateId);
 			await this.saveState();

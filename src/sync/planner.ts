@@ -1,7 +1,7 @@
 import { allowsNewNote, type LibraryFilterSettings } from './library-filter';
 import { VaultConflictError } from '../network/errors';
 import type { IdentityMapping } from '../model/identity';
-import type { NegativeIdentityMapping } from '../state/schema';
+import type { NegativeIdentityMapping, NoteLink } from '../state/schema';
 import type { NormalizedGame } from '../model/game';
 import { createOperation, createSyncPlan, type OperationInput, type SyncPlan } from '../model/operations';
 import { resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
@@ -45,6 +45,7 @@ export interface SyncPlannerOptions {
 
 export interface SyncPlannerState {
 	identityMappings?: readonly IdentityMapping[];
+	noteLinks?: readonly NoteLink[];
 	negativeMappings?: readonly NegativeIdentityMapping[];
 	ignoredCanonicalIds?: readonly string[];
 	ignoredProviderRefs?: readonly string[];
@@ -112,6 +113,7 @@ export class SyncPlanner {
 			const match = matchVaultNote(game, noteIndex, {
 				targetPath,
 				mappings,
+				noteLinks: state.noteLinks,
 				negativeMappings: state.negativeMappings ?? this.options.negativeMappings,
 				propertyMapping: this.options.propertyMapping,
 				candidateFolder: (this.options.notesFolder ?? 'Games').replace(/\/+$/u, ''),

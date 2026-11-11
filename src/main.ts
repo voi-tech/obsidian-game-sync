@@ -20,6 +20,7 @@ import { registerGameSyncCommands, type CommandErrorHandler, type CommandRegistr
 import { GAME_SYNC_RUNTIME_REGISTRY } from './runtime/registry';
 import { createStateStore, type StateStore } from './state/store';
 import { BackgroundSyncScheduler } from './sync/scheduler';
+import { removeNoteLinks, renameNoteLinks } from './state/note-links';
 import { createSyncConcurrencyGuard } from './sync/concurrency';
 import { retry } from './sync/retry';
 import type { ProviderStatusSummary, SyncService } from './sync/service';
@@ -521,6 +522,15 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 	});
 	schedulerRef = scheduler;
 	const ready = scheduler.start();
+	// Notes linked by path (ID properties turned off) must stay linked when the user renames or moves them.
+	const updateNoteLinks = (change: (state: Awaited<ReturnType<typeof stateStore.load>>) => boolean): void => {
+		void syncLock(async () => {
+			const state = await stateStore.load();
+			if (change(state)) await stateStore.save(state);
+		}).catch((error: unknown) => { console.warn('Game Sync: could not update the note links.', error); });
+	};
+	host.plugin?.registerEvent(host.app.vault.on('rename', (file, oldPath) => { updateNoteLinks((state) => renameNoteLinks(state, oldPath, file.path)); }));
+	host.plugin?.registerEvent(host.app.vault.on('delete', (file) => { updateNoteLinks((state) => removeNoteLinks(state, file.path)); }));
 
 	return {
 		stateStore,

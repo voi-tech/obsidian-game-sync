@@ -13,6 +13,7 @@ import type {
 	GameSyncData,
 	LastSuccessfulProviderState,
 	NegativeIdentityMapping,
+	NoteLink,
 	ProviderPresenceState,
 } from './schema';
 
@@ -736,6 +737,7 @@ function migrateVersionOne(raw: unknown): GameSyncData {
 			'operationJournal',
 			'recentActivity',
 			'identityIndex',
+			'noteLinks',
 		],
 		'persistent state',
 	);
@@ -758,7 +760,30 @@ function migrateVersionOne(raw: unknown): GameSyncData {
 		operationJournal: readOperationJournal(raw.operationJournal),
 		recentActivity: readArray<ActivityEntry>(raw.recentActivity, [], readActivity, 'recent activity').slice(-MAX_RECENT_ACTIVITY),
 		identityIndex: readArray<GameIdentity>(raw.identityIndex, [], readGameIdentity, 'identity index'),
+		...noteLinksFrom(raw),
 	};
+}
+
+function readNoteLink(value: unknown): NoteLink {
+	if (!isRecord(value)) throw new StateMigrationError('Invalid note link.');
+	rejectUnknownFields(value, ['canonicalId', 'path'], 'note link');
+	return { canonicalId: requiredString(value.canonicalId, 'note link canonicalId'), path: requiredString(value.path, 'note link path') };
+}
+
+/**
+ * Saved links, or for older state the notes its journal says sync created. Always an array, so the three-way
+ * state merge combines links added concurrently instead of letting one save replace the other.
+ */
+function noteLinksFrom(raw: Record<string, unknown>): { noteLinks: NoteLink[] } {
+	if (raw.noteLinks !== undefined) return { noteLinks: readArray<NoteLink>(raw.noteLinks, [], readNoteLink, 'note links') };
+	if (!Array.isArray(raw.operationJournal)) return { noteLinks: [] };
+	const links = new Map<string, NoteLink>();
+	for (const entry of raw.operationJournal as unknown[]) {
+		if (!isRecord(entry) || entry.noteApplied !== true || !isRecord(entry.operation)) continue;
+		const { kind, canonicalGameId, path } = entry.operation;
+		if (kind === 'create-note' && typeof canonicalGameId === 'string' && typeof path === 'string') links.set(canonicalGameId, { canonicalId: canonicalGameId, path });
+	}
+	return { noteLinks: [...links.values()] };
 }
 
 export function migrateState(raw: unknown): GameSyncData {

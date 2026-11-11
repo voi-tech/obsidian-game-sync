@@ -1,4 +1,5 @@
 import type { ProviderGame } from '../../model/provider';
+import { titleMatchKey } from '../../identity/normalize-title';
 import type { PlayStationPlayedGame, PlayStationPurchasedGame, PlayStationRecentlyPlayedGame, PlayStationTrophyTitle } from './types';
 
 interface Group {
@@ -55,10 +56,6 @@ export interface PlayStationNormalizationResult {
 	trophyServices: ReadonlyMap<string, 'trophy' | 'trophy2'>;
 }
 
-function comparableTitle(value: string): string {
-	return value.toLocaleLowerCase().replace(/[™®©]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
-}
-
 export function normalizePlayStationLibrary(sources: PlayStationLibrarySources): PlayStationNormalizationResult {
 	const groups = new Map<string, Group>();
 	const trophyServices = new Map<string, 'trophy' | 'trophy2'>();
@@ -70,29 +67,42 @@ export function normalizePlayStationLibrary(sources: PlayStationLibrarySources):
 		groups.set(key, created);
 		return created;
 	};
+	const groupKeyByTitleId = new Map<string, string>();
+	const remember = (key: string, group: Group): void => {
+		for (const titleId of group.titleIds) if (!groupKeyByTitleId.has(titleId)) groupKeyByTitleId.set(titleId, key);
+	};
+	// Purchases and recent entries often come without a concept ID. Their title ID usually belongs to a concept
+	// already seen in the played list; grouping by the bare title ID would split one game into several.
+	const keyFor = (conceptId: string | undefined, titleId: string | undefined, name: string): string =>
+		conceptId ?? (titleId === undefined ? undefined : groupKeyByTitleId.get(titleId)) ?? conceptKey(undefined, titleId, name);
 	for (const entry of sources.played) {
 		const conceptId = id(entry.concept?.id);
-		const group = ensure(conceptKey(conceptId, entry.titleId, entry.name), entry.concept?.name ?? entry.localizedName ?? entry.name);
+		const key = keyFor(conceptId, entry.titleId, entry.name);
+		const group = ensure(key, entry.concept?.name ?? entry.localizedName ?? entry.name);
 		group.conceptId ??= conceptId;
 		group.played.push(entry);
 		group.titleIds.add(entry.titleId);
 		for (const titleId of entry.concept?.titleIds ?? []) group.titleIds.add(titleId);
+		remember(key, group);
 		const currentPlatform = platform(entry.category);
 		if (currentPlatform !== undefined) group.platforms.add(currentPlatform);
 		group.cover ??= entry.imageUrl ?? entry.localizedImageUrl;
 	}
 	for (const entry of sources.purchased ?? []) {
 		const conceptId = entry.conceptId ?? undefined;
-		const group = ensure(conceptKey(conceptId, entry.titleId, entry.name), entry.name);
+		const key = keyFor(conceptId, entry.titleId, entry.name);
+		const group = ensure(key, entry.name);
 		group.conceptId ??= conceptId;
 		group.purchased.push(entry);
 		if (entry.titleId !== undefined) group.titleIds.add(entry.titleId);
+		remember(key, group);
 		const currentPlatform = platform(entry.platform);
 		if (currentPlatform !== undefined) group.platforms.add(currentPlatform);
 		group.cover ??= entry.image?.url;
 	}
 	for (const entry of sources.recentlyPlayed ?? []) {
-		const group = ensure(conceptKey(entry.conceptId, entry.titleId, entry.name), entry.name);
+		const key = keyFor(entry.conceptId, entry.titleId, entry.name);
+		const group = ensure(key, entry.name);
 		group.conceptId ??= entry.conceptId;
 		group.recent.push(entry);
 		if (entry.titleId !== undefined) group.titleIds.add(entry.titleId);
@@ -101,10 +111,13 @@ export function normalizePlayStationLibrary(sources: PlayStationLibrarySources):
 		group.cover ??= entry.image?.url;
 	}
 	for (const trophyTitle of sources.trophyTitles ?? []) {
-		const comparable = comparableTitle(trophyTitle.trophyTitleName);
-		const matches = [...groups.values()].filter((entry) => comparableTitle(entry.title) === comparable);
-		if (matches.length !== 1) continue;
-		const group = matches[0];
+		const comparable = titleMatchKey(trophyTitle.trophyTitleName);
+		const matches = [...groups.values()].filter((entry) => titleMatchKey(entry.title) === comparable);
+		// Trophies are earned by playing: when a title also has an unplayed purchase entry, the played one wins.
+		const played = matches.filter((entry) => entry.played.length > 0 || entry.recent.length > 0);
+		const candidates = matches.length === 1 ? matches : played;
+		if (candidates.length !== 1) continue;
+		const group = candidates[0];
 		// The communication ID belongs to the trophy identity, not to a title ID.
 		group.npCommunicationIds.add(trophyTitle.npCommunicationId);
 		if (trophyTitle.npServiceName !== undefined) trophyServices.set(trophyTitle.npCommunicationId, trophyTitle.npServiceName);

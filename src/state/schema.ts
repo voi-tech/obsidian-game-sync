@@ -68,4 +68,14 @@ export interface GameSyncData {
 	operationJournal: OperationJournalEntry[];
 	recentActivity: ActivityEntry[];
 	identityIndex: GameIdentity[];
+	/**
+	 * Which note a game was written to or explicitly merged with. Lets sync recognise its notes when the
+	 * user turned off the ID properties (game-sync-id, provider IDs) in the property mapping.
+	 */
+	noteLinks: NoteLink[];
+}
+
+export interface NoteLink {
+	canonicalId: string;
+	path: string;
 }

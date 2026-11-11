@@ -290,6 +290,49 @@ describe('durable match decisions', () => {
 		});
 	});
 
+	it('merges into a hand-written note without IDs, then updates that note on later syncs instead of asking again', async () => {
+		const playstation = new FakeProvider(fakeProviderSnapshot('playstation', [fakeProviderGame('playstation', 'psn-1', 'Example Game: Remastered™', { playtimeMinutes: 30 })]));
+		const handNote = '---\nend: 2023-01-01\n---\n# Example Game - Remastered (2020)\n';
+		const harness = await createIntegrationHarness({
+			initialFiles: { 'Games/Example Game - Remastered (2020).md': handNote },
+			providers: [playstation],
+			state: { settings: { firstSyncCompleted: true }, propertyMapping: { gameSyncId: null, playstationId: null } },
+		});
+		const prepared = await harness.service.prepareAll();
+		const status = prepared.plan.statuses.find((entry) => entry.status === 'review');
+		expect(status).toMatchObject({ path: 'Games/Example Game - Remastered (2020).md' });
+
+		await harness.service.applyReviewDecision({ planId: prepared.plan.id, canonicalGameId: status!.canonicalGameId, action: 'merge', candidatePath: 'Games/Example Game - Remastered (2020).md' });
+		expect((await harness.service.getState()).noteLinks).toEqual([{ canonicalId: status!.canonicalGameId, path: 'Games/Example Game - Remastered (2020).md' }]);
+
+		const next = await harness.service.prepareAll();
+		expect(next.plan.statuses.find((entry) => entry.canonicalGameId === status!.canonicalGameId)).toMatchObject({ path: 'Games/Example Game - Remastered (2020).md' });
+		expect(next.plan.statuses.some((entry) => entry.status === 'review' || entry.status === 'create')).toBe(false);
+		expect(next.plan.operations.some((operation) => operation.kind === 'create-note')).toBe(false);
+	});
+
+	it('keeps a game separate from a note without IDs durably', async () => {
+		const playstation = new FakeProvider(fakeProviderSnapshot('playstation', [fakeProviderGame('playstation', 'psn-1', 'Example Game')]));
+		const harness = await createIntegrationHarness({
+			initialFiles: { 'Games/Example Game (2020).md': '---\nend: 2023-01-01\n---\nmanual' },
+			providers: [playstation],
+			state: { settings: { firstSyncCompleted: true }, propertyMapping: { gameSyncId: null, playstationId: null } },
+		});
+		const prepared = await harness.service.prepareAll();
+		const status = prepared.plan.statuses.find((entry) => entry.status === 'review')!;
+		await harness.service.applyReviewDecision({ planId: prepared.plan.id, canonicalGameId: status.canonicalGameId, action: 'keep-separate', candidatePath: 'Games/Example Game (2020).md' });
+
+		const next = await harness.service.prepareAll();
+		expect(next.plan.statuses.some((entry) => entry.status === 'review')).toBe(false);
+		expect(next.plan.operations.some((operation) => operation.kind === 'create-note')).toBe(true);
+	});
+
+	it('remembers notes created by older versions from the operation journal', () => {
+		const state = migrateState({ operationJournal: [{ operation: createOperation({ kind: 'create-note', canonicalGameId: 'game-sync:a', path: 'Games/A.md', risk: 'safe', summary: 'Create', planRevision: 'r' }), noteApplied: true, noteFingerprintAfter: 'f', providerStateApplied: true, historyApplied: true, cacheApplied: true }] });
+		expect(state.noteLinks).toEqual([{ canonicalId: 'game-sync:a', path: 'Games/A.md' }]);
+		expect(migrateState({}).noteLinks).toEqual([]);
+	});
+
 	it('rejects a review decision that names a note outside the prepared candidates', async () => {
 		const playstation = new FakeProvider(fakeProviderSnapshot('playstation', [fakeProviderGame('playstation', 'psn-1', 'Example Game')]));
 		const harness = await createIntegrationHarness({
