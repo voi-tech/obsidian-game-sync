@@ -2,6 +2,7 @@ import { Modal, Setting, type App, type ButtonComponent } from 'obsidian';
 import { t } from '../../i18n';
 import type { GameProvider } from '../../model/provider';
 import type { GameSyncSettings } from '../../model/settings';
+import { mergeStateChanges } from '../../state/merge';
 import { migrateState } from '../../state/migrations';
 import type { GameSyncData } from '../../state/schema';
 import type { StateStore } from '../../state/store';
@@ -50,6 +51,8 @@ function isConnected(status: ProviderConnectionStatus | undefined): boolean {
 
 export class SetupModal extends Modal {
 	private state?: GameSyncData;
+	/** State as last loaded or saved by this modal; the base of the merge in persist(). */
+	private baseline?: GameSyncData;
 	private readonly statuses = new Map<Provider, ProviderConnectionStatus>();
 	private gameTrackStatus?: GameTrackRuntimeStatus;
 	private lifecycle = 0;
@@ -89,10 +92,25 @@ export class SetupModal extends Modal {
 		} catch {
 			this.state = migrateState(undefined);
 		}
+		this.baseline = structuredClone(this.state);
 		if (!this.isCurrent(version)) return;
 		this.renderQuickSetup();
 		await Promise.all(PROVIDERS.map((provider) => this.refreshProvider(provider, version)));
 		if (this.options.getGameTrackStatus !== undefined) await this.refreshGameTrack(version);
+	}
+
+	/**
+	 * Saves only what this modal changed on top of the current state. The modal's copy is loaded on open, while
+	 * connecting an account (or anything else) can save newer values in the meantime.
+	 */
+	private async persist(next: GameSyncData): Promise<void> {
+		let current: GameSyncData;
+		try { current = migrateState(await this.options.stateStore.load()); }
+		catch { current = this.baseline ?? next; }
+		const merged = this.baseline === undefined ? next : migrateState(mergeStateChanges(this.baseline, next, current));
+		await this.options.save(merged);
+		this.state = merged;
+		this.baseline = structuredClone(merged);
 	}
 
 	private settings(): GameSyncSettings {
@@ -206,7 +224,7 @@ export class SetupModal extends Modal {
 	private async selectGameTrack(): Promise<void> {
 		if (this.gameTrackStatus?.code !== 'READY' || this.state === undefined) return;
 		this.settings().libraryProvider = 'gametrack';
-		try { await this.options.save(migrateState(this.state)); this.renderQuickSetup(); }
+		try { await this.persist(migrateState(this.state)); this.renderQuickSetup(); }
 		catch { this.setStatus(t('setup.prepareFailed')); }
 	}
 
@@ -219,7 +237,7 @@ export class SetupModal extends Modal {
 			this.settings().gametrackExportName = selection.name;
 			this.settings().gametrackExportSize = selection.size;
 			this.settings().gametrackExportModifiedAt = selection.modifiedAt;
-			await this.options.save(migrateState(this.state));
+			await this.persist(migrateState(this.state));
 			await this.refreshGameTrack();
 		} catch {
 			this.setStatus(t('settings.library.exportError'));
@@ -262,7 +280,7 @@ export class SetupModal extends Modal {
 		const nextState = migrateState(this.state);
 		if (nextState.settings.libraryProvider === 'gametrack') {
 			try {
-				await this.options.save(nextState);
+				await this.persist(nextState);
 				const preview = await (this.options.prepareCanonical ?? this.options.prepareGameTrack)?.();
 				if (preview !== undefined) await (this.options.onCanonicalPreview ?? this.options.onGameTrackPreview)?.(preview);
 				if (this.isCurrent(version)) this.close();
@@ -280,9 +298,8 @@ export class SetupModal extends Modal {
 		for (const provider of PROVIDERS) nextState.settings.enabledProviders[provider] = isConnected(this.statuses.get(provider));
 		nextState.settings.setupCompleted = false;
 		try {
-			await this.options.save(nextState);
+			await this.persist(nextState);
 			if (!this.isCurrent(version)) return;
-			this.state = nextState;
 			const prepared = await this.options.prepareAll();
 			if (!this.isCurrent(version)) return;
 			await this.options.onPreparedSync(prepared);

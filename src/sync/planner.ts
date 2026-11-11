@@ -1,3 +1,5 @@
+import { allowsNewNote, type LibraryFilterSettings } from './library-filter';
+import { VaultConflictError } from '../network/errors';
 import type { IdentityMapping } from '../model/identity';
 import type { NegativeIdentityMapping } from '../state/schema';
 import type { NormalizedGame } from '../model/game';
@@ -37,6 +39,8 @@ export interface SyncPlannerOptions {
 	propertyMapping?: PropertyMapping;
 	/** Same options the writer renders with; required for unchanged notes to diff as unchanged. */
 	achievementOptions?: AchievementRenderOptions;
+	/** Library filters from settings; they only stop new notes, existing notes keep syncing. */
+	libraryFilters?: LibraryFilterSettings;
 }
 
 export interface SyncPlannerState {
@@ -121,11 +125,20 @@ export class SyncPlanner {
 				continue;
 			}
 			if (match.note === undefined) {
+				if (this.options.libraryFilters !== undefined && !allowsNewNote(game, this.options.libraryFilters)) continue;
 				createCandidates.push({ game, targetPath, match });
 				continue;
 			}
 			const content = await this.options.gateway.read(match.note.path);
-			const diff = diffNote(game, content, this.options.propertyMapping, this.options.achievementOptions);
+			let diff: ReturnType<typeof diffNote>;
+			try {
+				diff = diffNote(game, content, this.options.propertyMapping, this.options.achievementOptions);
+			} catch (error) {
+				// A malformed note (e.g. stray achievement delimiters) is a conflict for that game only, not for the whole library.
+				if (!(error instanceof VaultConflictError)) throw error;
+				statuses.push({ canonicalGameId: game.canonicalId, status: 'conflict', path: match.note.path, match, reason: error.message });
+				continue;
+			}
 			const isAdoption = gameSyncIdKey === undefined || match.note.properties[gameSyncIdKey] !== game.canonicalId;
 			if (!diff.changed) {
 				statuses.push({ canonicalGameId: game.canonicalId, status: 'unchanged', path: match.note.path, match });

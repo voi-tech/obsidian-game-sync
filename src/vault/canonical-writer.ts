@@ -117,14 +117,30 @@ export class CanonicalVaultWriter {
 		await beforeWrite?.();
 		await this.ensureCreateFolders(plan.operations.filter((operation) => selected.has(operation.id)));
 		const applied: string[] = [];
+		const failed: string[] = [];
 		for (const operation of plan.operations) {
 			if (!selected.has(operation.id)) continue;
+			// Runtime and folder failures stop the batch; a conflict on one note (edited meanwhile) must not block the others.
 			await beforeWrite?.();
 			const selectedFields = validation.fieldsByOperation.get(operation.id) ?? new Set<string>();
-			if (operation.kind === 'create') await this.create(operation, selectedFields);
-			else await this.update(operation, selectedFields);
-			applied.push(operation.id);
+			try {
+				if (operation.kind === 'create') await this.create(operation, selectedFields);
+				else await this.update(operation, selectedFields);
+				applied.push(operation.id);
+			} catch (error) {
+				if (!(error instanceof VaultConflictError)) throw error;
+				failed.push(operation.id);
+			}
 		}
+		if (failed.length > 0) throw new CanonicalPartialApplyError(applied, failed);
 		return applied;
+	}
+}
+
+/** Some selected notes changed after the preview and were skipped; the rest were written. */
+export class CanonicalPartialApplyError extends VaultConflictError {
+	constructor(readonly appliedOperationIds: readonly string[], readonly failedOperationIds: readonly string[]) {
+		super(`${failedOperationIds.length} note(s) changed after the preview and were skipped; ${appliedOperationIds.length} note(s) were written. Preview the sync again.`);
+		this.name = 'CanonicalPartialApplyError';
 	}
 }

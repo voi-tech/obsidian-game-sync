@@ -146,17 +146,19 @@ describe('Game Sync settings tab (Obsidian 1.13 declarative API)', () => {
 		expect(byName(notes.items, 'Game notes folder')).toMatchObject({ control: { type: 'folder', key: 'notesFolder' } });
 		expect(byName(notes.items, 'Template')).toMatchObject({ control: { type: 'file', key: 'templatePath' } });
 		const more = groupByHeading(items, 'More settings');
-		expect((more.items ?? []).filter(isPage).map((page) => page.name)).toEqual(['Library filters', 'Note properties', 'Game information', 'Additional data', 'Game history']);
-		expect(controlKeys(more.items)).toEqual(expect.arrayContaining(['includeUnplayed', 'metadataLanguage', 'steamEnricherEnabled', 'recordHistory', 'historyPath', 'property:title']));
+		expect((more.items ?? []).filter(isPage).map((page) => page.name)).toEqual(['Library filters', 'Note properties', 'Game information', 'Additional data']);
+		expect(controlKeys(more.items)).toEqual(expect.arrayContaining(['includeUnplayed', 'steamEnricherEnabled', 'property:title']));
+		// Settings with no effect on sync are not offered (they stay in the stored schema for compatibility).
+		for (const hidden of ['metadataLanguage', 'metadataPreference', 'recordHistory', 'historyPath', 'includeDemosTrials', 'includeBetasTestApps']) expect(controlKeys(more.items)).not.toContain(hidden);
 		expect(controlKeys(groupByHeading(items, 'Accounts').items)).toEqual([]);
 	});
 
 	it('persists a change on top of freshly read settings so external changes are kept', async () => {
 		const { tab, host } = await loadedTab();
 		host.current.enabledProviders.playstation = true;
-		await tab.setControlValue('includeDemosTrials', true);
-		expect(host.writeSettings).toHaveBeenLastCalledWith(expect.objectContaining({ includeDemosTrials: true, enabledProviders: { steam: false, playstation: true } }));
-		expect(tab.getControlValue('includeDemosTrials')).toBe(true);
+		await tab.setControlValue('includeFreeToPlay', false);
+		expect(host.writeSettings).toHaveBeenLastCalledWith(expect.objectContaining({ includeFreeToPlay: false, enabledProviders: { steam: false, playstation: true } }));
+		expect(tab.getControlValue('includeFreeToPlay')).toBe(false);
 		expect(vi.mocked(tab).refreshDomState.mock.calls.length).toBeGreaterThan(0);
 	});
 

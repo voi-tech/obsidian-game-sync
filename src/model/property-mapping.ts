@@ -33,11 +33,23 @@ function normalizeDestination(destination: string): string {
 	return destination.trim().toLocaleLowerCase();
 }
 
+/**
+ * Keys added after mappings were already saved. Their default destination yields to a property the user has
+ * already mapped (e.g. `title: purchase-price`), so an older valid mapping never becomes invalid on upgrade.
+ */
+const LATER_DEFAULT_KEYS: ReadonlySet<ManagedPropertyKey> = new Set(['purchaseDate', 'purchasePrice', 'purchaseCurrency']);
+
 function resolveWithoutValidation(mapping: PropertyMapping): ResolvedPropertyMapping {
 	const resolved = {} as ResolvedPropertyMapping;
 	for (const key of Object.keys(DEFAULT_PROPERTY_MAPPING) as ManagedPropertyKey[]) {
 		const destination = mapping[key];
 		resolved[key] = destination === null || destination === false ? undefined : destination === undefined ? DEFAULT_PROPERTY_MAPPING[key] : destination.trim();
+	}
+	const taken = new Set((Object.entries(resolved) as [ManagedPropertyKey, string | undefined][])
+		.filter(([key, destination]) => destination !== undefined && !(LATER_DEFAULT_KEYS.has(key) && mapping[key] === undefined))
+		.map(([, destination]) => normalizeDestination(destination!)));
+	for (const key of LATER_DEFAULT_KEYS) {
+		if (mapping[key] === undefined && taken.has(normalizeDestination(DEFAULT_PROPERTY_MAPPING[key]))) resolved[key] = undefined;
 	}
 	return resolved;
 }

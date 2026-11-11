@@ -1,6 +1,7 @@
 import type { PreparedSync, SyncApplyResult, SyncService } from '../sync/service';
 import type { CanonicalPreviewResult, CanonicalSyncService } from '../sync/canonical-service';
 import type { CanonicalSyncSelection } from '../sync/canonical-planner';
+import { CanonicalPartialApplyError } from '../vault/canonical-writer';
 import type { SyncExecutor, SyncExecutorAttention, SyncExecutorPreview } from '../sync/background-executor';
 
 function legacyAttention(prepared: PreparedSync): SyncExecutorAttention[] {
@@ -90,8 +91,13 @@ export function createCanonicalSyncExecutor(service: CanonicalSyncService, isApp
 		async apply(preview, selectedOperationIds) {
 			if (preview.approvalRequired) throw new Error('Background sync requires explicit preview approval.');
 			const canonicalPreview = preview.token as CanonicalPreviewResult;
-			const result = await service.applyPreview(canonicalPreview, canonicalSelection(canonicalPreview, selectedOperationIds));
-			return { appliedOperationIds: [...result], pendingOperationIds: [], warnings: [] };
+			try {
+				const result = await service.applyPreview(canonicalPreview, canonicalSelection(canonicalPreview, selectedOperationIds));
+				return { appliedOperationIds: [...result], pendingOperationIds: [], warnings: [] };
+			} catch (error) {
+				if (!(error instanceof CanonicalPartialApplyError)) throw error;
+				return { appliedOperationIds: [...error.appliedOperationIds], pendingOperationIds: [...error.failedOperationIds], warnings: [error.message] };
+			}
 		},
 	};
 }

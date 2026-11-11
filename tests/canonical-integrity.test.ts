@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CanonicalGame } from '../src/model/canonical-game';
 import { planCanonicalSync } from '../src/sync/canonical-planner';
 import { buildCanonicalManagedProperties } from '../src/vault/canonical-projection';
-import { CanonicalVaultWriter } from '../src/vault/canonical-writer';
+import { CanonicalPartialApplyError, CanonicalVaultWriter } from '../src/vault/canonical-writer';
 import { buildCanonicalTemplateContext } from '../src/vault/canonical-template';
 import { FakeVaultGateway } from './fake-gateway';
 
@@ -170,5 +170,33 @@ describe('canonical projection integrity', () => {
 		expect(unchanged.operations).toHaveLength(0);
 		const disabled = await planCanonicalSync([game({ title: 'Integrity Game 2' })], { gateway, notesFolder: 'Games', propertyMapping: { updated: null }, updatedAt: '2026-09-24T10:00:00.000Z' });
 		expect(disabled.operations[0]?.preview.properties).not.toHaveProperty('game-sync-updated');
+	});
+
+	it('sends a game to review when its stable identifiers point to different notes', async () => {
+		const gateway = new FakeVaultGateway();
+		await gateway.create('Games/By IGDB.md', '---\nigdb-id: 42\n---\n');
+		await gateway.create('Games/By GameTrack.md', '---\ngametrack-id: integrity\n---\n');
+
+		const plan = await planCanonicalSync([game()], { gateway, notesFolder: 'Games', updatedAt: '2026-09-24T10:00:00.000Z' });
+
+		expect(plan.operations).toEqual([]);
+		expect(plan.statuses[0]).toMatchObject({ status: 'conflict', reason: 'Stable identifiers of this game point to different notes.' });
+	});
+
+	it('writes the remaining notes when one note changed after the preview, then reports the skipped one', async () => {
+		const gateway = new FakeVaultGateway();
+		const first = game({ identity: { canonicalKey: 'gametrack:one', externalIds: { gametrack: 'one' } }, title: 'One' });
+		const second = game({ identity: { canonicalKey: 'gametrack:two', externalIds: { gametrack: 'two' } }, title: 'Two' });
+		await gateway.create('Games/One.md', '---\ngametrack-id: one\n---\n');
+		await gateway.create('Games/Two.md', '---\ngametrack-id: two\n---\n');
+		const plan = await planCanonicalSync([first, second], { gateway, notesFolder: 'Games', updatedAt: '2026-09-24T10:00:00.000Z' });
+		await gateway.process('Games/One.md', () => '---\ngametrack-id: one\nmine: edited\n---\n');
+
+		const error = await new CanonicalVaultWriter(gateway).apply(plan).catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(CanonicalPartialApplyError);
+		expect((error as CanonicalPartialApplyError).failedOperationIds).toHaveLength(1);
+		expect(await gateway.read('Games/One.md')).toContain('mine: edited');
+		expect(await gateway.read('Games/Two.md')).toContain('title: Two');
 	});
 });

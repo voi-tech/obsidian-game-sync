@@ -68,6 +68,8 @@ export interface SteamAppDetailsFailure {
 export type SteamAppDetailsResult = SteamAppDetails | SteamAppDetailsFailure;
 
 export interface SteamAchievement {
+	/** Stable internal achievement ID; `name` is the (localized) display name in GetPlayerAchievements. */
+	apiname?: string;
 	name?: string;
 	displayName?: string;
 	description?: string;

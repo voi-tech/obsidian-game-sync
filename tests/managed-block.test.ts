@@ -47,4 +47,19 @@ describe('managed achievement block replacement', () => {
 		const crlf = 'before\r\n\r\n%% game-sync:achievements %%\r\nold\r\n%% /game-sync:achievements %%\r\nafter';
 		expect(replaceAchievementsBlock(crlf, replacement)).toBe(`before\r\n\r\n${replacement}\r\nafter`);
 	});
+
+	it('follows CommonMark fence rules: a closer has no info string, a backtick opener has no backticks in its info string', () => {
+		const block = '%% game-sync:achievements %%\nUSER EXAMPLE\n%% /game-sync:achievements %%';
+		const stillFenced = `\`\`\`md\n\`\`\`not-a-close\n${block}\n\`\`\`\n`;
+		expect(replaceAchievementsBlock(stillFenced, 'NEW')).toContain('USER EXAMPLE');
+
+		const inlineNotFence = `\`\`\` inline \` code\n${block}`;
+		expect(replaceAchievementsBlock(inlineNotFence, 'NEW')).not.toContain('USER EXAMPLE');
+		const tabIndented = `\t\`\`\`\n${block}`;
+		expect(replaceAchievementsBlock(tabIndented, 'NEW')).not.toContain('USER EXAMPLE');
+	});
+
+	it('finds a block right after a BOM without frontmatter', () => {
+		expect(replaceAchievementsBlock('\uFEFF%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%', 'NEW')).toBe('\uFEFFNEW');
+	});
 });

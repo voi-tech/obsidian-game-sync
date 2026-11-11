@@ -65,6 +65,7 @@ export class GameSyncRuntimeComposition {
 			filenamePattern: state.settings.filenamePattern,
 			propertyMapping: state.propertyMapping,
 			achievementOptions,
+			libraryFilters: state.settings,
 		});
 		const template = await this.readTemplate(state.settings.templatePath);
 		const writer = new VaultWriter(this.options.gateway, {

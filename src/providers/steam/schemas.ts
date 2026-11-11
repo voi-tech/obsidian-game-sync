@@ -71,6 +71,7 @@ export const steamAppDetailsSchema = record(string(), object({
 }).loose());
 
 export const steamPlayerAchievementSchema = object({
+	apiname: optionalString,
 	name: optionalString,
 	displayName: optionalString,
 	description: optionalString,

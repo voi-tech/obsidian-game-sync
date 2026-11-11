@@ -1,7 +1,7 @@
 import type { NormalizedGame } from '../model/game';
 import { buildManagedProperties, resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
 import { replaceAchievementsBlock } from '../vault/managed-block';
-import { parseFrontmatter } from '../vault/frontmatter';
+import { existingPropertyKey, parseFrontmatter } from '../vault/frontmatter';
 import { renderAchievementsBlock, type AchievementRenderOptions } from '../vault/achievement-renderer';
 
 export type NoteDiffKind = 'none' | 'properties' | 'achievements';
@@ -38,7 +38,7 @@ export function diffNote(game: NormalizedGame, content: string, propertyMapping:
 		updatedAt: typeof updatedAt === 'string' ? updatedAt : undefined,
 		omitAchievementProperties: !achievementsFresh(game),
 	});
-	const propertiesChanged = Object.entries(managed).some(([key, value]) => !managedValueEqual(parsed.frontmatter[key], value));
+	const propertiesChanged = Object.entries(managed).some(([key, value]) => !managedValueEqual(parsed.frontmatter[existingPropertyKey(parsed.frontmatter, key)], value));
 	const achievementsChanged = achievementsFresh(game) && replaceAchievementsBlock(content, renderAchievementsBlock(game, achievementOptions)) !== content;
 	return {
 		changed: propertiesChanged || achievementsChanged,

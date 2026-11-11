@@ -4,7 +4,7 @@ import { VaultConflictError } from '../network/errors';
 import { buildManagedProperties } from '../model/property-mapping';
 import { replaceAchievementsBlock, restoreAchievementsBlock } from './managed-block';
 import { renderAchievementsBlock, type AchievementRenderOptions } from './achievement-renderer';
-import { applyManagedFrontmatter, captureManagedFrontmatter, restoreManagedFrontmatter, serializeNote, type ManagedFrontmatterSnapshot } from './frontmatter';
+import { applyManagedFrontmatter, captureManagedFrontmatter, existingPropertyKey, restoreManagedFrontmatter, serializeNote, type ManagedFrontmatterSnapshot } from './frontmatter';
 import { noteFingerprint, type VaultGateway } from './gateway';
 import { buildTemplateContext, renderTemplate } from './template';
 
@@ -82,7 +82,7 @@ export class VaultWriter {
 		let snapshot: Record<string, ManagedFrontmatterSnapshot> = {};
 		await this.gateway.processFrontMatter(input.path, (frontmatter) => {
 			snapshot = captureManagedFrontmatter(frontmatter, managedSnapshot);
-			for (const name of propertiesToRemove) delete frontmatter[name];
+			for (const name of propertiesToRemove) delete frontmatter[existingPropertyKey(frontmatter, name)];
 			applyManagedFrontmatter(frontmatter, managedProperties);
 		}, expected);
 		const afterFrontmatter = await this.gateway.read(input.path);

@@ -1,3 +1,4 @@
+import { steamPlayerAchievementSchema } from '../src/providers/steam/schemas';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProviderGame } from '../src/model/provider';
 import { normalizeSteamAchievements, shouldRefreshSteamAchievements, refreshSteamAchievements } from '../src/providers/steam/achievements';
@@ -119,6 +120,11 @@ describe('Steam achievement refresh policy', () => {
 		expect(snapshot.status).toBe('partial');
 		expect(snapshot.error?.code).toBe('steam-app-details-partial');
 		expect(snapshot.games[0]?.freshness.metadata).toBe(false);
+	});
+
+	it('uses the stable apiname as the achievement ID and keeps it through schema parsing', () => {
+		const parsed = steamPlayerAchievementSchema.parse({ apiname: 'ACH_WIN', name: 'Winner', achieved: 1, unlocktime: 1 });
+		expect(normalizeSteamAchievements([parsed]).achievements[0]).toMatchObject({ id: 'ACH_WIN', name: 'Winner' });
 	});
 
 	it('treats a game list shorter than the reported game count as an incomplete library', async () => {

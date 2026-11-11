@@ -1,8 +1,8 @@
-import { Modal, Notice, Setting, type App } from 'obsidian';
+import { getLanguage, Modal, Notice, Setting, type App } from 'obsidian';
 import { t } from '../i18n';
 import type { PropertyMapping } from '../model/property-mapping';
 import { applyPurchase, parsePurchaseCsv, planPurchaseImport, type PurchaseImportPlan, type PurchaseMatch } from '../purchases/playstation-purchases';
-import { PLAYSTATION_EXPORT_SCRIPT } from '../purchases/playstation-export-script';
+import { playStationExportScript } from '../purchases/playstation-export-script';
 import type { IndexedNote } from '../vault/note-index';
 
 export const PLAYSTATION_TRANSACTIONS_URL = 'https://id.sonyentertainmentnetwork.com/id/management_ca/#/p/transaction_history';
@@ -11,7 +11,8 @@ export interface PurchaseImportModalOptions {
 	readonly notesFolder: string;
 	readonly propertyMapping: PropertyMapping;
 	readonly loadNotes: () => Promise<readonly IndexedNote[]>;
-	readonly writeFrontmatter: (path: string, update: (frontmatter: Record<string, unknown>) => void) => Promise<void>;
+	/** Must reject when the note no longer has `expectedFingerprint` (it was edited after the preview). */
+	readonly writeFrontmatter: (path: string, update: (frontmatter: Record<string, unknown>) => void, expectedFingerprint?: string) => Promise<void>;
 	readonly readClipboard: () => Promise<string>;
 	readonly writeClipboard: (text: string) => Promise<void>;
 	readonly openUrl: (url: string) => void;
@@ -59,7 +60,7 @@ export class PurchaseImportModal extends Modal {
 
 	private async copyScript(): Promise<void> {
 		try {
-			await this.options.writeClipboard(PLAYSTATION_EXPORT_SCRIPT);
+			await this.options.writeClipboard(playStationExportScript(getLanguage().toLocaleLowerCase().startsWith('pl') ? 'pl' : 'en'));
 			new Notice(t('purchases.scriptCopied'));
 		} catch {
 			new Notice(t('purchases.clipboardFailed'));
@@ -77,6 +78,8 @@ export class PurchaseImportModal extends Modal {
 			if (rows.length === 0) throw new Error('empty');
 			this.plan = planPurchaseImport(rows, await this.options.loadNotes(), { notesFolder: this.options.notesFolder, propertyMapping: this.options.propertyMapping });
 			this.selected = new Set(this.plan.matches.filter((match) => match.changed).map((match) => match.path));
+			// Not busy any more before rendering, or the new Save button would start disabled.
+			this.busy = false;
 			this.renderPlan(this.plan);
 		} catch {
 			status.textContent = t('purchases.invalidClipboard');
@@ -99,6 +102,7 @@ export class PurchaseImportModal extends Modal {
 		if (unchanged.length > 0) this.section(list, t('purchases.upToDate'), unchanged, false);
 		if (plan.ambiguous.length > 0) this.textSection(list, t('purchases.ambiguous'), plan.ambiguous);
 		if (plan.unmatched.length > 0) this.textSection(list, t('purchases.unmatched'), plan.unmatched);
+		if (plan.unresolvedRefunds.length > 0) this.textSection(list, t('purchases.unresolvedRefunds'), plan.unresolvedRefunds);
 		const footer = this.contentEl.createDiv({ cls: 'modal-button-container game-sync-preview-footer' });
 		const status = footer.createSpan({ cls: 'game-sync-preview-status' });
 		footer.createEl('button', { text: t('purchases.back') }).addEventListener('click', () => this.renderInstructions());
@@ -161,7 +165,7 @@ export class PurchaseImportModal extends Modal {
 		for (const match of plan.matches) {
 			if (!this.selected.has(match.path)) continue;
 			try {
-				await this.options.writeFrontmatter(match.path, (frontmatter) => applyPurchase(frontmatter, match, this.options.propertyMapping));
+				await this.options.writeFrontmatter(match.path, (frontmatter) => applyPurchase(frontmatter, match, this.options.propertyMapping), match.fingerprint);
 				written += 1;
 			} catch {
 				failed += 1;

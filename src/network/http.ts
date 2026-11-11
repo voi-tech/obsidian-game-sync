@@ -96,19 +96,56 @@ async function defaultTransport(request: HttpRequest): Promise<HttpTransportResp
 	}
 }
 
-export function createHttpClient(transport: HttpTransport = defaultTransport): HttpClient {
+export interface HttpRetryOptions {
+	/** Extra attempts after the first one. Only idempotent GET requests are retried. */
+	retries?: number;
+	baseDelayMs?: number;
+	/** A longer Retry-After is not waited out; the rate-limit error is reported instead. */
+	maxDelayMs?: number;
+	sleep?: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_RETRY: Required<Omit<HttpRetryOptions, 'sleep'>> = { retries: 2, baseDelayMs: 1000, maxDelayMs: 30_000 };
+
+function retryDelay(error: unknown, attempt: number, options: Required<Omit<HttpRetryOptions, 'sleep'>>): number | undefined {
+	if (error instanceof ProviderRateLimitError) {
+		const delay = error.retryAfterMs ?? options.baseDelayMs * 2 ** attempt;
+		return delay <= options.maxDelayMs ? delay : undefined;
+	}
+	if (error instanceof ProviderNetworkError && error.retryable) return Math.min(options.maxDelayMs, options.baseDelayMs * 2 ** attempt);
+	return undefined;
+}
+
+export function createHttpClient(transport: HttpTransport = defaultTransport, retry: HttpRetryOptions = {}): HttpClient {
+	const retryOptions = { ...DEFAULT_RETRY, ...retry };
+	const sleep = retry.sleep ?? ((ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms)));
+	const send = async (request: HttpRequest): Promise<HttpTransportResponse> => {
+		let response: HttpTransportResponse;
+		try {
+			response = await transport(request);
+		} catch (error) {
+			if (error instanceof ProviderAuthError || error instanceof ProviderRateLimitError || error instanceof ProviderNetworkError || error instanceof ProviderHttpError) {
+				throw error;
+			}
+			throw new ProviderNetworkError('Provider request failed.', { cause: error });
+		}
+		mapStatus(response);
+		return response;
+	};
 	return {
 		async request<T>(request: HttpRequest, schema: ZodType<T>): Promise<T> {
+			const idempotent = (request.method ?? 'GET').toUpperCase() === 'GET';
 			let response: HttpTransportResponse;
-			try {
-				response = await transport(request);
-			} catch (error) {
-				if (error instanceof ProviderAuthError || error instanceof ProviderRateLimitError || error instanceof ProviderNetworkError || error instanceof ProviderHttpError) {
-					throw error;
+			for (let attempt = 0; ; attempt += 1) {
+				try {
+					response = await send(request);
+					break;
+				} catch (error) {
+					const delay = idempotent && attempt < retryOptions.retries ? retryDelay(error, attempt, retryOptions) : undefined;
+					if (delay === undefined) throw error;
+					await sleep(delay);
 				}
-				throw new ProviderNetworkError('Provider request failed.', { cause: error });
 			}
-			mapStatus(response);
 			const parsed = schema.safeParse(response.json);
 			if (!parsed.success) {
 				throw new ProviderSchemaError('Provider response did not match the expected schema.', { cause: parsed.error });

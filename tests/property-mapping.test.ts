@@ -109,4 +109,13 @@ describe('managed Property mapping', () => {
 			expect(values).not.toHaveProperty(key);
 		}
 	});
+
+	it('keeps mappings saved before the purchase properties existed valid', () => {
+		// `purchase-price` was a free name before the purchase import added it as a default.
+		expect(() => validatePropertyMapping({ title: 'purchase-price' })).not.toThrow();
+		expect(resolvePropertyMapping({ title: 'purchase-price' })).toMatchObject({ title: 'purchase-price', purchasePrice: undefined, purchaseDate: 'purchase-date' });
+		expect(() => resolveCanonicalPropertyMapping(canonicalMappingFromLegacy({ title: 'purchase-price', purchasePrice: 'cost' }))).not.toThrow();
+		// An explicit choice is still validated.
+		expect(() => validatePropertyMapping({ title: 'cost', purchasePrice: 'cost' })).toThrow();
+	});
 });

@@ -341,19 +341,9 @@ export class GameSyncSettingsTab extends PluginSettingTab {
 					this.toggle('includeUnplayed', 'settings.library.includeUnplayed'),
 					this.toggle('includeFreeToPlay', 'settings.library.includeFreeToPlay'),
 					this.toggle('includePreviouslyPlayedNoLongerOwned', 'settings.library.includePreviouslyPlayedNoLongerOwned'),
-					this.toggle('includeDemosTrials', 'settings.library.includeDemosTrials'),
-					this.toggle('includeBetasTestApps', 'settings.library.includeBetasTestApps'),
 				] }]),
 				this.page('settings.advanced.noteProperties', 'settings.advanced.notePropertiesDescription', propertyMappingGroups(this.properties)),
 				this.page('settings.advanced.metadata', 'settings.advanced.metadataDescription', [
-					{ type: 'group', items: [
-						{ name: translation('settings.advanced.metadataLanguage'), control: { type: 'dropdown', key: 'metadataLanguage', options: {
-							'follow-obsidian': translation('settings.advanced.followObsidian'), english: translation('settings.advanced.english'), polish: translation('settings.advanced.polish'),
-						} } },
-						{ name: translation('settings.advanced.metadataPreference'), control: { type: 'dropdown', key: 'metadataPreference', options: {
-							automatic: translation('settings.advanced.automatic'), english: translation('settings.advanced.english'), polish: translation('settings.advanced.polish'),
-						} } },
-					] },
 					{ type: 'group', heading: translation('settings.achievements.achievementsAndTrophies'), items: [
 						this.toggle('showAchievementRarity', 'settings.achievements.showAchievementRarity'),
 						this.toggle('showTrophyType', 'settings.achievements.showTrophyType'),
@@ -363,15 +353,6 @@ export class GameSyncSettingsTab extends PluginSettingTab {
 				this.page('settings.advanced.additionalData', 'settings.advanced.additionalDataDescription', [{ type: 'group', items: [
 					this.toggle('steamEnricherEnabled', 'settings.advanced.steamEnricher'),
 					this.toggle('playstationEnricherEnabled', 'settings.advanced.playstationEnricher'),
-				] }]),
-				this.page('settings.advanced.gameHistory', 'settings.advanced.gameHistoryDescription', [{ type: 'group', items: [
-					this.toggle('recordHistory', 'settings.history.recordHistory'),
-					{
-						name: translation('settings.history.historyPath'),
-						desc: translation('settings.history.historyPathDescription'),
-						visible: () => this.settings?.recordHistory === true,
-						control: { type: 'text', key: 'historyPath', placeholder: translation('settings.history.historyPathPlaceholder'), validate: required },
-					},
 				] }]),
 				{ name: translation('settings.advanced.ignoredGames'), desc: translation('settings.advanced.ignoredGamesDescription'), action: () => void this.host.openIgnoredGames() },
 				{ name: translation('settings.advanced.matchManager'), desc: translation('settings.advanced.matchManagerDescription'), action: () => void this.host.openMatchManager() },

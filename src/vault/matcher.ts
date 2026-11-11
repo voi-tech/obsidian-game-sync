@@ -231,14 +231,17 @@ export function matchCanonicalVaultNote(game: CanonicalGame, index: NoteIndex, o
 	const byCanonical = index.findByGameSyncId(game.identity.canonicalKey);
 	if (byCanonical.length > 0) return matchByPriority(byCanonical, 'game-sync-id', 'explicit');
 
-	const byIgdb = index.findByIgdbId(game.identity.externalIds.igdb ?? '');
-	if (byIgdb.length > 0) return matchByPriority(byIgdb, 'igdb-id', 'explicit');
+	const byIgdb = game.identity.externalIds.igdb === undefined ? [] : index.findByIgdbId(game.identity.externalIds.igdb);
 	const byGameTrack = game.identity.externalIds.gametrack === undefined ? [] : index.findByGameTrackId(game.identity.externalIds.gametrack);
-	if (byGameTrack.length > 0) return matchByPriority(byGameTrack, 'gametrack-id', 'explicit');
-
 	const legacy = uniqueNotes(canonicalIds(game).flatMap(({ kind, id }) => kind === 'steam'
 		? index.findBySteamId(id)
 		: kind === 'playstation' ? index.findByPlayStationIdentifier(id) : []));
+	// Identifiers of one game that point at different notes are contradictory; merging into the first hit
+	// would silently attach the game to the wrong note, so the whole set goes to review instead.
+	const identified = uniqueNotes([...byIgdb, ...byGameTrack, ...legacy]);
+	if (identified.length > 1) return matchByPriority(identified, 'igdb-id', 'explicit', 'Stable identifiers of this game point to different notes.');
+	if (byIgdb.length > 0) return matchByPriority(byIgdb, 'igdb-id', 'explicit');
+	if (byGameTrack.length > 0) return matchByPriority(byGameTrack, 'gametrack-id', 'explicit');
 	if (legacy.length > 0) return matchByPriority(legacy, 'provider-id', 'explicit');
 
 	const titleCandidates = canonicalTitleCandidates(index, game).filter(inFolder(options.candidateFolder));

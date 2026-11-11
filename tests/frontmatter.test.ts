@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyManagedProperties, InvalidFrontmatterError, parseFrontmatter, serializeNote, updateFrontmatter } from '../src/vault/frontmatter';
+import { applyManagedFrontmatter, applyManagedProperties, captureManagedFrontmatter, InvalidFrontmatterError, restoreManagedFrontmatter, parseFrontmatter, serializeNote, updateFrontmatter } from '../src/vault/frontmatter';
 
 describe('frontmatter primitives', () => {
 	it('reads YAML identities with inline comments and quoted commas', () => {
@@ -63,5 +63,17 @@ describe('frontmatter primitives', () => {
 	it('serializes custom property names as keys rather than YAML structure', () => {
 		const properties = { 'title: custom': 'Game', 'line\nbreak': 'value' };
 		expect(parseFrontmatter(serializeNote(properties, 'Body')).frontmatter).toEqual(properties);
+	});
+});
+
+describe('case-insensitive managed properties', () => {
+	it('updates an existing differently cased property instead of adding a duplicate, and restores it', () => {
+		const frontmatter: Record<string, unknown> = { Title: 'Old', Notes: 'mine' };
+		const snapshot = captureManagedFrontmatter(frontmatter, { title: 'New' });
+		applyManagedFrontmatter(frontmatter, { title: 'New' });
+
+		expect(frontmatter).toEqual({ Title: 'New', Notes: 'mine' });
+		restoreManagedFrontmatter(frontmatter, snapshot);
+		expect(frontmatter).toEqual({ Title: 'Old', Notes: 'mine' });
 	});
 });

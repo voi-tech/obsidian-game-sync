@@ -45,6 +45,18 @@ describe('SteamEnricher', () => {
 		expect(result.patches).toEqual([]);
 	});
 
+	it('matches a trademark-bearing title to the same plain title', async () => {
+		const api: SteamApi = {
+			resolveVanityUrl: vi.fn(), getPlayerSummaries: vi.fn(),
+			getOwnedGames: vi.fn(async () => ({ game_count: 1, games: [{ appid: 30, name: 'Returnal', playtime_forever: 123 }] })),
+			getPlayerAchievements: vi.fn(async () => ({ achievements: [] })),
+		};
+		const trademarked = game({ identity: { canonicalKey: 'gametrack:ret', externalIds: { gametrack: 'ret' } }, title: 'Returnal™' });
+		const result = await createSteamEnricher({ auth: steamAuth, api, now: () => '2026-09-14T12:00:00.000Z' }).enrich(snapshot([trademarked]));
+
+		expect(result.patches).toHaveLength(1);
+	});
+
 	it('keeps the base snapshot usable when the optional API fails', async () => {
 		const api = { getOwnedGames: vi.fn(async () => { throw new Error('network'); }) } as unknown as SteamApi;
 		const result = await createSteamEnricher({ auth: steamAuth, api }).enrich(snapshot([game()]));

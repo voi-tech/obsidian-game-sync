@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { VaultConflictError } from '../src/network/errors';
 import { buildTemplateContext } from '../src/vault/template';
 import { VaultWriter } from '../src/vault/writer';
 import { diffNote } from '../src/sync/diff';
@@ -135,8 +134,9 @@ describe('safe vault writer', () => {
 		const duplicate = '%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%\n\n%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%';
 		gateway.set('Games/one.md', duplicate);
 		const fingerprint = noteFingerprint(duplicate);
-		await expect(writer.updateNote({ path: 'Games/one.md', game, expectedNoteFingerprint: fingerprint, updatedAt: '2026-09-12T00:00:00.000Z' })).rejects.toThrow(VaultConflictError);
-		expect(await gateway.read('Games/one.md')).toBe(duplicate);
+		// Without fresh achievements the block is not touched, so duplicate blocks are left exactly as they are.
+		await writer.updateNote({ path: 'Games/one.md', game, expectedNoteFingerprint: fingerprint, updatedAt: '2026-09-12T00:00:00.000Z' });
+		expect(await gateway.read('Games/one.md')).toContain(duplicate);
 
 		const boundaryInitial = '---\nstatus: playing\ntitle: Old title\n---\n%% game-sync:achievements %%\nold\n%% /game-sync:achievements %%';
 		gateway.set('Games/one.md', boundaryInitial);

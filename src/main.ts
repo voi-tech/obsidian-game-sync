@@ -34,6 +34,7 @@ import { SteamConnectModal } from './ui/steam-connect-modal';
 import { SummaryModal } from './ui/summary-modal';
 import { CanonicalPreviewModal } from './ui/canonical-preview-modal';
 import { GameSyncSettingsTab } from './ui/settings/game-sync-settings';
+import { renderGamesBase } from './vault/bases';
 import { ObsidianVaultGateway } from './vault/gateway';
 import { GameTrackCsvRuntime } from './providers/gametrack/csv/gametrack-csv-runtime';
 import type { GameTrackCsvSelection, GameTrackCsvSource } from './providers/gametrack/csv/gametrack-csv-provider';
@@ -182,7 +183,11 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 	};
 
 	const openGamesBase = async (): Promise<void> => {
-		const path = (await stateStore.load()).settings.basePath;
+		const state = await stateStore.load();
+		const path = state.settings.basePath;
+		// Create the base on first use; an existing file (even one the user edited) is never overwritten.
+		// The gateway's exists() only sees Markdown notes, so the .base file is looked up in the vault directly.
+		if (host.app.vault.getAbstractFileByPath(path) === null) await gateway.create(path, renderGamesBase(state.propertyMapping));
 		await host.app.workspace.openLinkText(path, '', false);
 	};
 
@@ -311,7 +316,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 		confirm,
 		copyDiagnostics: () => Promise.resolve(ui.copyDiagnostics()),
 		openIgnoredGames: () => Promise.resolve(ui.openIgnoredGames()),
-		openMatchManager: async () => ui.openMatchManager(await composition.createMatchManager()),
+		openMatchManager: () => Promise.resolve(actions.manageGameMatches()),
 		getGameTrackStatus: () => composition.getGameTrackStatus(),
 		chooseGameTrackExport,
 	};
@@ -496,7 +501,8 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 					notesFolder: state.settings.notesFolder,
 					propertyMapping: state.propertyMapping,
 					loadNotes: async () => (await buildNoteIndex(gateway, state.propertyMapping)).notes,
-					writeFrontmatter: (path, update) => gateway.processFrontMatter(path, update),
+					// Same lock as sync, and only onto the note version shown in the preview.
+					writeFrontmatter: (path, update, expectedFingerprint) => syncLock(() => gateway.processFrontMatter(path, update, expectedFingerprint)),
 					readClipboard: () => navigator.clipboard.readText(),
 					writeClipboard: (text) => navigator.clipboard.writeText(text),
 					openUrl: (url) => { window.open(url); },

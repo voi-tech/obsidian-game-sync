@@ -22,3 +22,8 @@ export function normalizeTitle(title: string): string {
 	}
 	return normalized.toLocaleLowerCase('en-US').replace(/\s+/gu, ' ').trim();
 }
+
+/** Comparison key for matching provider titles: normalized title with all punctuation and symbols collapsed (Unicode-aware). */
+export function titleMatchKey(title: string): string {
+	return normalizeTitle(title).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}

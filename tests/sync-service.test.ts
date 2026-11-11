@@ -238,6 +238,28 @@ describe('provider-isolated SyncService', () => {
 		expect((await service.getState()).operationJournal.filter((entry) => entry.noteApplied)).toHaveLength(1);
 	});
 
+	it('does not revert settings or ignores changed while a preview was open', async () => {
+		const gateway = new FakeVaultGateway();
+		let raw: unknown;
+		const stateStore = createStateStore(async () => structuredClone(raw), async (value) => { raw = structuredClone(value); });
+		await stateStore.save(migrateState({ settings: { firstSyncCompleted: true, backgroundNotifications: 'all' } }));
+		const steam = adapter(async () => snapshot('complete', [providerGame('1')]));
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+		const service = new SyncService({ adapters: [steam], planner, writer: new VaultWriter(gateway), stateStore });
+		const prepared = await service.prepareAll();
+
+		const edited = await stateStore.load();
+		edited.settings.backgroundNotifications = 'none';
+		edited.ignoredCanonicalIds.push('game-sync:ignored-elsewhere');
+		await stateStore.save(edited);
+		await service.applySelection(prepared, prepared.plan.operations.map((operation) => operation.id), { explicit: true });
+
+		const persisted = await stateStore.load();
+		expect(persisted.settings.backgroundNotifications).toBe('none');
+		expect(persisted.ignoredCanonicalIds).toContain('game-sync:ignored-elsewhere');
+		expect(persisted.identityMappings.length).toBeGreaterThan(0);
+	});
+
 	it('rejects apply after the runtime becomes inactive without writing', async () => {
 		const gateway = new FakeVaultGateway();
 		let active = true;

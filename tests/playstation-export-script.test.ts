@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import vm from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
-import { PLAYSTATION_EXPORT_SCRIPT } from '../src/purchases/playstation-export-script';
+import { playStationExportScript } from '../src/purchases/playstation-export-script';
 import { parsePurchaseCsv } from '../src/purchases/playstation-purchases';
 
 describe('PlayStation console export script', () => {
@@ -22,7 +22,7 @@ describe('PlayStation console export script', () => {
 		vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
 		// Indirect eval runs the pasted script exactly as a browser console would.
-		const done = vm.runInThisContext(PLAYSTATION_EXPORT_SCRIPT) as Promise<void>;
+		const done = vm.runInThisContext(playStationExportScript('en')) as Promise<void>;
 		await window.fetch('https://web.np.playstation.com/api/transactions/v2/history?page-own-call=1&limit=20', { headers: { Authorization: 'Bearer page-token' } });
 		await done;
 
@@ -35,5 +35,28 @@ describe('PlayStation console export script', () => {
 			expect.objectContaining({ date: '2023-04-02', productName: 'Returnal', type: 'REFUND_PAYMENT_CHARGE', price: -299 }),
 		]);
 		vi.unstubAllGlobals();
+	});
+
+	it('does not copy an incomplete history when Sony fails part-way, and speaks the user language', async () => {
+		const pages: Array<Response> = [
+			new Response(JSON.stringify({ transactions: [{ transactionDetail: { transactionDate: '2024-06-09T10:00:00.000Z', transactionId: 'T2' }, currencyCode: 'PLN', additionalInfo: { orderItems: [{ transactionType: 'PRODUCT_PURCHASE', productName: 'Returnal', skuId: 'S', totalPrice: { value: 29900 } }] } }], hasMore: true, nextEndDate: '2024-01-01T00:00:00.000+0000' })),
+			new Response('{}', { status: 503 }),
+		];
+		vi.stubGlobal('fetch', vi.fn((input: string) => Promise.resolve(input.includes('startDate=2010') ? pages.shift()! : new Response('{}'))));
+		const copy = vi.fn();
+		vi.stubGlobal('copy', copy);
+		const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+		const done = vm.runInThisContext(playStationExportScript('pl')) as Promise<void>;
+		await window.fetch('https://web.np.playstation.com/api/transactions/v2/history?page-own-call=1&limit=20', { headers: { Authorization: 'Bearer page-token' } });
+		await done;
+
+		expect(copy).not.toHaveBeenCalled();
+		expect((window as unknown as { __gameSyncPurchasesCsv?: string }).__gameSyncPurchasesCsv).toContain('Returnal');
+		const messages = log.mock.calls.map((call) => String(call[0])).join('\n');
+		expect(messages).toContain('503');
+		expect(messages).toContain('Nie kopiuję niepełnej historii');
+		vi.unstubAllGlobals();
+		log.mockRestore();
 	});
 });

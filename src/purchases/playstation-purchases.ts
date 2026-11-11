@@ -1,11 +1,15 @@
 import { normalizeTitle } from '../identity/normalize-title';
 import { parseCsv, tableRecords } from '../providers/gametrack/csv/gametrack-csv-parser';
 import { resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
+import { existingPropertyKey } from '../vault/frontmatter';
 import type { IndexedNote } from '../vault/note-index';
 
 /** One line of the PlayStation transaction export (our console script, or the older extension format). */
 export interface PurchaseRow {
 	readonly date: string;
+	/** Full transaction time (ms) when the export has one; orders same-day purchases and refunds. */
+	readonly time?: number;
+	readonly transactionId?: string;
 	readonly productName: string;
 	readonly type?: string;
 	readonly skuId?: string;
@@ -20,6 +24,8 @@ export interface PurchaseMatch {
 	readonly price?: number;
 	readonly currency?: string;
 	readonly productNames: readonly string[];
+	/** Fingerprint of the note when the preview was made; the write is rejected if the note changed since. */
+	readonly fingerprint?: string;
 	/** False when the note already holds exactly these values. */
 	readonly changed: boolean;
 }
@@ -33,10 +39,13 @@ export interface PurchaseImportPlan {
 	readonly unmatched: readonly string[];
 	/** Products whose name fits more than one game note; left alone instead of guessing. */
 	readonly ambiguous: readonly string[];
+	/** Refunds that fit more than one earlier purchase of the product; nothing was cancelled for them. */
+	readonly unresolvedRefunds: readonly string[];
 }
 
 const COLUMN_ALIASES = {
 	date: ['date'],
+	transactionId: ['transaction_id', 'transaction id'],
 	productName: ['product_name', 'product name'],
 	type: ['type'],
 	skuId: ['sku_id', 'product sku id'],
@@ -55,19 +64,45 @@ function column(record: Readonly<Record<string, string>>, aliases: readonly stri
 	return undefined;
 }
 
-function parsePrice(raw: string | undefined): number | undefined {
+// Plain amount with an optional decimal part ("299", "-12.5", "59,99").
+const PLAIN_AMOUNT = /^-?\d+(?:[.,]\d{1,2})?$/u;
+// Grouped amount with a mandatory decimal part ("1,234.56", "1.234,56", "1 234,56").
+const GROUPED_AMOUNT = /^-?\d{1,3}(?:([ .,'])\d{3})+([.,])\d{2}$/u;
+
+/**
+ * Reads a price only when its format is unambiguous. "1,234" (thousands or decimals?) is rejected rather than
+ * guessed; an unreadable price is treated as unknown, which leaves the note's existing price untouched.
+ */
+export function parsePrice(raw: string | undefined): number | undefined {
 	if (raw === undefined) return undefined;
-	const cleaned = raw.replace(/[^\d,.-]/gu, '');
-	// "1.234,56" and "1,234.56" both end with the decimal separator.
-	const decimal = cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.') ? ',' : '.';
-	const normalized = cleaned.replaceAll(decimal === ',' ? '.' : ',', '').replace(',', '.');
+	let text = raw.replace(/[\u00a0\u202f]/gu, ' ').trim();
+	const accountingNegative = /^\(.*\)$/u.test(text);
+	if (accountingNegative) text = text.slice(1, -1);
+	// Currency symbols and codes around the number ("zł 299,00", "$59.99", "59.99 USD").
+	text = text.replace(/^[^\d-]+|[^\d]+$/gu, '').trim();
+	let normalized: string | undefined;
+	if (PLAIN_AMOUNT.test(text)) normalized = text.replace(',', '.');
+	else {
+		const grouped = GROUPED_AMOUNT.exec(text);
+		if (grouped !== null && grouped[1] !== grouped[2]) normalized = text.replace(/[ .,']/gu, (_separator, offset: number) => offset === text.length - 3 ? '.' : '');
+	}
+	if (normalized === undefined) return undefined;
 	const value = Number(normalized);
-	return Number.isFinite(value) && normalized.length > 0 ? Math.round(value * 100) / 100 : undefined;
+	if (!Number.isFinite(value)) return undefined;
+	return Math.round((accountingNegative ? -Math.abs(value) : value) * 100) / 100;
 }
 
-function isoDate(raw: string): string | undefined {
-	const match = /^(\d{4})-(\d{2})-(\d{2})/u.exec(raw.trim());
-	return match === null ? undefined : `${match[1]}-${match[2]}-${match[3]}`;
+/** Calendar date (YYYY-MM-DD) and, when present, the full timestamp; impossible dates are rejected. */
+function parseDate(raw: string): { date: string; time?: number } | undefined {
+	const trimmed = raw.trim();
+	const match = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/u.exec(trimmed);
+	if (match === null) return undefined;
+	const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+	const check = new Date(Date.UTC(year, month - 1, day));
+	if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return undefined;
+	// Sony writes offsets as "+0000"; Date.parse needs "+00:00".
+	const time = Date.parse(trimmed.replace(/([+-]\d{2})(\d{2})$/u, '$1:$2'));
+	return { date: `${match[1]}-${match[2]}-${match[3]}`, ...(Number.isFinite(time) && trimmed.length > 10 ? { time } : {}) };
 }
 
 export function parsePurchaseCsv(text: string): PurchaseRow[] {
@@ -77,14 +112,15 @@ export function parsePurchaseCsv(text: string): PurchaseRow[] {
 		throw new Error('The file has no date and product name columns.');
 	}
 	return tableRecords(table).flatMap((record) => {
-		const date = isoDate(column(record, COLUMN_ALIASES.date) ?? '');
+		const parsedDate = parseDate(column(record, COLUMN_ALIASES.date) ?? '');
 		const productName = column(record, COLUMN_ALIASES.productName);
-		if (date === undefined || productName === undefined) return [];
+		if (parsedDate === undefined || productName === undefined) return [];
+		const transactionId = column(record, COLUMN_ALIASES.transactionId);
 		const type = column(record, COLUMN_ALIASES.type);
 		const skuId = column(record, COLUMN_ALIASES.skuId);
 		const price = parsePrice(column(record, COLUMN_ALIASES.price));
 		const currency = column(record, COLUMN_ALIASES.currency)?.toUpperCase();
-		return [{ date, productName, ...(type === undefined ? {} : { type }), ...(skuId === undefined ? {} : { skuId }), ...(price === undefined ? {} : { price }), ...(currency === undefined ? {} : { currency }) }];
+		return [{ ...parsedDate, ...(transactionId === undefined ? {} : { transactionId }), productName, ...(type === undefined ? {} : { type }), ...(skuId === undefined ? {} : { skuId }), ...(price === undefined ? {} : { price }), ...(currency === undefined ? {} : { currency }) }];
 	});
 }
 
@@ -103,20 +139,58 @@ function isRefund(row: PurchaseRow): boolean {
 	return /REFUND/iu.test(row.type ?? '') || (row.price !== undefined && row.price < 0);
 }
 
-/** Purchases still in effect: refunds cancel the latest earlier purchase of the same product. */
-export function effectivePurchases(rows: readonly PurchaseRow[]): { purchases: PurchaseRow[]; refunded: number } {
-	const ordered = [...rows].sort((left, right) => left.date.localeCompare(right.date));
+function rowIdentity(row: PurchaseRow): string {
+	return JSON.stringify([row.transactionId, row.time ?? row.date, row.type ?? '', row.productName, row.skuId ?? '', row.price ?? null, row.currency ?? '']);
+}
+
+/** The same transaction line exported twice (overlapping pages, repeated paste) counts once. */
+function withoutDuplicates(rows: readonly PurchaseRow[]): PurchaseRow[] {
+	const seen = new Set<string>();
+	return rows.filter((row) => {
+		if (row.transactionId === undefined) return true;
+		const identity = rowIdentity(row);
+		if (seen.has(identity)) return false;
+		seen.add(identity);
+		return true;
+	});
+}
+
+function chronological(left: PurchaseRow, right: PurchaseRow): number {
+	const byTime = (left.time ?? Date.parse(left.date)) - (right.time ?? Date.parse(right.date));
+	if (byTime !== 0) return byTime;
+	// Without a time of day, a purchase comes before a refund on the same date.
+	return Number(isRefund(left)) - Number(isRefund(right));
+}
+
+/**
+ * The purchase a refund cancels: the same SKU, else the same amount and currency, else the only purchase of
+ * that product. When several purchases fit equally, nothing is cancelled (undefined) instead of guessing.
+ */
+function refundedIndex(active: readonly PurchaseRow[], refund: PurchaseRow): number | undefined {
+	const key = productKey(refund.productName);
+	const candidates = active.map((row, index) => ({ row, index })).filter(({ row }) => productKey(row.productName) === key);
+	if (candidates.length === 0) return -1;
+	const bySku = refund.skuId === undefined ? [] : candidates.filter(({ row }) => row.skuId === refund.skuId);
+	const amount = refund.price === undefined ? undefined : Math.abs(refund.price);
+	const byAmount = amount === undefined ? [] : candidates.filter(({ row }) => row.price === amount && (refund.currency === undefined || row.currency === undefined || row.currency === refund.currency));
+	for (const narrowed of [bySku, byAmount]) if (narrowed.length > 0) return narrowed.at(-1)!.index;
+	return candidates.length === 1 ? candidates[0].index : undefined;
+}
+
+/** Purchases still in effect after refunds, in chronological order. */
+export function effectivePurchases(rows: readonly PurchaseRow[]): { purchases: PurchaseRow[]; refunded: number; unresolvedRefunds: string[] } {
+	const ordered = withoutDuplicates(rows).sort(chronological);
 	const active: PurchaseRow[] = [];
+	const unresolvedRefunds: string[] = [];
 	let refunded = 0;
 	for (const row of ordered) {
 		if (NON_PRODUCT_TYPES.test(row.type ?? '') && !isRefund(row)) continue;
 		if (!isRefund(row)) { active.push(row); continue; }
-		const key = productKey(row.productName);
-		for (let index = active.length - 1; index >= 0; index -= 1) {
-			if (productKey(active[index].productName) === key) { active.splice(index, 1); refunded += 1; break; }
-		}
+		const index = refundedIndex(active, row);
+		if (index === undefined) unresolvedRefunds.push(row.productName);
+		else if (index >= 0) { active.splice(index, 1); refunded += 1; }
 	}
-	return { purchases: active, refunded };
+	return { purchases: active, refunded, unresolvedRefunds };
 }
 
 function noteTitles(note: IndexedNote): string[] {
@@ -125,7 +199,8 @@ function noteTitles(note: IndexedNote): string[] {
 }
 
 function samePrice(current: unknown, next: number | undefined): boolean {
-	if (next === undefined) return current === undefined;
+	// An unknown imported price leaves the note's price as it is.
+	if (next === undefined) return true;
 	return (typeof current === 'number' || typeof current === 'string') && Number(current) === next;
 }
 
@@ -145,7 +220,7 @@ export function planPurchaseImport(rows: readonly PurchaseRow[], notes: readonly
 			byKey.set(key, list);
 		}
 	}
-	const { purchases, refunded } = effectivePurchases(rows);
+	const { purchases, refunded, unresolvedRefunds } = effectivePurchases(rows);
 	const perNote = new Map<string, { note: IndexedNote; purchases: PurchaseRow[] }>();
 	const unmatched = new Set<string>();
 	const ambiguous = new Set<string>();
@@ -160,11 +235,12 @@ export function planPurchaseImport(rows: readonly PurchaseRow[], notes: readonly
 	}
 	const keys = resolvePropertyMapping(options.propertyMapping ?? {});
 	const matches = [...perNote.values()].map(({ note, purchases: notePurchases }): PurchaseMatch => {
-		const first = [...notePurchases].sort((left, right) => left.date.localeCompare(right.date))[0];
+		const first = [...notePurchases].sort(chronological)[0];
 		const props = note.properties;
-		const changed = (keys.purchaseDate !== undefined && props[keys.purchaseDate] !== first.date)
-			|| (keys.purchasePrice !== undefined && !samePrice(props[keys.purchasePrice], first.price))
-			|| (keys.purchaseCurrency !== undefined && (props[keys.purchaseCurrency] ?? undefined) !== first.currency);
+		const read = (key: string): unknown => props[existingPropertyKey(props, key)];
+		const changed = (keys.purchaseDate !== undefined && read(keys.purchaseDate) !== first.date)
+			|| (keys.purchasePrice !== undefined && !samePrice(read(keys.purchasePrice), first.price))
+			|| (keys.purchaseCurrency !== undefined && first.currency !== undefined && read(keys.purchaseCurrency) !== first.currency);
 		return {
 			path: note.path,
 			title: noteTitles(note)[0] ?? note.path,
@@ -172,6 +248,7 @@ export function planPurchaseImport(rows: readonly PurchaseRow[], notes: readonly
 			...(first.price === undefined ? {} : { price: first.price }),
 			...(first.currency === undefined ? {} : { currency: first.currency }),
 			productNames: [...new Set(notePurchases.map((purchase) => purchase.productName))],
+			...(note.fingerprint === undefined ? {} : { fingerprint: note.fingerprint }),
 			changed,
 		};
 	}).sort((left, right) => left.title.localeCompare(right.title, undefined, { sensitivity: 'base', numeric: true }));
@@ -182,19 +259,20 @@ export function planPurchaseImport(rows: readonly PurchaseRow[], notes: readonly
 		matches,
 		unmatched: [...unmatched].sort((left, right) => left.localeCompare(right)),
 		ambiguous: [...ambiguous].sort((left, right) => left.localeCompare(right)),
+		unresolvedRefunds: [...new Set(unresolvedRefunds)].sort((left, right) => left.localeCompare(right)),
 	};
 }
 
-/** Applies one match to a frontmatter object, honouring disabled (unmapped) destinations. */
+/**
+ * Applies one match to a frontmatter object, honouring disabled (unmapped) destinations. A value missing from
+ * the export is unknown, not "no price": the note keeps what it has.
+ */
 export function applyPurchase(frontmatter: Record<string, unknown>, match: PurchaseMatch, propertyMapping: PropertyMapping = {}): void {
 	const keys = resolvePropertyMapping(propertyMapping);
-	if (keys.purchaseDate !== undefined) frontmatter[keys.purchaseDate] = match.date;
-	if (keys.purchasePrice !== undefined) {
-		if (match.price === undefined) delete frontmatter[keys.purchasePrice];
-		else frontmatter[keys.purchasePrice] = match.price;
-	}
-	if (keys.purchaseCurrency !== undefined) {
-		if (match.currency === undefined) delete frontmatter[keys.purchaseCurrency];
-		else frontmatter[keys.purchaseCurrency] = match.currency;
-	}
+	const set = (key: string | undefined, value: unknown): void => {
+		if (key !== undefined && value !== undefined) frontmatter[existingPropertyKey(frontmatter, key)] = value;
+	};
+	set(keys.purchaseDate, match.date);
+	set(keys.purchasePrice, match.price);
+	set(keys.purchaseCurrency, match.currency);
 }

@@ -1,3 +1,4 @@
+import { createSyncConcurrencyGuard } from '../src/sync/concurrency';
 import { describe, expect, it, vi } from 'vitest';
 import type { LibrarySummaryViewModel } from '../src/model/library-summary';
 import type { GameProvider, ProviderGame } from '../src/model/provider';
@@ -304,11 +305,31 @@ describe('createGameSyncCommandActions', () => {
 		await fixtureValue.actions.runSetupWizard();
 
 		expect(fixtureValue.createMatchManager).toHaveBeenCalledOnce();
-		expect(fixtureValue.openMatchManager).toHaveBeenCalledWith({ rows: [] });
+		expect(fixtureValue.openMatchManager).toHaveBeenCalledWith(expect.objectContaining({ rows: [] }));
 		expect(fixtureValue.showUnavailable).not.toHaveBeenCalled();
 		expect(fixtureValue.openIgnoredGames).toHaveBeenCalledOnce();
 		expect(fixtureValue.copyDiagnostics).toHaveBeenCalledOnce();
 		expect(fixtureValue.openSetupWizard).toHaveBeenCalledOnce();
+	});
+
+	it('runs match manager writes under the sync lock', async () => {
+		const order: string[] = [];
+		let release!: () => void;
+		const runExclusive = createSyncConcurrencyGuard();
+		const applyUnmerge = vi.fn(async () => { order.push('unmerge'); return { applied: 1 }; });
+		const createMatchManager = vi.fn(async () => ({ rows: [], applyUnmerge }) as unknown as MatchManagerAdapter);
+		let opened: MatchManagerAdapter | undefined;
+		const ui = { openMatchManager: (adapter: MatchManagerAdapter) => { opened = adapter; } };
+		const actions = createGameSyncCommandActions({ composition: { createMatchManager } as unknown as GameSyncRuntimeComposition, ui: ui as never, runExclusive });
+
+		await actions.manageGameMatches();
+		const sync = runExclusive(() => new Promise<void>((resolve) => { release = () => { order.push('sync'); resolve(); }; }));
+		const unmerge = opened!.applyUnmerge({} as never);
+		await Promise.resolve();
+		expect(applyUnmerge).not.toHaveBeenCalled();
+		release();
+		await Promise.all([sync, unmerge]);
+		expect(order).toEqual(['sync', 'unmerge']);
 	});
 
 	it('serializes service preparation for concurrent manual commands', async () => {

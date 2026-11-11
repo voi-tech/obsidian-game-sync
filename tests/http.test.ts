@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ProviderAuthError, ProviderNetworkError, ProviderSchemaError } from '../src/network/errors';
-import { createHttpClient, type HttpTransport } from '../src/network/http';
+import { createHttpClient, type HttpTransport, type HttpTransportResponse } from '../src/network/http';
 
 const requestUrl = vi.hoisted(() => vi.fn());
 
@@ -46,7 +46,7 @@ describe('typed provider HTTP client', () => {
 			headers: { 'retry-after': '3' },
 			json: {},
 		});
-		const client = createHttpClient(transport);
+		const client = createHttpClient(transport, { sleep: async () => undefined });
 
 		await expect(client.request({ url: 'https://example.test' }, responseSchema)).rejects.toMatchObject({
 			name: 'ProviderRateLimitError',
@@ -69,7 +69,7 @@ describe('typed provider HTTP client', () => {
 		const transport: HttpTransport = async () => {
 			throw new Error('network timeout');
 		};
-		const client = createHttpClient(transport);
+		const client = createHttpClient(transport, { sleep: async () => undefined });
 
 		await expect(client.request({ url: 'https://example.test' }, responseSchema)).rejects.toThrow(
 			ProviderNetworkError,
@@ -95,5 +95,22 @@ describe('typed provider HTTP client', () => {
 		const client = createHttpClient();
 
 		await expect(client.request({ url: 'https://example.test' }, responseSchema)).rejects.toThrow(ProviderAuthError);
+	});
+
+	it('retries a GET after a short Retry-After and 503, but not a POST or a long Retry-After', async () => {
+		const delays: number[] = [];
+		const sleep = async (ms: number): Promise<void> => { delays.push(ms); };
+		const responses: HttpTransportResponse[] = [{ status: 429, headers: { 'retry-after': '2' }, json: {} }, { status: 503, headers: {}, json: {} }, { status: 200, headers: {}, json: { ok: true } }];
+		const flaky: HttpTransport = async () => responses.shift()!;
+		await expect(createHttpClient(flaky, { sleep }).request({ url: 'https://example.test' }, responseSchema)).resolves.toEqual({ ok: true });
+		expect(delays).toEqual([2000, 2000]);
+
+		const post = vi.fn<HttpTransport>(async () => ({ status: 503, headers: {}, json: {} }));
+		await expect(createHttpClient(post, { sleep }).request({ url: 'https://example.test', method: 'POST' }, responseSchema)).rejects.toBeInstanceOf(ProviderNetworkError);
+		expect(post).toHaveBeenCalledOnce();
+
+		const limited = vi.fn<HttpTransport>(async () => ({ status: 429, headers: { 'retry-after': '3600' }, json: {} }));
+		await expect(createHttpClient(limited, { sleep }).request({ url: 'https://example.test' }, responseSchema)).rejects.toMatchObject({ name: 'ProviderRateLimitError' });
+		expect(limited).toHaveBeenCalledOnce();
 	});
 });

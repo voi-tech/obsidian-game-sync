@@ -48,6 +48,35 @@ describe('deterministic sync planner', () => {
 		expect(plan.operations).toHaveLength(0);
 	});
 
+	it('reports a note with stray achievement delimiters as a conflict and still plans the other games', async () => {
+		const gateway = new FakeVaultGateway({
+			'Games/Broken.md': '---\nsteam-id: "1"\n---\n%% /game-sync:achievements %%',
+			'Games/Healthy.md': '---\nsteam-id: "2"\n---\n',
+		});
+		const withAchievements = (base: NormalizedGame): NormalizedGame => ({ ...base, providers: { steam: { ...base.providers.steam!, achievements: { earned: 1, total: 1, progress: 100, achievements: [{ id: 'A', name: 'A', unlocked: true, hidden: false }] } } } });
+		const broken = withAchievements(game());
+		const healthy = withAchievements({ ...game(), canonicalId: 'game-sync:two', identity: { canonicalId: 'game-sync:two', steamAppId: 2 }, providers: { steam: { ...game().providers.steam!, providerGameId: '2' } } });
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
+
+		const plan = await planner.plan([broken, healthy], 'revision-stray');
+
+		expect(plan.statuses.find((status) => status.canonicalGameId === 'game-sync:one')).toMatchObject({ status: 'conflict', path: 'Games/Broken.md' });
+		expect(plan.operations.map((operation) => operation.path)).toEqual(['Games/Healthy.md']);
+	});
+
+	it('applies library filters only to new notes, never to games that already have one', async () => {
+		const gateway = new FakeVaultGateway({ 'Games/Existing.md': '---\nsteam-id: "1"\n---\n' });
+		const unplayed = (base: NormalizedGame): NormalizedGame => ({ ...base, playtimeMinutes: 0, providers: { steam: { ...base.providers.steam!, playtimeMinutes: 0 } } });
+		const existing = unplayed(game());
+		const fresh = unplayed({ ...game(), canonicalId: 'game-sync:two', title: 'Fresh', identity: { canonicalId: 'game-sync:two', steamAppId: 2 }, providers: { steam: { ...game().providers.steam!, providerGameId: '2', title: 'Fresh' } } });
+		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games', libraryFilters: { includeUnplayed: false, includeFreeToPlay: true, includePreviouslyPlayedNoLongerOwned: true } });
+
+		const plan = await planner.plan([existing, fresh], 'revision-filters');
+
+		expect(plan.operations.some((operation) => operation.kind === 'create-note')).toBe(false);
+		expect(plan.statuses.map((status) => status.canonicalGameId)).toEqual(['game-sync:one']);
+	});
+
 	it('adopts an existing provider note without treating it as a rename', async () => {
 		const gateway = new FakeVaultGateway({ 'Games/Old.md': '---\nsteam-id: "1"\ncustom: keep\n---\n# User body' });
 		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games', filenamePattern: '{{title}}' });

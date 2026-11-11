@@ -39,7 +39,7 @@ export function shouldRefreshSteamAchievements(game: ProviderGame, cached: Steam
 function normalizeAchievement(achievement: SteamAchievement): ProviderAchievement {
 	const unlocked = achievement.achieved === 1;
 	return {
-		id: achievement.name ?? achievement.displayName ?? 'unknown-achievement',
+		id: achievement.apiname ?? achievement.name ?? achievement.displayName ?? 'unknown-achievement',
 		name: achievement.displayName ?? achievement.name,
 		description: achievement.description,
 		unlocked,

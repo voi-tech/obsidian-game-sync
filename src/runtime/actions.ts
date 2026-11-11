@@ -170,7 +170,14 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 	actions.reviewPendingMatches = () => openSelectedPreview(false, true);
 	actions.manageGameMatches = async () => {
 		const adapter = await withProgress('loading', () => runExclusive(() => options.composition.createMatchManager()));
-		await options.ui.openMatchManager(adapter);
+		// Every write from the match manager takes the same lock as sync, so an unmerge never races a running sync.
+		await options.ui.openMatchManager({
+			...adapter,
+			prepareUnmerge: (canonicalId, provider) => runExclusive(() => adapter.prepareUnmerge(canonicalId, provider)),
+			applyUnmerge: (prepared) => runExclusive(() => adapter.applyUnmerge(prepared)),
+			allowMatchingAgain: (left, right) => runExclusive(() => adapter.allowMatchingAgain(left, right)),
+			resolveUnresolved: (canonicalId, action, candidatePath) => runExclusive(() => adapter.resolveUnresolved(canonicalId, action, candidatePath)),
+		});
 	};
 	actions.manageIgnoredGames = () => options.ui.openIgnoredGames();
 	actions.openLibrarySummary = openLibrarySummary;

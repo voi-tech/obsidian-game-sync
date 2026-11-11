@@ -1,7 +1,7 @@
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { applyPurchase, effectivePurchases, parsePurchaseCsv, planPurchaseImport, productKey } from '../src/purchases/playstation-purchases';
-import { PLAYSTATION_EXPORT_SCRIPT } from '../src/purchases/playstation-export-script';
+import { applyPurchase, effectivePurchases, parsePrice, parsePurchaseCsv, planPurchaseImport, productKey } from '../src/purchases/playstation-purchases';
+import { playStationExportScript } from '../src/purchases/playstation-export-script';
 import type { IndexedNote } from '../src/vault/note-index';
 
 function note(path: string, properties: Record<string, unknown> = {}, title?: string): IndexedNote {
@@ -62,14 +62,45 @@ describe('PlayStation purchase import', () => {
 
 	it('writes to the mapped property names and skips disabled ones', () => {
 		const frontmatter: Record<string, unknown> = { status: 'playing' };
-		applyPurchase(frontmatter, { path: 'x', title: 'x', date: '2024-06-09', price: 249, currency: 'PLN', productNames: [], changed: true }, { purchaseDate: 'kupiono', purchaseCurrency: null });
+		applyPurchase(frontmatter, { path: 'x', title: 'x', date: '2024-06-09', price: 249, currency: 'PLN', productNames: [], fingerprint: 'f', changed: true }, { purchaseDate: 'kupiono', purchaseCurrency: null });
 		expect(frontmatter).toEqual({ status: 'playing', kupiono: '2024-06-09', 'purchase-price': 249 });
 	});
 
 	it('ships a console script that never exports payment or address details', () => {
-		expect(PLAYSTATION_EXPORT_SCRIPT).toContain('date,transaction_id,type,product_name,sku_id,price,currency');
-		expect(PLAYSTATION_EXPORT_SCRIPT).not.toMatch(/ipAddress|billingInfo|paymentMethod/u);
+		expect(playStationExportScript('en')).toContain('date,transaction_id,type,product_name,sku_id,price,currency');
+		expect(playStationExportScript('en')).not.toMatch(/ipAddress|billingInfo|paymentMethod/u);
 		// Syntax check without executing: compile as a module script.
-		expect(() => new vm.Script(PLAYSTATION_EXPORT_SCRIPT)).not.toThrow();
+		expect(() => new vm.Script(playStationExportScript('en'))).not.toThrow();
+	});
+
+	it('reads only unambiguous prices and rejects impossible dates', () => {
+		expect([parsePrice('299'), parsePrice('59,99'), parsePrice('1,234.56'), parsePrice('1.234,56'), parsePrice('1 234,56 zł'), parsePrice('$59.99')]).toEqual([299, 59.99, 1234.56, 1234.56, 1234.56, 59.99]);
+		expect(parsePrice('(299.00)')).toBe(-299);
+		expect([parsePrice('1,234'), parsePrice('1.234'), parsePrice('free'), parsePrice('')]).toEqual([undefined, undefined, undefined, undefined]);
+		expect(parsePurchaseCsv('date,product_name,price\n2024-99-99junk,Returnal,299\n2024-02-30,Returnal,299\n')).toEqual([]);
+	});
+
+	it('reconciles refunds by time, transaction and SKU, and leaves ambiguous refunds unresolved', () => {
+		const sameDay = parsePurchaseCsv('date,transaction_id,type,product_name,price,currency\n2024-06-09T15:00:00.000Z,T2,REFUND_PAYMENT_CHARGE,Returnal,-299.00,PLN\n2024-06-09T10:00:00.000Z,T1,PRODUCT_PURCHASE,Returnal,299.00,PLN\n');
+		expect(effectivePurchases(sameDay)).toMatchObject({ purchases: [], refunded: 1 });
+
+		const duplicated = parsePurchaseCsv('date,transaction_id,type,product_name,price,currency\n2024-06-09T10:00:00.000Z,T1,PRODUCT_PURCHASE,Returnal,299.00,PLN\n2024-06-09T10:00:00.000Z,T1,PRODUCT_PURCHASE,Returnal,299.00,PLN\n2024-06-10T10:00:00.000Z,T2,REFUND_PAYMENT_CHARGE,Returnal,-299.00,PLN\n');
+		expect(effectivePurchases(duplicated)).toMatchObject({ purchases: [], refunded: 1 });
+
+		const paidThenFree = parsePurchaseCsv('date,transaction_id,type,product_name,sku_id,price,currency\n2024-01-01T10:00:00.000Z,T1,PRODUCT_PURCHASE,Game,PAID,299.00,PLN\n2024-02-01T10:00:00.000Z,T2,PRODUCT_PURCHASE,Game,FREE,0.00,PLN\n2024-03-01T10:00:00.000Z,T3,REFUND_PAYMENT_CHARGE,Game,PAID,-299.00,PLN\n');
+		expect(effectivePurchases(paidThenFree).purchases.map((row) => row.skuId)).toEqual(['FREE']);
+
+		const ambiguous = parsePurchaseCsv('date,transaction_id,type,product_name,price,currency\n2024-01-01T10:00:00.000Z,T1,PRODUCT_PURCHASE,Game,99.00,PLN\n2024-02-01T10:00:00.000Z,T2,PRODUCT_PURCHASE,Game,199.00,PLN\n2024-03-01T10:00:00.000Z,T3,REFUND_PAYMENT_CHARGE,Game,,PLN\n');
+		expect(effectivePurchases(ambiguous)).toMatchObject({ refunded: 0, unresolvedRefunds: ['Game'] });
+	});
+
+	it('keeps an existing price and currency when the export has none, and carries the preview fingerprint', () => {
+		const existing = { ...note('Games/Returnal.md', { 'purchase-price': 299, 'purchase-currency': 'PLN' }, 'Returnal'), fingerprint: 'fp-1' };
+		const plan = planPurchaseImport(parsePurchaseCsv('date,product_name\n2021-01-01,Returnal\n'), [existing], { notesFolder: 'Games' });
+		expect(plan.matches[0]).toMatchObject({ fingerprint: 'fp-1' });
+
+		const frontmatter: Record<string, unknown> = { 'purchase-price': 299, 'purchase-currency': 'PLN' };
+		applyPurchase(frontmatter, plan.matches[0]);
+		expect(frontmatter).toEqual({ 'purchase-date': '2021-01-01', 'purchase-price': 299, 'purchase-currency': 'PLN' });
 	});
 });

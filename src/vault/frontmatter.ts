@@ -109,9 +109,19 @@ export function updateFrontmatter(content: string, updater: (frontmatter: Record
 	return `${parts.prefix}${yaml}${parts.suffix}`;
 }
 
+/**
+ * Obsidian treats property names case-insensitively (`Title` and `title` are one property). Writes go to the
+ * key already present in the note, so a sync never adds a second, differently cased copy.
+ */
+export function existingPropertyKey(frontmatter: Record<string, unknown>, key: string): string {
+	if (Object.prototype.hasOwnProperty.call(frontmatter, key)) return key;
+	const lower = key.toLocaleLowerCase();
+	return Object.keys(frontmatter).find((candidate) => candidate.toLocaleLowerCase() === lower) ?? key;
+}
+
 export function applyManagedFrontmatter(frontmatter: Record<string, unknown>, managedProperties: Record<string, unknown>): void {
 	for (const [key, value] of Object.entries(managedProperties)) {
-		if (value !== undefined && value !== null) frontmatter[key] = value;
+		if (value !== undefined && value !== null) frontmatter[existingPropertyKey(frontmatter, key)] = value;
 	}
 }
 
@@ -132,10 +142,10 @@ export function captureManagedFrontmatter(
 	frontmatter: Record<string, unknown>,
 	managedProperties: Record<string, unknown>,
 ): Record<string, ManagedFrontmatterSnapshot> {
-	return Object.fromEntries(Object.keys(managedProperties).map((key) => [key, {
-		present: Object.prototype.hasOwnProperty.call(frontmatter, key),
-		value: copyValue(frontmatter[key]),
-	}]));
+	return Object.fromEntries(Object.keys(managedProperties).map((managed) => {
+		const key = existingPropertyKey(frontmatter, managed);
+		return [key, { present: Object.prototype.hasOwnProperty.call(frontmatter, key), value: copyValue(frontmatter[key]) }];
+	}));
 }
 
 export function restoreManagedFrontmatter(

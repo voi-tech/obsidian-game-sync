@@ -31,6 +31,7 @@ import { buildNoteIndex, type IndexedNote } from '../vault/note-index';
 import { parseFrontmatter } from '../vault/frontmatter';
 import { VaultConflictError } from '../network/errors';
 import { noteFingerprint } from '../vault/gateway';
+import { mergeStateChanges } from '../state/merge';
 
 export type ServiceProviderState = 'success' | 'partial' | 'failed';
 
@@ -508,6 +509,8 @@ export class SyncService {
 	private readonly sourceFetchedAt = new Map<string, string>();
 	private readonly executors = new Map<string, SyncExecutor>();
 	private stateValue?: GameSyncData;
+	/** State as last loaded or saved; the base of the three-way merge in saveState(). */
+	private stateBaseline?: GameSyncData;
 	private stateHydrated = false;
 	private currentSourceRevision = 'service:empty';
 	private lastPreparedSync?: PreparedSync;
@@ -545,6 +548,7 @@ export class SyncService {
 			this.stateValue = this.stateStore !== undefined
 				? await this.stateStore.load()
 				: this.initialState === undefined ? migrateState(undefined) : migrateState(this.initialState);
+			this.stateBaseline = cloneState(this.stateValue);
 		}
 		if (!this.stateHydrated) {
 			const appliedSnapshots = this.stateValue.lastAppliedProviderSnapshots;
@@ -566,8 +570,24 @@ export class SyncService {
 		return this.stateValue;
 	}
 
+	/**
+	 * Persists only this service's own changes on top of the currently stored state. The cached copy can be
+	 * minutes old (an open preview), and saving it whole would revert settings, ignores or mappings changed
+	 * in the meantime.
+	 */
 	private async saveState(): Promise<void> {
-		if (this.stateValue !== undefined && this.stateStore !== undefined) await this.stateStore.save(cloneState(this.stateValue));
+		if (this.stateValue === undefined || this.stateStore === undefined) return;
+		const current = await this.stateStore.load();
+		const merged = this.stateBaseline === undefined ? cloneState(this.stateValue) : mergeStateChanges(this.stateBaseline, cloneState(this.stateValue), current);
+		await this.stateStore.save(merged);
+		// Update in place so references obtained from loadState() stay valid.
+		// The base of the next merge must be exactly what the store returns (it migrates and sanitizes on save);
+		// otherwise array items no longer match and journal entries would duplicate.
+		const persisted = await this.stateStore.load();
+		const target = this.stateValue as unknown as Record<string, unknown>;
+		for (const key of Object.keys(target)) if (!(key in persisted)) delete target[key];
+		Object.assign(this.stateValue, cloneState(persisted));
+		this.stateBaseline = persisted;
 	}
 
 	private adapterFor(provider: GameProvider): GameProviderAdapter | undefined {
@@ -1432,6 +1452,7 @@ export class SyncService {
 	}
 
 	async applyUnmerge(prepared: PreparedUnmerge): Promise<void> {
+		if (!this.isActive()) throw new VaultConflictError('Sync runtime is stopped; the change was cancelled.');
 		const operation = prepared.plan.operations[0];
 		if (operation === undefined || operation.kind !== 'unmerge' || prepared.plan.operations.length !== 1 || prepared.conflict !== undefined || prepared.planId !== prepared.plan.id) {
 			throw new VaultConflictError('The unmerge plan is not applicable.');
@@ -1561,6 +1582,7 @@ export class SyncService {
 	}
 
 	async allowMatchingAgain(leftCanonicalId: string, rightCanonicalId: string): Promise<void> {
+		if (!this.isActive()) throw new VaultConflictError('Sync runtime is stopped; the change was cancelled.');
 		const state = await this.loadState();
 		state.negativeMappings = removeNegativeMapping(state, leftCanonicalId, rightCanonicalId).negativeMappings as GameSyncData['negativeMappings'];
 		this.stateValue = state;
@@ -1568,6 +1590,7 @@ export class SyncService {
 	}
 
 	async resolveUnresolved(canonicalId: string, action: MatchResolutionAction, candidatePath?: string): Promise<void> {
+		if (!this.isActive()) throw new VaultConflictError('Sync runtime is stopped; the change was cancelled.');
 		const prepared = this.lastPreparedSync;
 		const status = prepared?.plan.statuses.find((candidate) => candidate.canonicalGameId === canonicalId && (candidate.status === 'review' || candidate.status === 'conflict'));
 		if (prepared === undefined || status === undefined) throw new VaultConflictError('The unresolved item is no longer available.');

@@ -2,7 +2,9 @@ import { VaultConflictError } from '../network/errors';
 
 const OPEN_MARKER = /^%% game-sync:achievements %%[^\S\r\n]*\r?$/gm;
 const CLOSE_MARKER = /^%% \/game-sync:achievements %%[^\S\r\n]*\r?$/gm;
-const FENCE = /^[^\S\r\n]{0,3}(`{3,}|~{3,})/;
+// CommonMark: up to three spaces of indentation (a tab already makes an indented code block), then 3+ backticks or tildes.
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[^\S\r\n]*\r?$/;
 
 interface BlockMatch {
 	start: number;
@@ -10,12 +12,14 @@ interface BlockMatch {
 	text: string;
 }
 
-/** Offset of the Markdown body: markers inside YAML frontmatter are user data, never a managed block. */
+/** Offset of the Markdown body: a BOM and YAML frontmatter are never part of a managed block. */
 function bodyStart(content: string): number {
-	const opening = /^\uFEFF?---[^\S\r\n]*\r?\n/.exec(content);
-	if (opening === null) return 0;
-	const closing = /^---[^\S\r\n]*(?:\r?\n|$)/m.exec(content.slice(opening[0].length));
-	return closing === null ? content.length : opening[0].length + closing.index + closing[0].length;
+	const bom = content.startsWith('\uFEFF') ? 1 : 0;
+	const opening = /^---[^\S\r\n]*\r?\n/.exec(content.slice(bom));
+	if (opening === null) return bom;
+	const afterOpening = bom + opening[0].length;
+	const closing = /^---[^\S\r\n]*(?:\r?\n|$)/m.exec(content.slice(afterOpening));
+	return closing === null ? content.length : afterOpening + closing.index + closing[0].length;
 }
 
 /** Character ranges of fenced code blocks, where marker lines are examples, not delimiters. */
@@ -24,10 +28,13 @@ function fencedRanges(content: string, from: number): Array<[number, number]> {
 	let offset = from;
 	let open: { start: number; marker: string } | undefined;
 	for (const line of content.slice(from).split('\n')) {
-		const fence = FENCE.exec(line)?.[1];
-		if (fence !== undefined) {
-			if (open === undefined) open = { start: offset, marker: fence };
-			else if (fence[0] === open.marker[0] && fence.length >= open.marker.length) {
+		if (open === undefined) {
+			const opener = FENCE_OPEN.exec(line);
+			// A backtick fence's info string may not contain backticks (that line is inline code, not a fence).
+			if (opener !== null && !(opener[1][0] === '`' && opener[2].includes('`'))) open = { start: offset, marker: opener[1] };
+		} else {
+			const closer = FENCE_CLOSE.exec(line)?.[1];
+			if (closer !== undefined && closer[0] === open.marker[0] && closer.length >= open.marker.length) {
 				ranges.push([open.start, offset + line.length]);
 				open = undefined;
 			}
@@ -39,9 +46,10 @@ function fencedRanges(content: string, from: number): Array<[number, number]> {
 }
 
 function markerOffsets(content: string, pattern: RegExp, from: number, fenced: Array<[number, number]>): Array<{ index: number; length: number }> {
-	return [...content.matchAll(pattern)]
-		.filter((match) => match.index >= from && !fenced.some(([start, end]) => match.index >= start && match.index < end))
-		.map((match) => ({ index: match.index, length: match[0].replace(/\r$/, '').length }));
+	// Scan the body only, so `^` also matches at its first character (after a BOM or frontmatter).
+	return [...content.slice(from).matchAll(pattern)]
+		.map((match) => ({ index: from + match.index, length: match[0].replace(/\r$/, '').length }))
+		.filter((match) => !fenced.some(([start, end]) => match.index >= start && match.index < end));
 }
 
 /**
@@ -69,8 +77,8 @@ function appendBlock(content: string, block: string): string {
 }
 
 export function replaceAchievementsBlock(content: string, rendered: string): string {
-	const found = findBlock(content);
 	if (rendered.trim().length === 0) return content;
+	const found = findBlock(content);
 	if (found === undefined) return appendBlock(content, rendered);
 	return `${content.slice(0, found.start)}${rendered}${content.slice(found.end)}`;
 }

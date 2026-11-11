@@ -1,3 +1,4 @@
+import { titleMatchKey } from '../../identity/normalize-title';
 import type { CanonicalGame, AchievementDetail } from '../../model/canonical-game';
 import type { CanonicalLibrarySnapshot } from '../../model/canonical-provider';
 import type { CanonicalGamePatch, GameEnricher, GameEnricherCapabilities, GameEnrichmentResult } from '../../model/enrichment';
@@ -62,7 +63,7 @@ function matchGames(games: readonly CanonicalGame[], externalGames: readonly Ste
 	}
 	const byTitle = new Map<string, CanonicalGame[]>();
 	for (const game of games) {
-		const key = titleKey(game.title);
+		const key = titleMatchKey(game.title);
 		// A game that already carries a Steam app ID may only match by that ID, never by title.
 		if (key.length === 0 || game.identity.externalIds.steam !== undefined || !game.platforms.some((platform) => platform.id === 'steam')) continue;
 		byTitle.set(key, [...(byTitle.get(key) ?? []), game]);
@@ -71,7 +72,7 @@ function matchGames(games: readonly CanonicalGame[], externalGames: readonly Ste
 	const matched: Array<[CanonicalGame, SteamOwnedGame]> = [];
 	for (const external of externalGames) {
 		const direct = bySteam.get(String(external.appid)) ?? [];
-		const externalKey = titleKey(external.name ?? '');
+		const externalKey = titleMatchKey(external.name ?? '');
 		const titleMatches = externalKey.length === 0 ? [] : byTitle.get(externalKey) ?? [];
 		const candidates = direct.length > 0 ? direct : titleMatches;
 		if (candidates.length !== 1 || used.has(candidates[0]?.identity.canonicalKey ?? '')) {
@@ -86,8 +87,6 @@ function matchGames(games: readonly CanonicalGame[], externalGames: readonly Ste
 	return matched;
 }
 
-// Unicode-aware: an ASCII-only key collapses e.g. Japanese titles to '' and matches unrelated games.
-function titleKey(value: string): string { return value.normalize('NFKC').toLocaleLowerCase().replace(/[™®©]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
 function finiteNonNegative(value: number | undefined): number | undefined { return value !== undefined && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined; }
 function steamDate(game: SteamOwnedGame): string | undefined { if (game.last_played !== undefined) return game.last_played; return game.rtime_last_played === undefined || game.rtime_last_played <= 0 ? undefined : new Date(game.rtime_last_played * 1000).toISOString(); }
 function toDetail(value: { id: string; name?: string; description?: string; unlocked: boolean; unlockedAt?: string; hidden?: boolean; iconUrl?: string }): AchievementDetail { return { id: value.id, name: value.name, description: value.description, unlocked: value.unlocked, unlockedAt: value.unlockedAt, hidden: value.hidden, iconUrl: value.iconUrl }; }
