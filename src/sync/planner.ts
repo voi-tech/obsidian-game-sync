@@ -107,6 +107,7 @@ export class SyncPlanner {
 				mappings,
 				negativeMappings: state.negativeMappings ?? this.options.negativeMappings,
 				propertyMapping: this.options.propertyMapping,
+				candidateFolder: (this.options.notesFolder ?? 'Games').replace(/\/+$/u, ''),
 			});
 			if (match.status === 'conflict') {
 				statuses.push({ canonicalGameId: game.canonicalId, status: 'conflict', path: targetPath, match, reason: match.reason });

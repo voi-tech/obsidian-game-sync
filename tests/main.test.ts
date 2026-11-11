@@ -131,7 +131,7 @@ describe('main runtime integration', () => {
 
 		await runtime.ready;
 
-		expect(fixture.commands).toHaveLength(9);
+		expect(fixture.commands).toHaveLength(10); // 9 sync commands + PlayStation purchase import
 		expect(fixture.settingTabs).toHaveLength(1);
 		expect(timer.setInterval).toHaveBeenCalledOnce();
 		expect(runtime.scheduler.getState()).toBe('scheduled');

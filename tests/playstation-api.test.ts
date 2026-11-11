@@ -100,6 +100,32 @@ describe('PlayStation paginated API boundary', () => {
 		await expect(createPlayStationApi(auth).getUserPlayedGames()).rejects.toMatchObject({ code: 'playstation-invalid-response' });
 	});
 
+	it('accepts null optional fields and skips individual malformed titles', async () => {
+		getUserPlayedGames.mockReset();
+		getUserPlayedGames.mockResolvedValue({
+			titles: [
+				{ titleId: 'PPSA1', name: 'Game', localizedName: null, imageUrl: null, concept: null, playDuration: 'PT1H' },
+				{ titleId: 'PPSA2', name: null },
+			],
+			totalItemCount: 2,
+			nextOffset: null,
+		});
+		const result = await createPlayStationApi(auth).getUserPlayedGames();
+		expect(result.titles).toEqual([expect.objectContaining({ titleId: 'PPSA1', name: 'Game' })]);
+		expect(result.titles[0]).not.toHaveProperty('concept');
+		expect(result.complete).toBe(true);
+	});
+
+	it('names the endpoint and field paths (never values) when every title is malformed', async () => {
+		getUserPlayedGames.mockReset();
+		getUserPlayedGames.mockResolvedValue({ titles: [{ titleId: 7, name: 'secret-value' }], totalItemCount: 1 });
+		const error = await createPlayStationApi(auth).getUserPlayedGames().then(() => new Error('expected failure'), (caught: unknown) => caught as Error);
+		expect(error).toMatchObject({ code: 'playstation-invalid-response' });
+		expect(error.message).toContain('played games');
+		expect(error.message).toContain('titleId');
+		expect(error.message).not.toContain('secret-value');
+	});
+
 	it('does not claim completeness when total count exceeds a stopped offset', async () => {
 		getUserPlayedGames.mockResolvedValue({ titles: [{ titleId: 'CUSA00001_00', name: 'Game' }], totalItemCount: 2, nextOffset: 0 });
 		getUserTitles.mockResolvedValue({ trophyTitles: [{ npServiceName: 'trophy', npCommunicationId: 'NPWR1', trophyTitleName: 'Game' }], totalItemCount: 2, nextOffset: 0 });

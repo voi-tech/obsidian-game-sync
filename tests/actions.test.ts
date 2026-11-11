@@ -185,6 +185,27 @@ describe('createGameSyncCommandActions', () => {
 		expect(fixtureValue.services[0]?.prepareCalls).toEqual([{}]);
 	});
 
+	it('shows a progress indicator while preparing and applying, and hides it even on failure', async () => {
+		const fixtureValue = fixture();
+		const events: string[] = [];
+		fixtureValue.ui.showProgress = (kind) => { events.push(`show:${kind}`); return () => events.push(`hide:${kind}`); };
+		const opened = fixtureValue.previews;
+		const push = opened.push.bind(opened);
+		opened.push = (...items) => { events.push('preview-opened'); return push(...items); };
+
+		await fixtureValue.actions.previewAllChanges();
+		expect(events).toEqual(['show:preparing', 'hide:preparing', 'preview-opened']);
+
+		const preview = fixtureValue.previews[0];
+		if (preview === undefined) throw new Error('Preview was not opened.');
+		await preview.onApply(preview.prepared, ['operation:one']);
+		expect(events.slice(3)).toEqual(['show:applying', 'hide:applying']);
+
+		fixtureValue.createService.mockRejectedValueOnce(new Error('network down'));
+		await expect(fixtureValue.actions.previewAllChanges()).rejects.toThrow('network down');
+		expect(events.slice(-2)).toEqual(['show:preparing', 'hide:preparing']);
+	});
+
 	it('force-refresh prepares a fresh all-provider service with force enabled', async () => {
 		const fixtureValue = fixture();
 

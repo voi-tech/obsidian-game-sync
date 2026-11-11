@@ -39,7 +39,7 @@ describe('managed Property mapping', () => {
 			'steamAchievementsEarned', 'steamAchievementsTotal', 'steamAchievementsProgress', 'playstationId', 'playstationOwned',
 			'playstationPlaytime', 'playstationLastPlayed', 'psnTrophiesEarned', 'psnTrophiesTotal', 'psnTrophiesProgress',
 			'psnBronze', 'psnSilver', 'psnGold', 'psnPlatinum', 'updated',
-			'igdbId', 'gametrackId',
+			'igdbId', 'gametrackId', 'purchaseDate', 'purchasePrice', 'purchaseCurrency',
 		]);
 	});
 
@@ -62,17 +62,15 @@ describe('managed Property mapping', () => {
 		expect(values).not.toHaveProperty('title');
 	});
 
-	it('rejects duplicate and user-owned destinations', () => {
+	it('rejects duplicate destinations', () => {
 		expect(() => validatePropertyMapping({ title: 'same', type: 'same' })).toThrow(/duplicate/i);
-		for (const name of ['status', 'rating', 'favorite', 'start', 'end', 'review', 'notes', 'tags']) {
-			expect(() => validatePropertyMapping({ title: `  ${name.toUpperCase()}  ` })).toThrow(/user-owned/i);
-		}
 		expect(() => validatePropertyMapping({ title: ' Steam-ID ' })).toThrow(/duplicate/i);
 	});
 
-	it('rejects user-owned canonical destinations after trimming and case normalization', () => {
-		for (const name of ['status', 'rating', 'favorite', 'start', 'end', 'review', 'notes', 'tags']) {
-			expect(() => resolveCanonicalPropertyMapping({ title: `  ${name.toUpperCase()}  ` })).toThrow(/user-owned/i);
+	it('accepts any destination name the user chooses, including common personal property names', () => {
+		for (const name of ['status', 'rating', 'favorite', 'start', 'end', 'review', 'notes', 'tags', 'id', 'duration']) {
+			expect(() => validatePropertyMapping({ title: `  ${name}  ` })).not.toThrow();
+			expect(resolveCanonicalPropertyMapping({ title: `  ${name}  ` }).title).toBe(name);
 		}
 	});
 

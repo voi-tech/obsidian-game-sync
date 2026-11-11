@@ -33,7 +33,11 @@ export interface RuntimeUiPort {
 	copyDiagnostics(): void | PromiseLike<void>;
 	openMatchManager(adapter: MatchManagerAdapter): void | PromiseLike<void>;
 	showUnavailable(commandId: string): void | PromiseLike<void>;
+	/** Shows a persistent "working" indicator for slow steps; returns a function that hides it. */
+	showProgress?(kind: RuntimeProgressKind): () => void;
 }
+
+export type RuntimeProgressKind = 'preparing' | 'applying' | 'loading';
 
 export interface GameSyncCommandActionsOptions {
 	composition: GameSyncRuntimeComposition;
@@ -48,16 +52,31 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 	const runExclusive = options.runExclusive ?? createSyncConcurrencyGuard();
 	const actions = {} as GameSyncCommandActions;
 
+	/** Network fetches and vault scans can take a while; always show that the command is working. */
+	const withProgress = async <T>(kind: RuntimeProgressKind, run: () => Promise<T>): Promise<T> => {
+		let hide: (() => void) | undefined;
+		try {
+			hide = options.ui.showProgress?.(kind);
+		} catch {
+			hide = undefined;
+		}
+		try {
+			return await run();
+		} finally {
+			try { hide?.(); } catch { /* A failed indicator must never mask the command result. */ }
+		}
+	};
+
 	const openPreview = async (force: boolean): Promise<void> => {
-		const { service, prepared } = await runExclusive(async () => {
+		const { service, prepared } = await withProgress('preparing', () => runExclusive(async () => {
 			const service = await options.composition.createService();
 			const prepared = await service.prepareAll(force ? { force: true } : {});
 			return { service, prepared };
-		});
+		}));
 
 		await options.ui.openPreview(
 			prepared,
-			(preview, selectedOperationIds) => runExclusive(async () => service.applySelection(preview, selectedOperationIds, { explicit: true }))
+			(preview, selectedOperationIds) => withProgress('applying', () => runExclusive(async () => service.applySelection(preview, selectedOperationIds, { explicit: true })))
 				.then((result) => options.ui.openSummary(result, noop, () => actions.syncAll()))
 				.then(() => undefined),
 			(decision) => runExclusive(async () => { await service.applyReviewDecision?.(decision); }),
@@ -72,27 +91,27 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 					await options.ui.showUnavailable(`${state.settings.libraryProvider}-preview`);
 					return;
 				}
-				const prepared = await runExclusive(async () => {
+				const prepared = await withProgress('preparing', () => runExclusive(async () => {
 					const service = await options.composition.createCanonicalService();
 					if (service === undefined) return undefined;
 					return { service, preview: await service.preview() };
-				});
+				}));
 				if (prepared === undefined) {
 					await options.ui.showUnavailable(state.settings.libraryProvider);
 					return;
 				}
-				await options.ui.openCanonicalPreview(prepared.preview, (selection) => runExclusive(async () => {
+				await options.ui.openCanonicalPreview(prepared.preview, (selection) => withProgress('applying', () => runExclusive(async () => {
 					await prepared.service.applyPreview(prepared.preview, selection);
 					await markGameTrackImport();
 					await options.composition.approveCanonicalBackgroundSync();
-				}));
+				})));
 				return;
 			}
-			const { service, prepared } = await runExclusive(async () => {
+			const { service, prepared } = await withProgress('preparing', () => runExclusive(async () => {
 				const service = await options.composition.createService();
 				const prepared = await service.prepareAll(force ? { force: true } : {});
 				return { service, prepared };
-			});
+			}));
 			const requiresPreview = alwaysPreview
 				|| state.settings.firstSyncCompleted === false
 				|| state.settings.previewMode === 'always'
@@ -103,7 +122,7 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 				return;
 			}
 			const safeOperationIds = prepared.plan.operations.filter((operation) => operation.risk === 'safe').map((operation) => operation.id);
-			const result = await runExclusive(() => service.applySelection(prepared, safeOperationIds, { explicit: true }));
+			const result = await withProgress('applying', () => runExclusive(() => service.applySelection(prepared, safeOperationIds, { explicit: true })));
 			await options.ui.openSummary(result, noop, () => actions.syncAll());
 			return;
 		}
@@ -113,7 +132,7 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 	const openPreparedPreview = async (service: Awaited<ReturnType<GameSyncRuntimeComposition['createService']>>, prepared: PreparedSync): Promise<void> => {
 		await options.ui.openPreview(
 			prepared,
-			(preview, selectedOperationIds) => runExclusive(async () => service.applySelection(preview, selectedOperationIds, { explicit: true }))
+			(preview, selectedOperationIds) => withProgress('applying', () => runExclusive(async () => service.applySelection(preview, selectedOperationIds, { explicit: true })))
 				.then((result) => options.ui.openSummary(result, noop, () => actions.syncAll()))
 				.then(() => undefined),
 			(decision) => runExclusive(async () => { await service.applyReviewDecision?.(decision); }),
@@ -129,7 +148,7 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 	};
 
 	const openLibrarySummary = async (): Promise<void> => {
-		const summary = await runExclusive(async () => {
+		const summary = await withProgress('loading', () => runExclusive(async () => {
 			let state: GameSyncData;
 			if (options.stateStore !== undefined) state = await options.stateStore.load();
 			else {
@@ -141,7 +160,7 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 					: await compositionWithState.getState();
 			}
 			return buildLibrarySummary(state);
-		});
+		}));
 
 		await options.ui.openSummary(summary, noop, () => actions.syncAll());
 	};
@@ -150,7 +169,7 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 	actions.previewAllChanges = () => openSelectedPreview(false, true);
 	actions.reviewPendingMatches = () => openSelectedPreview(false, true);
 	actions.manageGameMatches = async () => {
-		const adapter = await runExclusive(() => options.composition.createMatchManager());
+		const adapter = await withProgress('loading', () => runExclusive(() => options.composition.createMatchManager()));
 		await options.ui.openMatchManager(adapter);
 	};
 	actions.manageIgnoredGames = () => options.ui.openIgnoredGames();

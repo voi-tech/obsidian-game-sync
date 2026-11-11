@@ -242,6 +242,29 @@ describe('safe local unmerge', () => {
 });
 
 describe('durable match decisions', () => {
+	it('combines two library entries that would create the same note into one game', async () => {
+		const steam = new FakeProvider(fakeProviderSnapshot('steam', [fakeProviderGame('steam', 'steam-1', 'Example Game')]));
+		const playstation = new FakeProvider(fakeProviderSnapshot('playstation', [fakeProviderGame('playstation', 'psn-1', 'Example Game')]));
+		const harness = await createIntegrationHarness({
+			providers: [steam, playstation],
+			state: {
+				settings: { firstSyncCompleted: true },
+				identityMappings: identityMappings(['steam', 'steam-1', 'game-sync:steam'], ['playstation', 'psn-1', 'game-sync:playstation']),
+			},
+		});
+		const prepared = await harness.service.prepareAll();
+		const collisions = prepared.plan.statuses.filter((status) => status.path === 'Games/Example Game.md');
+		expect(collisions.map((status) => status.status)).toEqual(['conflict', 'conflict']);
+		expect(collisions.every((status) => status.match?.note === undefined)).toBe(true);
+
+		await harness.service.applyReviewDecision({ planId: prepared.plan.id, canonicalGameId: 'game-sync:playstation', action: 'merge', candidateCanonicalId: 'game-sync:steam' });
+
+		expect((await harness.service.getState()).identityMappings).toContainEqual({ provider: 'playstation', providerGameId: 'psn-1', canonicalId: 'game-sync:steam' });
+		const next = await harness.service.prepareAll();
+		expect(next.plan.statuses.filter((status) => status.status === 'conflict')).toHaveLength(0);
+		expect(next.plan.operations.filter((operation) => operation.kind === 'create-note')).toHaveLength(1);
+	});
+
 	it('manual merge maps the provider to the reviewed candidate canonical ID', async () => {
 		const playstation = new FakeProvider(fakeProviderSnapshot('playstation', [fakeProviderGame('playstation', 'psn-1', 'Example Game')]));
 		const harness = await createIntegrationHarness({

@@ -36,6 +36,17 @@ export interface VaultMatcherOptions {
 	mappings?: readonly IdentityMapping[];
 	negativeMappings?: readonly NegativeIdentityMapping[];
 	propertyMapping?: PropertyMapping;
+	/**
+	 * Limits title/filename guesses to this folder. Stable IDs still match anywhere, but a film or book
+	 * note elsewhere in the vault must never be offered as "the same game" just because titles match.
+	 */
+	candidateFolder?: string;
+}
+
+function inFolder(folder: string | undefined): (note: IndexedNote) => boolean {
+	if (folder === undefined) return () => true;
+	const prefix = `${folder.replace(/^\/+|\/+$/gu, '')}/`;
+	return (note) => prefix === '/' || note.path.startsWith(prefix);
 }
 
 function values(properties: Record<string, unknown>, names: readonly string[]): string[] {
@@ -156,7 +167,8 @@ export function matchVaultNote(game: NormalizedGame, index: NoteIndex, options: 
 	}
 	if (durable.length > 0) return matchByPriority(durable, 'durable-mapping', 'explicit');
 
-	const byTitle = filterNegative(titleCandidates(index, game));
+	const heuristic = inFolder(options.candidateFolder);
+	const byTitle = filterNegative(titleCandidates(index, game).filter(heuristic));
 	if (byTitle.length > 0) return matchByPriority(byTitle, 'exact-title', 'likely');
 
 	if (options.targetPath !== undefined) {
@@ -167,9 +179,9 @@ export function matchVaultNote(game: NormalizedGame, index: NoteIndex, options: 
 	const year = gameYear(game);
 	if (year !== undefined) {
 		const expectedFilename = `${normalizeTitle(game.title)} (${year})`;
-		const titleYear = filterNegative(index.notes.filter((note) => normalizeTitle(filenameStem(note.path)) === expectedFilename));
+		const titleYear = filterNegative(index.notes.filter((note) => heuristic(note) && normalizeTitle(filenameStem(note.path)) === expectedFilename));
 		if (titleYear.length > 0) return matchByPriority(titleYear, 'title-year', 'likely');
-		const normalizedTitleYear = filterNegative(index.notes.filter((note) => note.title !== undefined && normalizeTitle(note.title) === normalizeTitle(game.title) && noteYear(note) === year));
+		const normalizedTitleYear = filterNegative(index.notes.filter((note) => heuristic(note) && note.title !== undefined && normalizeTitle(note.title) === normalizeTitle(game.title) && noteYear(note) === year));
 		if (normalizedTitleYear.length > 0) return matchByPriority(normalizedTitleYear, 'normalized-title-year', 'likely');
 	}
 
@@ -186,6 +198,8 @@ export interface CanonicalIdentityMapping {
 export interface CanonicalVaultMatcherOptions {
 	canonicalMappings?: readonly CanonicalIdentityMapping[];
 	targetPath?: string;
+	/** Same as {@link VaultMatcherOptions.candidateFolder}. */
+	candidateFolder?: string;
 }
 
 function canonicalYear(game: CanonicalGame): string | undefined {
@@ -227,7 +241,7 @@ export function matchCanonicalVaultNote(game: CanonicalGame, index: NoteIndex, o
 		: kind === 'playstation' ? index.findByPlayStationIdentifier(id) : []));
 	if (legacy.length > 0) return matchByPriority(legacy, 'provider-id', 'explicit');
 
-	const titleCandidates = canonicalTitleCandidates(index, game);
+	const titleCandidates = canonicalTitleCandidates(index, game).filter(inFolder(options.candidateFolder));
 	const year = canonicalYear(game);
 	const sameYear = year === undefined ? titleCandidates : titleCandidates.filter((note) => noteYear(note) === year);
 	if (sameYear.length > 0) return matchByPriority(sameYear, year === undefined ? 'exact-title' : 'title-year', 'likely', 'Title fallback requires review.');

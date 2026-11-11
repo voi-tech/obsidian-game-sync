@@ -77,16 +77,18 @@ describe('Canonical sync preview', () => {
 		]), onApply: vi.fn() });
 
 		modal.onOpen();
-		expect(modal.contentEl.querySelector('[data-canonical-preview-section="create"] h3')?.textContent).toBe('To create — 1');
-		expect(modal.contentEl.querySelector('[data-canonical-preview-section="update"] h3')?.textContent).toBe('To update — 1');
-		expect(modal.contentEl.querySelector('[data-canonical-preview-section="unchanged"] h3')?.textContent).toBe('Unchanged — 1');
-		expect(modal.contentEl.querySelector('[data-canonical-preview-section="conflict"] h3')?.textContent).toBe('Needs attention — 1');
+		expect(modal.contentEl.querySelector('[data-canonical-preview-section="create"] h3')?.textContent).toBe('New notes (1)');
+		expect(modal.contentEl.querySelector('[data-canonical-preview-section="update"] h3')?.textContent).toBe('Updates (1)');
+		expect(modal.contentEl.querySelector('[data-canonical-preview-section="unchanged"] h3')?.textContent).toBe('Unchanged (1)');
+		expect(modal.contentEl.querySelector('[data-canonical-preview-section="conflict"] h3')?.textContent).toBe('Needs manual review (1)');
 		expect(modal.contentEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).toHaveLength(5);
 		expect(modal.contentEl.querySelectorAll('[data-canonical-preview-field-toggle]')).toHaveLength(3);
 		expect(modal.contentEl.querySelectorAll('[data-canonical-preview-body]')).toHaveLength(1);
-		expect(modal.contentEl.textContent).toContain('Property: playtime');
-		expect(modal.contentEl.textContent).toContain('Previous: 120');
-		expect(modal.contentEl.textContent).toContain('Next: 180');
+		expect(Array.from(modal.contentEl.querySelectorAll<HTMLElement>('[data-canonical-preview-field-property]'), (el: HTMLElement) => el.textContent)).toContain('playtime');
+		expect(modal.contentEl.textContent).not.toContain('Property: ');
+		expect(Array.from(modal.contentEl.querySelectorAll<HTMLElement>('[data-canonical-preview-previous]'), (el: HTMLElement) => el.textContent)).toContain('120');
+		expect(modal.contentEl.textContent).not.toContain('Current: ');
+		expect(Array.from(modal.contentEl.querySelectorAll<HTMLElement>('[data-canonical-preview-next]'), (el: HTMLElement) => el.textContent)).toContain('180');
 		expect(modal.contentEl.textContent).toContain('Full note body preview');
 		expect(modal.contentEl.textContent).toContain('Dead Space');
 		expect(modal.contentEl.textContent).toContain('Nie można jednoznacznie dopasować istniejącej notatki.');
@@ -108,7 +110,7 @@ describe('Canonical sync preview', () => {
 		toggles[0].dispatchEvent(new Event('change'));
 		expect(modal.contentEl.querySelector('[data-canonical-preview-selection]')?.textContent).toContain('1 of 2 games selected');
 		const apply = modal.contentEl.querySelector<HTMLButtonElement>('[data-canonical-preview-apply]')!;
-		expect(apply.textContent).toBe('Sync 1 games');
+		expect(apply.textContent).toBe('Sync selected');
 		apply.click();
 		await vi.waitFor(() => expect(onApply).toHaveBeenCalledWith({
 			operationIds: ['update-1'],

@@ -1510,6 +1510,17 @@ export class SyncService {
 			return;
 		}
 		const status = prepared.plan.statuses.find((candidate) => candidate.canonicalGameId === decision.canonicalGameId && (candidate.status === 'review' || candidate.status === 'conflict'));
+		if (decision.action === 'merge' && decision.candidatePath === undefined && decision.candidateCanonicalId !== undefined) {
+			// Two library entries would create the same note: merging them means one canonical game, no vault note involved.
+			const other = prepared.games.find((candidate) => candidate.canonicalId === decision.candidateCanonicalId);
+			const otherStatus = prepared.plan.statuses.find((candidate) => candidate.canonicalGameId === decision.candidateCanonicalId);
+			if (status === undefined || other === undefined || other.canonicalId === game.canonicalId || otherStatus?.path !== status.path) {
+				throw new VaultConflictError('The review candidate is no longer available.');
+			}
+			this.mergeGameInto(state, game, other.canonicalId);
+			await this.saveState();
+			return;
+		}
 		const candidate = status?.match?.candidates.find((candidateNote) => candidateNote.path === decision.candidatePath);
 		if (candidate === undefined) throw new VaultConflictError('The review candidate is no longer available.');
 		if (decision.candidatePath === undefined) throw new VaultConflictError('The review candidate is unavailable.');
@@ -1521,17 +1532,7 @@ export class SyncService {
 		if (candidateId === undefined) throw new VaultConflictError('The review candidate has no stable identity.');
 		if (note === undefined || noteFingerprint(await this.planner.gateway.read(note.path)) !== candidate.fingerprint) throw new VaultConflictError('The review candidate changed after the preview.');
 		if (decision.action === 'merge') {
-			state.identityMappings = state.identityMappings.filter((mapping) => !Object.entries(game.providers).some(([provider, providerGame]) =>
-				providerGame !== undefined && mapping.provider === provider && mapping.providerGameId === providerGame.providerGameId,
-			));
-			for (const [provider, providerGame] of Object.entries(game.providers) as [GameProvider, NormalizedProviderGame | undefined][]) {
-				if (providerGame !== undefined) state.identityMappings.push({ canonicalId: candidateId, provider, providerGameId: providerGame.providerGameId });
-			}
-			state.negativeMappings = removeNegativeMapping(state, game.canonicalId, candidateId).negativeMappings as GameSyncData['negativeMappings'];
-			for (const [provider, providerGame] of Object.entries(game.providers) as [GameProvider, NormalizedProviderGame | undefined][]) {
-				if (providerGame !== undefined) this.canonicalIds.set(providerRef(provider, providerGame.providerGameId), candidateId);
-			}
-			this.stateValue = state;
+			this.mergeGameInto(state, game, candidateId);
 			await this.saveState();
 			return;
 		}
@@ -1542,6 +1543,21 @@ export class SyncService {
 		next.negativeMappings = addNegativeMapping(next, game.canonicalId, candidateId).negativeMappings as GameSyncData['negativeMappings'];
 		this.stateValue = next;
 		await this.saveState();
+	}
+
+	/** Points every provider entry of `game` at `candidateId`, so the next plan treats both as one game. */
+	private mergeGameInto(state: GameSyncData, game: NormalizedGame, candidateId: string): void {
+		state.identityMappings = state.identityMappings.filter((mapping) => !Object.entries(game.providers).some(([provider, providerGame]) =>
+			providerGame !== undefined && mapping.provider === provider && mapping.providerGameId === providerGame.providerGameId,
+		));
+		for (const [provider, providerGame] of Object.entries(game.providers) as [GameProvider, NormalizedProviderGame | undefined][]) {
+			if (providerGame !== undefined) state.identityMappings.push({ canonicalId: candidateId, provider, providerGameId: providerGame.providerGameId });
+		}
+		state.negativeMappings = removeNegativeMapping(state, game.canonicalId, candidateId).negativeMappings as GameSyncData['negativeMappings'];
+		for (const [provider, providerGame] of Object.entries(game.providers) as [GameProvider, NormalizedProviderGame | undefined][]) {
+			if (providerGame !== undefined) this.canonicalIds.set(providerRef(provider, providerGame.providerGameId), candidateId);
+		}
+		this.stateValue = state;
 	}
 
 	async allowMatchingAgain(leftCanonicalId: string, rightCanonicalId: string): Promise<void> {

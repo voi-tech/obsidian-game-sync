@@ -152,7 +152,7 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 	const matches = new Map<string, VaultMatch>();
 	const newGames: CanonicalGame[] = [];
 	for (const game of orderedGames) {
-		const match = matchCanonicalVaultNote(game, index, { canonicalMappings: options.canonicalMappings });
+		const match = matchCanonicalVaultNote(game, index, { canonicalMappings: options.canonicalMappings, candidateFolder: (options.notesFolder ?? 'Games').replace(/\/+$/u, '') });
 		matches.set(game.identity.canonicalKey, match);
 		if (match.status !== 'conflict' && match.status !== 'review' && match.note === undefined) newGames.push(game);
 		if (match.note !== undefined) {
@@ -167,7 +167,7 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 		reservedPaths: new Set(assignments.keys()),
 	});
 	for (const game of orderedGames) {
-		const match = matches.get(game.identity.canonicalKey) ?? matchCanonicalVaultNote(game, index, { canonicalMappings: options.canonicalMappings });
+		const match = matches.get(game.identity.canonicalKey) ?? matchCanonicalVaultNote(game, index, { canonicalMappings: options.canonicalMappings, candidateFolder: (options.notesFolder ?? 'Games').replace(/\/+$/u, '') });
 		const path = match.note?.path ?? allocatedPaths.get(game.identity.canonicalKey) ?? '';
 		if (match.status === 'conflict' || match.status === 'review') {
 			statuses.push({ canonicalKey: game.identity.canonicalKey, status: 'conflict', path: match.note?.path ?? path, match, reason: match.reason ?? 'Matching requires explicit review.' });

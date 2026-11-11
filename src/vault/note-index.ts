@@ -1,6 +1,6 @@
 import { DEFAULT_PROPERTY_MAPPING, resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
 import { resolveCanonicalPropertyMapping, type CanonicalPropertyMapping } from './canonical-projection';
-import { parseFrontmatter } from './frontmatter';
+import { InvalidFrontmatterError, parseFrontmatter } from './frontmatter';
 import { noteFingerprint, type VaultGateway, type VaultNoteRef } from './gateway';
 
 export interface IndexedNote extends VaultNoteRef {
@@ -35,6 +35,8 @@ export class NoteIndex {
 	private readonly gameTrackIds = new Map<string, IndexedNote[]>();
 	private readonly steamIds = new Map<string, IndexedNote[]>();
 	private readonly playstationIds = new Map<string, IndexedNote[]>();
+	/** Notes skipped because their frontmatter is not valid YAML. */
+	invalidNotePaths: readonly string[] = [];
 
 	constructor(readonly notes: readonly IndexedNote[], mapping: PropertyMapping = {}, canonicalMapping: CanonicalPropertyMapping = {}) {
 		const resolved = resolvePropertyMapping(mapping);
@@ -81,9 +83,19 @@ export async function buildNoteIndex(
 	const refs = await gateway.listMarkdownFiles();
 	const notes: IndexedNote[] = [];
 	const resolved = resolvePropertyMapping(mapping);
+	const invalidNotePaths: string[] = [];
 	for (const ref of refs) {
 		const content = await gateway.read(ref.path);
-		const parsed = parseFrontmatter(content);
+		let parsed: ReturnType<typeof parseFrontmatter>;
+		try {
+			parsed = parseFrontmatter(content);
+		} catch (error) {
+			// One unrelated note with broken YAML must not block the whole sync. Skipped notes are
+			// never mutated: creating a note at an existing path is refused by the writer.
+			if (!(error instanceof InvalidFrontmatterError)) throw error;
+			invalidNotePaths.push(ref.path);
+			continue;
+		}
 		const titleValue = parsed.frontmatter[resolved.title ?? 'title'];
 		const fileTitle = ref.path.split('/').at(-1) ?? ref.path;
 		notes.push({
@@ -95,5 +107,7 @@ export async function buildNoteIndex(
 			normalizedFilename: normalize(fileTitle),
 		});
 	}
-	return new NoteIndex(notes, mapping, canonicalMapping);
+	const index = new NoteIndex(notes, mapping, canonicalMapping);
+	index.invalidNotePaths = invalidNotePaths;
+	return index;
 }

@@ -1,5 +1,5 @@
 import { Modal, type App } from 'obsidian';
-import { t, type TranslationKey } from '../i18n';
+import { t } from '../i18n';
 import type { CanonicalPreviewResult } from '../sync/canonical-service';
 import type { CanonicalOperation, CanonicalSyncSelection } from '../sync/canonical-planner';
 import type { CanonicalGame } from '../model/canonical-game';
@@ -58,7 +58,7 @@ function previewLabels(games: readonly CanonicalGame[]): ReadonlyMap<string, Pre
 }
 
 function previewValue(value: unknown): string {
-	if (value === undefined) return '—';
+	if (value === undefined) return t('sync.canonicalPreview.empty');
 	if (value === null) return 'null';
 	if (typeof value === 'string') return value;
 	try {
@@ -130,8 +130,6 @@ export class CanonicalPreviewModal extends Modal {
 		section.dataset.canonicalPreviewSection = kind;
 		const heading = section.createEl('h3', { text: t(`sync.canonicalPreview.${kind}`, { count: operations.length }) });
 		heading.dataset.canonicalPreviewHeading = kind;
-		section.createEl('p', { text: t(`sync.canonicalPreview.${kind}Description` as TranslationKey) });
-
 		const actions = section.createDiv();
 		actions.dataset.canonicalPreviewSectionActions = kind;
 		this.addActionButton(actions, t('sync.canonicalPreview.selectAll'), `select-all-${kind}`, () => {
@@ -181,6 +179,15 @@ export class CanonicalPreviewModal extends Modal {
 			}
 			const changes = row.createDiv();
 			changes.dataset.canonicalPreviewChanges = operation.id;
+			if (operation.preview.changes.length > 0) {
+				const header = changes.createDiv();
+				header.className = 'game-sync-preview-field game-sync-preview-field-header';
+				header.createSpan({ text: t('sync.canonicalPreview.property') });
+				const headerValues = header.createDiv();
+				headerValues.className = 'game-sync-preview-field-values';
+				headerValues.createSpan({ text: t('sync.canonicalPreview.previous') });
+				headerValues.createSpan({ text: t('sync.canonicalPreview.next') });
+			}
 			for (const change of operation.preview.changes) this.renderFieldChange(changes, operation, change.fieldId, change.property, change.previous, change.next);
 			if (operation.kind === 'create' && operation.preview.body !== undefined) {
 				row.createEl('h4', { text: t('sync.canonicalPreview.previewBody') });
@@ -214,13 +221,13 @@ export class CanonicalPreviewModal extends Modal {
 			this.refreshControls();
 		});
 		label.append(checkbox);
-		const propertyLabel = label.createSpan({ text: `${t('sync.canonicalPreview.property')}: ${property}` });
+		const propertyLabel = label.createSpan({ text: property });
 		propertyLabel.dataset.canonicalPreviewFieldProperty = fieldId;
 		const values = row.createDiv();
 		values.className = 'game-sync-preview-field-values';
-		const previousValue = values.createSpan({ text: `${t('sync.canonicalPreview.previous')}: ${previewValue(previous)}` });
+		const previousValue = values.createSpan({ text: previewValue(previous) });
 		previousValue.dataset.canonicalPreviewPrevious = fieldId;
-		const nextValue = values.createSpan({ text: `${t('sync.canonicalPreview.next')}: ${previewValue(next)}` });
+		const nextValue = values.createSpan({ text: previewValue(next) });
 		nextValue.dataset.canonicalPreviewNext = fieldId;
 		if (required) row.createEl('small', { text: t('sync.canonicalPreview.requiredIdentity') });
 		if (technical) row.createEl('small', { text: t('sync.canonicalPreview.technical') });
@@ -231,7 +238,6 @@ export class CanonicalPreviewModal extends Modal {
 		section.dataset.canonicalPreviewSection = kind;
 		section.createEl('h3', { text: t(`sync.canonicalPreview.${kind}`, { count: labels.length }) });
 		if (labels.length === 0) return;
-		section.createEl('p', { text: t(`sync.canonicalPreview.${kind}Description` as TranslationKey) });
 		const list = section.createDiv();
 		list.dataset.canonicalPreviewList = kind;
 		for (const label of labels) list.createEl('p', { text: label });
@@ -280,7 +286,7 @@ export class CanonicalPreviewModal extends Modal {
 		const total = plan === undefined ? this.totalOperations() : plan.operations.length;
 		const count = this.selectedOperationCount();
 		summary.textContent = t('sync.canonicalPreview.selectionSummary', { selected: count, total });
-		apply.textContent = t('sync.canonicalPreview.apply', { count });
+		apply.textContent = t('sync.canonicalPreview.apply');
 		apply.disabled = count === 0 || hasConflicts;
 	}
 

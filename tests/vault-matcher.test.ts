@@ -12,6 +12,20 @@ const game: NormalizedGame = {
 };
 
 describe('vault note matcher', () => {
+	it('never offers notes outside the games folder as title guesses, but still honours stable IDs anywhere', async () => {
+		const gateway = new FakeVaultGateway({
+			'resources/filmy/Example Game (2024).md': '---\naliases: "Example Game"\nreleased: 2024\n---\nfilm',
+			'resources/books/Example Game.md': '---\ntitle: Example Game\n---\nbook',
+		});
+		const guess = matchVaultNote(game, await buildNoteIndex(gateway), { candidateFolder: 'Games' });
+		expect(guess.status).toBe('none');
+
+		const withId = new FakeVaultGateway({ 'archive/Old.md': '---\nsteam-id: "1"\n---\nold game note' });
+		const byId = matchVaultNote(game, await buildNoteIndex(withId), { candidateFolder: 'Games' });
+		expect(byId.status).toBe('matched');
+		expect(byId.note?.path).toBe('archive/Old.md');
+	});
+
 	it('prioritizes provider IDs over a filename candidate', async () => {
 		const gateway = new FakeVaultGateway({
 			'Games/Example Game.md': '---\ntitle: Example Game\n---\nfilename note',

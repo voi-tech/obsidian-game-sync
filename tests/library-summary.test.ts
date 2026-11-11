@@ -160,7 +160,7 @@ describe('LibrarySummaryModal', () => {
 
 		expect(modal.contentEl.querySelectorAll('[data-library-summary]').length).toBe(10);
 		expect(modal.contentEl.querySelector('[data-library-summary="totalGames"]')?.textContent).toContain('10');
-		expect(modal.contentEl.querySelector('[data-library-summary="lastSyncAt"]')?.textContent).toContain('—');
+		expect(modal.contentEl.querySelector('[data-library-summary="lastSyncAt"]')?.textContent).toBe('Last sync: -');
 		expect(modal.contentEl.querySelector('[data-library-summary-action="openBase"]')?.textContent).toBe('Open Games.base');
 		expect(modal.contentEl.querySelector('[data-library-summary-action="syncNow"]')?.textContent).toBe('Sync now');
 

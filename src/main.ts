@@ -473,10 +473,37 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 		},
 		openMatchManager: (adapter) => { new MatchManagerModal(host.app, { adapter }).open(); },
 		showUnavailable: (commandId) => { new Notice(commandId === 'gametrack' ? t('sync.messages.gametrackUnavailable') : t('sync.messages.commandUnavailable')); },
+		showProgress: (kind) => {
+			const notice = new Notice(t(`sync.progress.${kind}`), 0);
+			notice.messageEl.classList.add('game-sync-progress-notice');
+			return () => notice.hide();
+		},
 	};
 
 	actions = createGameSyncCommandActions({ composition, ui, stateStore, runExclusive: syncLock });
 	registerGameSyncCommands(host, actions, createStaticCommandErrorNotifier(options.notify));
+	host.addCommand({
+		id: 'import-playstation-purchases',
+		name: t('purchases.title'),
+		callback: () => {
+			void (async () => {
+				const [{ PurchaseImportModal }, { buildNoteIndex }, state] = await Promise.all([
+					import('./ui/purchase-import-modal'),
+					import('./vault/note-index'),
+					stateStore.load(),
+				]);
+				new PurchaseImportModal(host.app, {
+					notesFolder: state.settings.notesFolder,
+					propertyMapping: state.propertyMapping,
+					loadNotes: async () => (await buildNoteIndex(gateway, state.propertyMapping)).notes,
+					writeFrontmatter: (path, update) => gateway.processFrontMatter(path, update),
+					readClipboard: () => navigator.clipboard.readText(),
+					writeClipboard: (text) => navigator.clipboard.writeText(text),
+					openUrl: (url) => { window.open(url); },
+				}).open();
+			})();
+		},
+	});
 	const scheduler = new BackgroundSyncScheduler({
 		component: host,
 		isMobile,

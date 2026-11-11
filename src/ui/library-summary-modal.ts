@@ -82,7 +82,7 @@ export class LibrarySummaryModal extends Modal {
 		const label = row.createSpan();
 		label.textContent = `${this.translate(metric)}: `;
 		const value = row.createSpan();
-		value.textContent = metric === 'lastSyncAt' ? (this.options.summary.lastSyncAt ?? '—') : String(this.options.summary[metric]);
+		value.textContent = metric === 'lastSyncAt' ? (this.options.summary.lastSyncAt ?? '-') : String(this.options.summary[metric]);
 		row.append(label, value);
 		parent.append(row);
 	}

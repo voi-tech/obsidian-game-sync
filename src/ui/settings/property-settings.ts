@@ -40,6 +40,12 @@ export const PROPERTY_MAPPING_GROUPS = [
 		descriptionKey: 'settings.properties.groupDescriptions.technical',
 		keys: ['updated'] as const,
 	},
+	{
+		id: 'purchases',
+		labelKey: 'settings.properties.groups.purchases',
+		descriptionKey: 'settings.properties.groupDescriptions.purchases',
+		keys: ['purchaseDate', 'purchasePrice', 'purchaseCurrency'] as const,
+	},
 ] as const satisfies readonly { id: string; labelKey: string; descriptionKey: string; keys: readonly ManagedPropertyKey[] }[];
 
 export const PROPERTY_MAPPING_KEYS: readonly ManagedPropertyKey[] = PROPERTY_MAPPING_GROUPS.flatMap((group) => group.keys);

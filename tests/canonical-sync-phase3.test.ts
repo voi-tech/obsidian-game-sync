@@ -143,16 +143,28 @@ describe('Phase 3 canonical sync', () => {
 		expect(content).toContain('playtime: 120');
 	});
 
-	it('rejects a user-owned destination before planning or writing', async () => {
+	it('writes to any destination name the user explicitly maps, while preserving unmapped properties', async () => {
 		const gateway = new FakeVaultGateway({
 			'Games/Example Game.md': '---\ngame-sync-id: gametrack:game-1\nigdb-id: 1234\nstatus: old\ncustom: keep\n---\nnotes',
 		});
-		await expect(planCanonicalSync([game()], { gateway, notesFolder: 'Games', propertyMapping: { title: ' status ' } })).rejects.toThrow(/user-owned/i);
-		expect(gateway.frontMatterProcessCount).toBe(0);
+		const mapping = { title: ' status ' } as const;
+		const plan = await planCanonicalSync([game()], { gateway, notesFolder: 'Games', propertyMapping: mapping });
+		await new CanonicalVaultWriter(gateway, { propertyMapping: mapping }).apply(plan);
 		const content = await gateway.read('Games/Example Game.md');
 
-		expect(content).toContain('status: old');
+		expect(content).toContain('status: "Example Game"');
 		expect(content).toContain('custom: keep');
+	});
+
+	it('skips notes with invalid YAML frontmatter instead of failing the whole sync', async () => {
+		const gateway = new FakeVaultGateway({
+			'Movies/Broken.md': '---\ndescription: "a "quoted" word"\n---\n',
+			'Games/Example Game.md': '---\ntitle: Example Game\nigdb-id: 1234\n---\n',
+		});
+		const index = await buildNoteIndex(gateway);
+
+		expect(index.invalidNotePaths).toEqual(['Movies/Broken.md']);
+		await expect(planCanonicalSync([game()], { gateway, notesFolder: 'Games' })).resolves.toBeDefined();
 	});
 
 	it('preserves an existing attribute when its source mapping is disabled', async () => {

@@ -6,7 +6,8 @@ export type ManagedPropertyKey =
 	| 'owned' | 'acquisitionType' | 'playtime' | 'lastPlayed' | 'steamId' | 'steamOwned' | 'steamPlaytime' | 'steamLastPlayed'
 	| 'steamAchievementsEarned' | 'steamAchievementsTotal' | 'steamAchievementsProgress' | 'playstationId' | 'playstationOwned'
 	| 'playstationPlaytime' | 'playstationLastPlayed' | 'psnTrophiesEarned' | 'psnTrophiesTotal' | 'psnTrophiesProgress'
-	| 'psnBronze' | 'psnSilver' | 'psnGold' | 'psnPlatinum' | 'updated' | 'igdbId' | 'gametrackId';
+	| 'psnBronze' | 'psnSilver' | 'psnGold' | 'psnPlatinum' | 'updated' | 'igdbId' | 'gametrackId'
+	| 'purchaseDate' | 'purchasePrice' | 'purchaseCurrency';
 
 export type PropertyMapping = Partial<Record<ManagedPropertyKey, string | null | false>>;
 export type ResolvedPropertyMapping = Record<ManagedPropertyKey, string | undefined>;
@@ -24,9 +25,9 @@ export const DEFAULT_PROPERTY_MAPPING: Record<ManagedPropertyKey, string> = {
 	playstationPlaytime: 'playstation-playtime', playstationLastPlayed: 'playstation-last-played', psnTrophiesEarned: 'psn-trophies-earned',
 	psnTrophiesTotal: 'psn-trophies-total', psnTrophiesProgress: 'psn-trophies-progress', psnBronze: 'psn-bronze', psnSilver: 'psn-silver',
 	psnGold: 'psn-gold', psnPlatinum: 'psn-platinum', updated: 'game-sync-updated', igdbId: 'igdb-id', gametrackId: 'gametrack-id',
+	// Written only by the purchase import, never by sync (buildManagedProperties leaves them out).
+	purchaseDate: 'purchase-date', purchasePrice: 'purchase-price', purchaseCurrency: 'purchase-currency',
 };
-
-const USER_OWNED_PROPERTY_NAMES = new Set(['status', 'rating', 'favorite', 'start', 'end', 'review', 'notes', 'tags']);
 
 function normalizeDestination(destination: string): string {
 	return destination.trim().toLocaleLowerCase();
@@ -47,7 +48,6 @@ function validateResolvedPropertyMapping(resolved: ResolvedPropertyMapping): voi
 		if (destination === undefined) continue;
 		if (destination.length === 0) throw new Error(`Invalid property mapping for ${key}.`);
 		const normalized = normalizeDestination(destination);
-		if (USER_OWNED_PROPERTY_NAMES.has(normalized)) throw new Error(`Property ${destination} is user-owned and cannot be managed.`);
 		const previous = destinations.get(normalized);
 		if (previous !== undefined) throw new Error(`Duplicate property mapping destination ${destination} for ${previous} and ${key}.`);
 		destinations.set(normalized, key);
