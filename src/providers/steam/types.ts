@@ -81,6 +81,8 @@ export interface SteamAchievement {
 export interface SteamPlayerStatsResponse {
 	steamID?: string;
 	gameName?: string;
+	success?: boolean;
+	error?: string;
 	achievements?: SteamAchievement[];
 }
 

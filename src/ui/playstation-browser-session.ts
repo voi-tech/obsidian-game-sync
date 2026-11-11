@@ -33,7 +33,7 @@ function isSonyPage(raw: string): boolean {
  * Plugin code shares the main window's realm, so the global `document` is the main window document.
  */
 export function canEmbedPlayStationBrowser(element: HTMLElement): boolean {
-	return element.ownerDocument === document;
+	return element.ownerDocument === window.document;
 }
 
 /** A separate in-memory Electron webview, never the user's browser cookie store. */

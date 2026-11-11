@@ -53,6 +53,8 @@ export function createSteamAdapter(options: SteamAdapterOptions): GameProviderAd
 				const steamId64 = connected.accountId;
 				const response = await api.getOwnedGames(steamId64);
 				if (response.games === undefined && response.game_count === undefined) return failedSnapshot({ code: 'steam-private-game-details', message: 'Steam Game Details are private. Set the Steam profile and Game Details visibility to Public.' }, [], now);
+				// A count that disagrees with the list means a truncated response; never present it as a complete library.
+				const libraryIncomplete = response.game_count !== undefined && (response.games?.length ?? 0) < response.game_count;
 				const details = new Map<number, SteamAppDetails>();
 				let detailFailure = api.getAppDetails === undefined;
 				if (api.getAppDetails !== undefined) {
@@ -93,13 +95,15 @@ export function createSteamAdapter(options: SteamAdapterOptions): GameProviderAd
 				}
 				return {
 					provider: 'steam',
-					status: achievementFailure || detailFailure ? 'partial' : 'complete',
+					status: libraryIncomplete || achievementFailure || detailFailure ? 'partial' : 'complete',
 					games,
 					fetchedAt: now,
-					pagination: { complete: true, pagesFetched: 1 },
-					paginationComplete: true,
+					pagination: { complete: !libraryIncomplete, pagesFetched: 1 },
+					paginationComplete: !libraryIncomplete,
 					...(Object.keys(achievementProvenance).length === 0 ? {} : { achievementProvenance }),
-					error: achievementFailure || detailFailure ? { code: achievementFailure ? 'steam-achievements-partial' : 'steam-app-details-partial', message: 'Some Steam data could not be refreshed; unknown fields were retained without guessing.' } : undefined,
+					error: libraryIncomplete
+						? { code: 'steam-library-incomplete', message: 'Steam returned fewer games than its reported game count; the library was treated as incomplete.' }
+						: achievementFailure || detailFailure ? { code: achievementFailure ? 'steam-achievements-partial' : 'steam-app-details-partial', message: 'Some Steam data could not be refreshed; unknown fields were retained without guessing.' } : undefined,
 				};
 			} catch (error) {
 				if (error instanceof ProviderAuthError || error instanceof ProviderHttpError) return failedSnapshot(error, [], now);

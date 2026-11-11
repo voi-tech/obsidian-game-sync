@@ -155,7 +155,7 @@ export class SetupModal extends Modal {
 		setting.settingEl.dataset.gameSyncActionRow = 'true';
 		const connection = this.statuses.get(provider);
 		const status = renderConnectionStatus(setting, providerDescription(provider), connection);
-		if (connection?.account?.gameCount !== undefined) status.append(document.createTextNode(` · ${t('setup.provider.gamesFound', { count: connection.account.gameCount })}`));
+		if (connection?.account?.gameCount !== undefined) status.append(status.ownerDocument.createTextNode(` · ${t('setup.provider.gamesFound', { count: connection.account.gameCount })}`));
 		if (isConnected(connection)) {
 			this.providerAction(setting, provider, 'reconnect', false, () => void this.options.openConnection(provider, () => void this.refreshProvider(provider)));
 			this.providerAction(setting, provider, 'disconnect', false, () => void this.disconnect(provider));

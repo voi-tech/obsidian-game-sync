@@ -3,6 +3,7 @@ import type { NegativeIdentityMapping } from '../state/schema';
 import type { NormalizedGame } from '../model/game';
 import { createOperation, createSyncPlan, type OperationInput, type SyncPlan } from '../model/operations';
 import { resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
+import type { AchievementRenderOptions } from '../vault/achievement-renderer';
 import { noteFingerprint, type VaultGateway } from '../vault/gateway';
 import { matchVaultNote, type VaultMatch } from '../vault/matcher';
 import { buildNoteIndex, type NoteIndex } from '../vault/note-index';
@@ -34,6 +35,8 @@ export interface SyncPlannerOptions {
 	ignoredCanonicalIds?: readonly string[];
 	ignoredProviderRefs?: readonly string[];
 	propertyMapping?: PropertyMapping;
+	/** Same options the writer renders with; required for unchanged notes to diff as unchanged. */
+	achievementOptions?: AchievementRenderOptions;
 }
 
 export interface SyncPlannerState {
@@ -122,7 +125,7 @@ export class SyncPlanner {
 				continue;
 			}
 			const content = await this.options.gateway.read(match.note.path);
-			const diff = diffNote(game, content, this.options.propertyMapping);
+			const diff = diffNote(game, content, this.options.propertyMapping, this.options.achievementOptions);
 			const isAdoption = gameSyncIdKey === undefined || match.note.properties[gameSyncIdKey] !== game.canonicalId;
 			if (!diff.changed) {
 				statuses.push({ canonicalGameId: game.canonicalId, status: 'unchanged', path: match.note.path, match });

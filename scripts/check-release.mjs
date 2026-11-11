@@ -63,13 +63,13 @@ if (manifest !== undefined) {
 	if (manifest.isDesktopOnly !== true) errors.push('manifest.json must declare isDesktopOnly as true while the export picker uses Node and Electron APIs.');
 	if (manifest.id !== PLUGIN_ID) errors.push(`manifest.json must declare the id "${PLUGIN_ID}".`);
 	if (manifest.name !== PLUGIN_NAME) errors.push(`manifest.json must declare the name "${PLUGIN_NAME}".`);
-	if (typeof manifest.styles !== 'string' || manifest.styles.trim().length === 0) errors.push('manifest.json must declare a non-empty styles asset path.');
+	if (Object.hasOwn(manifest, 'styles')) errors.push('manifest.json must not declare "styles"; Obsidian loads styles.css by convention.');
+	if (/\bobsidian\b/i.test(manifest.description ?? '')) errors.push('manifest.json description must not mention Obsidian.');
 }
 
 const requiredFiles = [
 	'package.json', 'package-lock.json', 'manifest.json', 'versions.json', 'CHANGELOG.md',
-	'README.md', 'README.pl.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'main.js',
-	...(typeof manifest?.styles === 'string' && manifest.styles.trim().length > 0 ? [manifest.styles] : []),
+	'README.md', 'README.pl.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'main.js', 'styles.css',
 ];
 for (const path of new Set(requiredFiles)) await requireNonEmptyFile(path);
 

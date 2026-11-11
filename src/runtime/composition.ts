@@ -52,23 +52,25 @@ export class GameSyncRuntimeComposition {
 	async createService(_providers?: readonly GameProvider[]): Promise<SyncService> {
 		const state = await this.options.stateStore.load();
 		const noteIndex = await buildNoteIndex(this.options.gateway, state.propertyMapping);
+		const achievementOptions = {
+			revealHidden: state.settings.revealHiddenAchievements,
+			showRarity: state.settings.showAchievementRarity,
+			showUnlockDate: state.settings.showUnlockDate,
+			showTrophyType: state.settings.showTrophyType,
+		};
 		const planner = new SyncPlanner({
 			gateway: this.options.gateway,
 			noteIndex,
 			notesFolder: state.settings.notesFolder,
 			filenamePattern: state.settings.filenamePattern,
 			propertyMapping: state.propertyMapping,
+			achievementOptions,
 		});
 		const template = await this.readTemplate(state.settings.templatePath);
 		const writer = new VaultWriter(this.options.gateway, {
 			...(template === undefined ? {} : { template }),
 			propertyMapping: state.propertyMapping,
-			achievementOptions: {
-				revealHidden: state.settings.revealHiddenAchievements,
-				showRarity: state.settings.showAchievementRarity,
-				showUnlockDate: state.settings.showUnlockDate,
-				showTrophyType: state.settings.showTrophyType,
-			},
+			achievementOptions,
 			revealHidden: state.settings.revealHiddenAchievements,
 		});
 		const availableAdapters = this.options.createAdapters?.(state.settings) ?? this.options.adapters ?? [];

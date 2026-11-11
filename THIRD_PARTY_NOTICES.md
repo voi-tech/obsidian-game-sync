@@ -2,7 +2,7 @@
 
 Generated from the production bundle inputs. These packages retain their original licenses.
 
-## handlebars 4.7.9 (MIT)
+## handlebars 4.7.10 (MIT)
 
 Copyright (C) 2011-2019 by Yehuda Katz
 
@@ -70,7 +70,7 @@ OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
 TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 
-## zod 4.6.2 (MIT)
+## zod 4.6.7 (MIT)
 
 MIT License
 

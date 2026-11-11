@@ -91,7 +91,7 @@ function preferredValue(value: number | undefined): string {
 
 function trophyCount(summary: AchievementSummary | undefined, type: 'bronze' | 'silver' | 'gold' | 'platinum'): number | undefined {
 	if (summary?.details === undefined) return undefined;
-	return summary.details.filter((detail) => detail.trophyType === type).length;
+	return summary.details.filter((detail) => detail.trophyType === type && detail.unlocked).length;
 }
 
 export function buildCanonicalManagedProperties(

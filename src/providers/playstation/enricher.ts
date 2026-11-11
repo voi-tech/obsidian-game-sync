@@ -67,13 +67,15 @@ function findPlayedGame(canonical: CanonicalGame, played: readonly PlayStationPl
 	const direct = played.filter((entry) => entry.titleId === id || entry.concept?.titleIds?.includes(id ?? ''));
 	if (direct.length === 1) return direct[0];
 	const title = titleKey(canonical.title);
+	if (title.length === 0) return undefined;
 	const byTitle = played.filter((entry) => titleKey(entry.concept?.name ?? entry.localizedName ?? entry.name) === title);
 	return byTitle.length === 1 ? byTitle[0] : undefined;
 }
 
 function hasPlayStationPlatform(game: CanonicalGame): boolean { return game.platforms.some((platform) => platform.id === 'playstation-4' || platform.id === 'playstation-5'); }
 function playStationPlatform(game: CanonicalGame): string { return game.platforms.some((platform) => platform.id === 'playstation-5') ? 'playstation-5' : 'playstation-4'; }
-function titleKey(value: string): string { return value.toLocaleLowerCase().replace(/[™®©]/g, '').replace(/[^a-z0-9]+/gu, ' ').trim(); }
+// Unicode-aware: an ASCII-only key collapses e.g. Japanese titles to '' and matches unrelated games.
+function titleKey(value: string): string { return value.normalize('NFKC').toLocaleLowerCase().replace(/[™®©]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
 function parseDuration(value: string | undefined): number | undefined { if (value === undefined) return undefined; const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?)?$/.exec(value); if (match === null) return undefined; const result = Number(match[1] ?? 0) * 1440 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0) + Number(match[4] ?? 0) / 60; return Number.isFinite(result) ? Math.floor(result) : undefined; }
 function toDetail(value: { id: string; name?: string; description?: string; unlocked: boolean; unlockedAt?: string; hidden?: boolean; iconUrl?: string; rarityPercent?: number; trophyType?: string }): AchievementDetail { return { id: value.id, name: value.name, description: value.description, unlocked: value.unlocked, unlockedAt: value.unlockedAt, hidden: value.hidden, iconUrl: value.iconUrl, rarityPercent: value.rarityPercent, trophyType: value.trophyType }; }
 function fingerprint(value: unknown): string { let hash = 2166136261; for (const character of JSON.stringify(value)) { hash ^= character.charCodeAt(0); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(16).padStart(8, '0'); }

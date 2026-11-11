@@ -2,7 +2,7 @@ import type { NormalizedGame } from '../model/game';
 import { buildManagedProperties, resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
 import { replaceAchievementsBlock } from '../vault/managed-block';
 import { parseFrontmatter } from '../vault/frontmatter';
-import { renderAchievementsBlock } from '../vault/achievement-renderer';
+import { renderAchievementsBlock, type AchievementRenderOptions } from '../vault/achievement-renderer';
 
 export type NoteDiffKind = 'none' | 'properties' | 'achievements';
 
@@ -29,7 +29,8 @@ function managedValueEqual(actual: unknown, expected: unknown): boolean {
 	return stableStringify(actual) === stableStringify(expected);
 }
 
-export function diffNote(game: NormalizedGame, content: string, propertyMapping: PropertyMapping = {}): NoteDiff {
+/** `achievementOptions` must equal the writer's options, otherwise an unchanged note is reported as changed on every sync. */
+export function diffNote(game: NormalizedGame, content: string, propertyMapping: PropertyMapping = {}, achievementOptions: AchievementRenderOptions = {}): NoteDiff {
 	const parsed = parseFrontmatter(content);
 	const updatedAtKey = resolvePropertyMapping(propertyMapping).updated;
 	const updatedAt: unknown = updatedAtKey === undefined ? undefined : parsed.frontmatter[updatedAtKey];
@@ -38,7 +39,7 @@ export function diffNote(game: NormalizedGame, content: string, propertyMapping:
 		omitAchievementProperties: !achievementsFresh(game),
 	});
 	const propertiesChanged = Object.entries(managed).some(([key, value]) => !managedValueEqual(parsed.frontmatter[key], value));
-	const achievementsChanged = achievementsFresh(game) && replaceAchievementsBlock(content, renderAchievementsBlock(game)) !== content;
+	const achievementsChanged = achievementsFresh(game) && replaceAchievementsBlock(content, renderAchievementsBlock(game, achievementOptions)) !== content;
 	return {
 		changed: propertiesChanged || achievementsChanged,
 		propertiesChanged,

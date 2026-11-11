@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { VaultConflictError } from '../src/network/errors';
 import { buildTemplateContext } from '../src/vault/template';
 import { VaultWriter } from '../src/vault/writer';
+import { diffNote } from '../src/sync/diff';
 import { noteFingerprint } from '../src/vault/gateway';
 import { parseFrontmatter } from '../src/vault/frontmatter';
 import { FakeVaultGateway } from './fake-gateway';
@@ -25,6 +26,29 @@ const game: NormalizedGame = {
 	acquisitionType: 'unknown',
 	playtimeMinutes: 0,
 };
+
+describe('writer and diff agree on achievement rendering', () => {
+	it('reports a freshly written note as unchanged when diffed with the writer options', async () => {
+		const withAchievements: NormalizedGame = {
+			...game,
+			providers: {
+				steam: {
+					...game.providers.steam!,
+					freshness: { metadata: true, ownership: true, playtime: true, achievements: true },
+					achievements: { earned: 1, total: 2, progress: 50, achievements: [
+						{ id: 'A', name: 'First', unlocked: true, unlockedAt: '2026-01-02T00:00:00.000Z', rarityPercent: 12.5, hidden: false },
+						{ id: 'B', name: 'Second', unlocked: false, hidden: false },
+					] },
+				},
+			},
+		};
+		const achievementOptions = { showUnlockDate: true, showRarity: true };
+		const gateway = new FakeVaultGateway();
+		await new VaultWriter(gateway, { achievementOptions }).createNote({ path: 'Games/one.md', game: withAchievements, expectedNoteFingerprint: null, updatedAt: '2026-09-12T00:00:00.000Z' });
+		const content = await gateway.read('Games/one.md');
+		expect(diffNote(withAchievements, content, {}, achievementOptions).changed).toBe(false);
+	});
+});
 
 describe('safe vault writer', () => {
 	it('executes the template only when creating a note', async () => {

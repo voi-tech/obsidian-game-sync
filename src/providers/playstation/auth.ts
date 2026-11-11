@@ -1,4 +1,4 @@
-import { playStationClient } from './client';
+import { playStationClient, PlayStationRequestError } from './client';
 import type { ProviderAccount } from '../../model/provider';
 import type { SecretStore } from '../../auth/secrets';
 import { GAME_SYNC_SECRET_NAMES, isNpssoValue } from '../../auth/secrets';
@@ -21,6 +21,12 @@ export class PlayStationAuthError extends Error {
 		super('PlayStation authentication failed. Check the account connection and try again.');
 		this.name = 'PlayStationAuthError';
 	}
+}
+
+function isTransientRefreshFailure(error: unknown): boolean {
+	if (!(error instanceof PlayStationRequestError)) return false;
+	const status = /^playstation-http-(\d+)$/.exec(error.code)?.[1];
+	return status === undefined ? error.code === 'playstation-timeout' || error.code === 'playstation-network-error' : status === '429' || Number(status) >= 500;
 }
 
 interface TokenPayload {
@@ -115,7 +121,9 @@ export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStat
 					const tokens = await client.exchangeRefreshTokenForAuthTokens(refreshToken) as PlayStationAuthTokens;
 					if (startedAt !== generation) throw new PlayStationNeedsAuthenticationError();
 					storeTokens(tokens);
-				} catch {
+				} catch (error) {
+					// Timeouts, network errors, 429 and 5xx are temporary: keep the saved refresh token and let the caller retry.
+					if (startedAt === generation && isTransientRefreshFailure(error)) throw error;
 					if (startedAt === generation) {
 						accessToken = undefined;
 						needsAuthentication = true;
@@ -142,7 +150,16 @@ export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStat
 		},
 		async getConnectionStatus(): Promise<ProviderConnectionStatus> {
 			if (accessToken !== undefined && Date.now() < accessTokenExpiresAt && account !== undefined) return { provider: 'playstation', state: 'connected', connected: true, account };
-			if (needsAuthentication || options.secretStore.get(GAME_SYNC_SECRET_NAMES.psnRefreshToken) === null) return { provider: 'playstation', state: 'needs-auth', connected: false, error: { code: 'playstation-needs-auth', message: 'PlayStation authentication is required.' } };
+			const needsAuth: ProviderConnectionStatus = { provider: 'playstation', state: 'needs-auth', connected: false, error: { code: 'playstation-needs-auth', message: 'PlayStation authentication is required.' } };
+			if (needsAuthentication || options.secretStore.get(GAME_SYNC_SECRET_NAMES.psnRefreshToken) === null) return needsAuth;
+			// A saved refresh token (after connecting or restarting Obsidian) is a connection; resolve it instead of reporting "disconnected".
+			try {
+				await auth.getAccessToken();
+			} catch (error) {
+				if (error instanceof PlayStationNeedsAuthenticationError) return needsAuth;
+				return { provider: 'playstation', state: 'error', connected: false, error: { code: error instanceof PlayStationRequestError ? error.code : 'playstation-network-error', message: 'PlayStation is temporarily unavailable. Try again later.' } };
+			}
+			if (account !== undefined) return { provider: 'playstation', state: 'connected', connected: true, account };
 			return { provider: 'playstation', state: 'disconnected', connected: false };
 		},
 		getAccount(): ProviderAccount | undefined {

@@ -1,4 +1,5 @@
 import { Modal, type App } from 'obsidian';
+import { t, type TranslationKey } from '../i18n';
 import type { LibrarySummaryViewModel } from '../model/library-summary';
 
 export interface LibrarySummaryModalInjected {
@@ -104,7 +105,8 @@ export class LibrarySummaryModal extends Modal {
 
 	private translate(key: string, fallback = LABELS[key as LibrarySummaryMetric | 'title'] ?? fallbackKey(key)): string {
 		try {
-			const translated = this.options.injected?.t?.(fallbackKey(key));
+			const translator = this.options.injected?.t ?? ((path: string) => t(path as TranslationKey));
+			const translated = translator(fallbackKey(key));
 			if (translated !== undefined && translated.trim().length > 0 && translated !== fallbackKey(key)) return translated;
 		} catch {
 			// Keep the safe English fallback when translation is unavailable.

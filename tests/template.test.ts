@@ -177,6 +177,18 @@ describe('stable Handlebars template contract', () => {
 		expect(context).toMatchObject({ psnBronze: 0, psnSilver: 0, psnGold: 0, psnPlatinum: 0 });
 	});
 
+	it('counts only earned trophies per category, so a locked platinum is not reported as earned', () => {
+		const context = buildCanonicalTemplateContext({
+			...makeCanonicalGame(),
+			achievements: [{ source: 'playstation', unlocked: 1, total: 2, completionPercent: 50, confidence: 'high', details: [
+				{ id: 'p', unlocked: false, trophyType: 'platinum' },
+				{ id: 'b', unlocked: true, trophyType: 'bronze' },
+			] }],
+		});
+
+		expect(context).toMatchObject({ psnBronze: 1, psnPlatinum: 0 });
+	});
+
 	it('keeps trophy categories undefined when no reliable category snapshot exists', () => {
 		const withoutSummary = buildCanonicalTemplateContext(makeCanonicalGame());
 		const withoutDetails = buildCanonicalTemplateContext({

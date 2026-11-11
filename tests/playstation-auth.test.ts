@@ -8,10 +8,14 @@ const { exchangeNpssoForAccessCode, exchangeAccessCodeForAuthTokens, exchangeRef
 	exchangeRefreshTokenForAuthTokens: vi.fn(),
 }));
 
-vi.mock('../src/providers/playstation/client', () => ({ playStationClient: { exchangeNpssoForAccessCode, exchangeAccessCodeForAuthTokens, exchangeRefreshTokenForAuthTokens } }));
+vi.mock('../src/providers/playstation/client', async (importOriginal) => ({
+	PlayStationRequestError: (await importOriginal<typeof import('../src/providers/playstation/client')>()).PlayStationRequestError,
+	playStationClient: { exchangeNpssoForAccessCode, exchangeAccessCodeForAuthTokens, exchangeRefreshTokenForAuthTokens },
+}));
 
 import { createPlayStationAuth, preparePlayStationConnection } from '../src/providers/playstation/auth';
 import { PlayStationAuthError, PlayStationNeedsAuthenticationError } from '../src/providers/playstation/auth';
+import { PlayStationRequestError } from '../src/providers/playstation/client';
 
 function secrets(): { store: SecretStore; values: Map<string, string> } {
 	const values = new Map<string, string>();
@@ -163,5 +167,36 @@ describe('PlayStation authentication', () => {
 		await expect(auth.getAccessToken()).rejects.toBeInstanceOf(PlayStationNeedsAuthenticationError);
 		expect(values.get(GAME_SYNC_SECRET_NAMES.psnRefreshToken)).toBe('refresh-token');
 		await expect(auth.getConnectionStatus()).resolves.toMatchObject({ state: 'needs-auth', connected: false });
+	});
+
+	it('keeps the session on a transient refresh failure instead of requiring a new sign-in', async () => {
+		const { store, values } = secrets();
+		store.set(GAME_SYNC_SECRET_NAMES.psnRefreshToken, 'refresh-token');
+		exchangeRefreshTokenForAuthTokens.mockRejectedValueOnce(new PlayStationRequestError('playstation-timeout'));
+		const auth = createPlayStationAuth({ secretStore: store });
+
+		await expect(auth.getAccessToken()).rejects.toBeInstanceOf(PlayStationRequestError);
+		expect(values.get(GAME_SYNC_SECRET_NAMES.psnRefreshToken)).toBe('refresh-token');
+		exchangeRefreshTokenForAuthTokens.mockRejectedValueOnce(new PlayStationRequestError('playstation-http-503'));
+		await expect(auth.getConnectionStatus()).resolves.toMatchObject({ state: 'error', connected: false, error: { code: 'playstation-http-503' } });
+	});
+
+	it('reports a saved refresh token as connected after resolving it (for example after restarting Obsidian)', async () => {
+		const { store } = secrets();
+		store.set(GAME_SYNC_SECRET_NAMES.psnRefreshToken, 'refresh-token');
+		exchangeRefreshTokenForAuthTokens.mockResolvedValueOnce({ accessToken: 'access', refreshToken: 'next-refresh', expiresIn: 3600, accountId: 'acc-1', displayName: 'Player' });
+		const auth = createPlayStationAuth({ secretStore: store });
+
+		await expect(auth.getConnectionStatus()).resolves.toMatchObject({ state: 'connected', connected: true, account: { accountId: 'acc-1' } });
+	});
+
+	it('treats a rejected refresh token (HTTP 400) as needing a new sign-in', async () => {
+		const { store } = secrets();
+		store.set(GAME_SYNC_SECRET_NAMES.psnRefreshToken, 'refresh-token');
+		exchangeRefreshTokenForAuthTokens.mockRejectedValueOnce(new PlayStationRequestError('playstation-http-400'));
+		const auth = createPlayStationAuth({ secretStore: store });
+
+		await expect(auth.getAccessToken()).rejects.toBeInstanceOf(PlayStationNeedsAuthenticationError);
+		await expect(auth.getConnectionStatus()).resolves.toMatchObject({ state: 'needs-auth' });
 	});
 });

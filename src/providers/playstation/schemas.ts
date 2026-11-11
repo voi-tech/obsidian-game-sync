@@ -1,35 +1,36 @@
-import { z } from 'zod';
+// Named imports let esbuild tree-shake Zod; the `z` namespace object pulls in the whole library (about 350 KB).
+import { array, boolean, enum as zenum, number, object, string, union } from 'zod';
 
-const imageSchema = z.object({ url: z.string().optional() }).loose();
+const imageSchema = object({ url: string().optional() }).loose();
 
-export const playStationPlayedGameSchema = z.object({
-	titleId: z.string(),
-	name: z.string(),
-	localizedName: z.string().optional(),
-	imageUrl: z.string().optional(),
-	localizedImageUrl: z.string().optional(),
-	category: z.string().optional(),
-	service: z.string().optional(),
-	playCount: z.number().optional(),
-	concept: z.object({ id: z.union([z.number(), z.string()]).optional(), titleIds: z.array(z.string()).optional(), name: z.string().optional(), media: z.object({ images: z.array(z.object({ url: z.string().optional() }).loose()).optional() }).loose().optional() }).loose().optional(),
-	firstPlayedDateTime: z.string().optional(),
-	lastPlayedDateTime: z.string().optional(),
-	playDuration: z.string().optional(),
+export const playStationPlayedGameSchema = object({
+	titleId: string(),
+	name: string(),
+	localizedName: string().optional(),
+	imageUrl: string().optional(),
+	localizedImageUrl: string().optional(),
+	category: string().optional(),
+	service: string().optional(),
+	playCount: number().optional(),
+	concept: object({ id: union([number(), string()]).optional(), titleIds: array(string()).optional(), name: string().optional(), media: object({ images: array(object({ url: string().optional() }).loose()).optional() }).loose().optional() }).loose().optional(),
+	firstPlayedDateTime: string().optional(),
+	lastPlayedDateTime: string().optional(),
+	playDuration: string().optional(),
 }).loose();
 
-export const playStationPlayedGamesSchema = z.object({ titles: z.array(playStationPlayedGameSchema), totalItemCount: z.number().int().nonnegative().optional(), nextOffset: z.number().optional() });
+export const playStationPlayedGamesSchema = object({ titles: array(playStationPlayedGameSchema), totalItemCount: number().int().nonnegative().optional(), nextOffset: number().optional() });
 
-export const playStationPurchasedGameSchema = z.object({ conceptId: z.string().nullable().optional(), name: z.string(), platform: z.string().optional(), titleId: z.string().optional(), image: imageSchema.optional(), membership: z.string().optional() }).loose();
-export const playStationPurchasedGamesSchema = z.object({ games: z.array(playStationPurchasedGameSchema) });
+export const playStationPurchasedGameSchema = object({ conceptId: string().nullable().optional(), name: string(), platform: string().optional(), titleId: string().optional(), image: imageSchema.optional(), membership: string().optional() }).loose();
+export const playStationPurchasedGamesSchema = object({ games: array(playStationPurchasedGameSchema) });
 
-export const playStationRecentlyPlayedGameSchema = z.object({ name: z.string(), platform: z.string().optional(), lastPlayedDateTime: z.string().optional(), titleId: z.string().optional(), conceptId: z.string().optional(), image: imageSchema.optional() }).loose();
-export const playStationRecentlyPlayedGamesSchema = z.object({ games: z.array(playStationRecentlyPlayedGameSchema) });
+export const playStationRecentlyPlayedGameSchema = object({ name: string(), platform: string().optional(), lastPlayedDateTime: string().optional(), titleId: string().optional(), conceptId: string().optional(), image: imageSchema.optional() }).loose();
+export const playStationRecentlyPlayedGamesSchema = object({ games: array(playStationRecentlyPlayedGameSchema) });
 
-export const playStationTrophyTitleSchema = z.object({ npServiceName: z.enum(['trophy', 'trophy2']).optional(), npCommunicationId: z.string(), trophyTitleName: z.string(), trophyTitlePlatform: z.string().optional(), hiddenFlag: z.boolean().optional() }).loose();
-export const playStationTrophyTitlesSchema = z.object({ titles: z.array(playStationTrophyTitleSchema), totalItemCount: z.number().int().nonnegative().optional(), nextOffset: z.number().optional() });
+export const playStationTrophyTitleSchema = object({ npServiceName: zenum(['trophy', 'trophy2']).optional(), npCommunicationId: string(), trophyTitleName: string(), trophyTitlePlatform: string().optional(), hiddenFlag: boolean().optional() }).loose();
+export const playStationTrophyTitlesSchema = object({ titles: array(playStationTrophyTitleSchema), totalItemCount: number().int().nonnegative().optional(), nextOffset: number().optional() });
 
 /** Paging envelope; list items are validated one by one so a single odd title cannot fail the whole sync. */
-export const playStationPageSchema = z.object({ totalItemCount: z.number().int().nonnegative().optional(), nextOffset: z.number().optional() }).loose();
+export const playStationPageSchema = object({ totalItemCount: number().int().nonnegative().optional(), nextOffset: number().optional() }).loose();
 
-export const playStationTrophyMetadataSchema = z.object({ npServiceName: z.enum(['trophy', 'trophy2']).optional(), totalItemCount: z.number().int().nonnegative().optional(), trophies: z.array(z.object({ trophyId: z.number().int(), trophyHidden: z.boolean().optional(), trophyType: z.enum(['bronze', 'silver', 'gold', 'platinum']).optional(), trophyName: z.string().optional(), trophyDetail: z.string().optional(), trophyIconUrl: z.string().optional() }).loose()), nextOffset: z.number().optional() }).loose();
-export const playStationEarnedTrophiesSchema = z.object({ totalItemCount: z.number().int().nonnegative().optional(), trophies: z.array(z.object({ trophyId: z.number().int(), trophyHidden: z.boolean().optional(), earned: z.boolean().optional(), earnedDateTime: z.string().optional(), trophyType: z.enum(['bronze', 'silver', 'gold', 'platinum']).optional(), trophyEarnedRate: z.string().optional() }).loose()), nextOffset: z.number().optional() }).loose();
+export const playStationTrophyMetadataSchema = object({ npServiceName: zenum(['trophy', 'trophy2']).optional(), totalItemCount: number().int().nonnegative().optional(), trophies: array(object({ trophyId: number().int(), trophyHidden: boolean().optional(), trophyType: zenum(['bronze', 'silver', 'gold', 'platinum']).optional(), trophyName: string().optional(), trophyDetail: string().optional(), trophyIconUrl: string().optional() }).loose()), nextOffset: number().optional() }).loose();
+export const playStationEarnedTrophiesSchema = object({ totalItemCount: number().int().nonnegative().optional(), trophies: array(object({ trophyId: number().int(), trophyHidden: boolean().optional(), earned: boolean().optional(), earnedDateTime: string().optional(), trophyType: zenum(['bronze', 'silver', 'gold', 'platinum']).optional(), trophyEarnedRate: string().optional() }).loose()), nextOffset: number().optional() }).loose();

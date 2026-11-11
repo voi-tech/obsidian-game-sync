@@ -1,3 +1,4 @@
+import { ProviderPartialError } from '../../network/errors';
 import type { HttpClient } from '../../network/http';
 import {
 	steamOwnedGamesSchema,
@@ -54,6 +55,8 @@ export function createSteamApi(options: SteamApiOptions): SteamApi {
 				appid: String(appId),
 				l: 'english',
 			}, steamPlayerAchievementsSchema);
+			// Steam reports private profiles and similar failures in the body; treating them as an empty list would erase earned achievements.
+			if (payload.playerstats.success === false) throw new ProviderPartialError('Steam achievements are unavailable for this game (playerstats.success = false).');
 			return payload.playerstats;
 		},
 		async getAppDetails(appId: number): Promise<SteamAppDetails | undefined> {

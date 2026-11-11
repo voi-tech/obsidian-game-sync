@@ -121,6 +121,23 @@ describe('Steam achievement refresh policy', () => {
 		expect(snapshot.games[0]?.freshness.metadata).toBe(false);
 	});
 
+	it('treats a game list shorter than the reported game count as an incomplete library', async () => {
+		const api: SteamApi = {
+			resolveVanityUrl: async () => ({ success: 1, steamid: '76561198000000001' }),
+			getPlayerSummaries: async () => [{ steamid: '76561198000000001', personaname: 'Test Player' }],
+			getOwnedGames: async () => ({ game_count: 2 }),
+			getPlayerAchievements: async () => ({ achievements: [] }),
+			getAppDetails: async () => undefined,
+		};
+		const secretStore: SecretStore = { get: () => 'steam-key', set: () => undefined, delete: () => undefined };
+
+		const snapshot = await createSteamAdapter({ http: { request: async () => ({}) as never }, secretStore, account: '76561198000000001', api }).fetchLibrary({ now: '2026-09-12T12:00:00.000Z' });
+
+		expect(snapshot.status).toBe('partial');
+		expect(snapshot.paginationComplete).toBe(false);
+		expect(snapshot.error?.code).toBe('steam-library-incomplete');
+	});
+
 	it('does not fetch or create a fresh achievement set when community stats are unavailable', async () => {
 		const getPlayerAchievements = vi.fn(async () => ({ achievements: [] }));
 		const api: SteamApi = {

@@ -45,7 +45,7 @@ function providerAchievements(summary: AchievementSummary | undefined, revealHid
 
 function trophyCount(summary: AchievementSummary | undefined, type: 'bronze' | 'silver' | 'gold' | 'platinum'): number | undefined {
 	if (summary?.details === undefined) return undefined;
-	return summary.details.filter((detail) => detail.trophyType === type).length;
+	return summary.details.filter((detail) => detail.trophyType === type && detail.unlocked).length;
 }
 
 function providersFor(game: CanonicalGame): string[] {

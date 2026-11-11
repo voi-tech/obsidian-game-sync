@@ -21,4 +21,30 @@ describe('managed achievement block replacement', () => {
 	it('rejects two blocks as a vault conflict', () => {
 		expect(() => replaceAchievementsBlock(`${block}\n\n${block}`, replacement)).toThrow(VaultConflictError);
 	});
+
+	it('ignores delimiters inside YAML frontmatter values', () => {
+		const note = `---\nnotes: |\n  %% game-sync:achievements %%\n  keep me\n  %% /game-sync:achievements %%\n---\n# Body`;
+		expect(replaceAchievementsBlock(note, replacement)).toBe(`${note}\n\n${replacement}`);
+	});
+
+	it('ignores delimiters inside fenced code examples', () => {
+		const note = `# Docs\n\n\`\`\`md\n${block}\n\`\`\`\n\n${block}`;
+		expect(replaceAchievementsBlock(note, replacement)).toBe(`# Docs\n\n\`\`\`md\n${block}\n\`\`\`\n\n${replacement}`);
+	});
+
+	it('ignores delimiters that are not whole lines', () => {
+		const note = 'Inline %% game-sync:achievements %% text %% /game-sync:achievements %% stays';
+		expect(replaceAchievementsBlock(note, replacement)).toBe(`${note}\n\n${replacement}`);
+	});
+
+	it('refuses nested or unbalanced delimiters instead of deleting user text', () => {
+		const nested = `%% game-sync:achievements %%\nuser paragraph\n${block}`;
+		expect(() => replaceAchievementsBlock(nested, replacement)).toThrow(VaultConflictError);
+		expect(() => replaceAchievementsBlock('%% /game-sync:achievements %%\n\n%% game-sync:achievements %%', replacement)).toThrow(VaultConflictError);
+	});
+
+	it('handles CRLF line endings', () => {
+		const crlf = 'before\r\n\r\n%% game-sync:achievements %%\r\nold\r\n%% /game-sync:achievements %%\r\nafter';
+		expect(replaceAchievementsBlock(crlf, replacement)).toBe(`before\r\n\r\n${replacement}\r\nafter`);
+	});
 });

@@ -85,12 +85,12 @@ export class PlayStationConnectModal extends Modal {
 		advanced.createEl('summary').textContent = t('connect.playstation.manualConnection');
 		const steps = advanced.createEl('ol');
 		const signInStep = steps.createEl('li');
-		signInStep.append(document.createTextNode(t('connect.playstation.signInStep')));
+		signInStep.append(signInStep.ownerDocument.createTextNode(t('connect.playstation.signInStep')));
 		new Setting(signInStep).addButton((button) => {
 			button.setButtonText(t('connect.playstation.openWebsite')).onClick(() => this.options.openUrl(PLAYSTATION_URL));
 		});
 		const codeStep = steps.createEl('li');
-		codeStep.append(document.createTextNode(t('connect.playstation.getCodeStep')));
+		codeStep.append(codeStep.ownerDocument.createTextNode(t('connect.playstation.getCodeStep')));
 		new Setting(codeStep).addButton((button) => {
 			button.setButtonText(t('connect.playstation.openConnectionCode')).onClick(() => this.options.openUrl(PLAYSTATION_NPSSO_URL));
 		});

@@ -88,7 +88,7 @@ export function buildManagedProperties(
 	const steamAchievements = steam?.achievements;
 	const playstationAchievements = playstation?.achievements;
 	const trophyCount = (type: 'bronze' | 'silver' | 'gold' | 'platinum') =>
-		playstationAchievements?.achievements.filter((achievement) => achievement.trophyType === type).length;
+		playstationAchievements?.achievements.filter((achievement) => achievement.trophyType === type && achievement.unlocked).length;
 	const values: Partial<Record<ManagedPropertyKey, unknown>> = {
 		gameSyncId: game.canonicalId, type: 'game', title: game.title, released: toIsoDate(game.releaseDate), developers: game.developers,
 		publishers: game.publishers, genres: game.genres, cover: game.cover, platforms: game.platforms,

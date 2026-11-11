@@ -61,12 +61,18 @@ function matchGames(games: readonly CanonicalGame[], externalGames: readonly Ste
 		if (id !== undefined) bySteam.set(id, [...(bySteam.get(id) ?? []), game]);
 	}
 	const byTitle = new Map<string, CanonicalGame[]>();
-	for (const game of games) if (game.platforms.some((platform) => platform.id === 'steam')) byTitle.set(titleKey(game.title), [...(byTitle.get(titleKey(game.title)) ?? []), game]);
+	for (const game of games) {
+		const key = titleKey(game.title);
+		// A game that already carries a Steam app ID may only match by that ID, never by title.
+		if (key.length === 0 || game.identity.externalIds.steam !== undefined || !game.platforms.some((platform) => platform.id === 'steam')) continue;
+		byTitle.set(key, [...(byTitle.get(key) ?? []), game]);
+	}
 	const used = new Set<string>();
 	const matched: Array<[CanonicalGame, SteamOwnedGame]> = [];
 	for (const external of externalGames) {
 		const direct = bySteam.get(String(external.appid)) ?? [];
-		const titleMatches = byTitle.get(titleKey(external.name ?? '')) ?? [];
+		const externalKey = titleKey(external.name ?? '');
+		const titleMatches = externalKey.length === 0 ? [] : byTitle.get(externalKey) ?? [];
 		const candidates = direct.length > 0 ? direct : titleMatches;
 		if (candidates.length !== 1 || used.has(candidates[0]?.identity.canonicalKey ?? '')) {
 			diagnostics.push({ code: candidates.length > 1 ? 'AMBIGUOUS_EXTERNAL_GAME' : 'UNMATCHED_EXTERNAL_GAME', message: candidates.length > 1 ? 'Steam game matched more than one canonical game.' : 'Steam game is not present in the library provider snapshot.' });
@@ -80,7 +86,8 @@ function matchGames(games: readonly CanonicalGame[], externalGames: readonly Ste
 	return matched;
 }
 
-function titleKey(value: string): string { return value.toLocaleLowerCase().replace(/[™®©]/g, '').replace(/[^a-z0-9]+/gu, ' ').trim(); }
+// Unicode-aware: an ASCII-only key collapses e.g. Japanese titles to '' and matches unrelated games.
+function titleKey(value: string): string { return value.normalize('NFKC').toLocaleLowerCase().replace(/[™®©]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
 function finiteNonNegative(value: number | undefined): number | undefined { return value !== undefined && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined; }
 function steamDate(game: SteamOwnedGame): string | undefined { if (game.last_played !== undefined) return game.last_played; return game.rtime_last_played === undefined || game.rtime_last_played <= 0 ? undefined : new Date(game.rtime_last_played * 1000).toISOString(); }
 function toDetail(value: { id: string; name?: string; description?: string; unlocked: boolean; unlockedAt?: string; hidden?: boolean; iconUrl?: string }): AchievementDetail { return { id: value.id, name: value.name, description: value.description, unlocked: value.unlocked, unlockedAt: value.unlockedAt, hidden: value.hidden, iconUrl: value.iconUrl }; }

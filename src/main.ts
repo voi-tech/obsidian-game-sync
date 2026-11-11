@@ -209,7 +209,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 					(host.app as typeof host.app & { setting?: { close?: () => void } }).setting?.close?.();
 					const startedAt = Date.now();
 					const reopenWhenMainWindowIsActive = (): void => {
-						if (activeDocument === document || Date.now() - startedAt > 2000) openPlayStationModal(true);
+						if (activeDocument === window.document || Date.now() - startedAt > 2000) openPlayStationModal(true);
 						else window.setTimeout(reopenWhenMainWindowIsActive, 50);
 					};
 					window.setTimeout(reopenWhenMainWindowIsActive, 50);

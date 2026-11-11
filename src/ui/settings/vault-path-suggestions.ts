@@ -45,7 +45,7 @@ export function attachVaultPathSuggestions(
 	input: HTMLInputElement,
 	app: { vault?: VaultLike },
 	kind: VaultPathSuggestionKind,
-	parent: HTMLElement = input.parentElement ?? document.body,
+	parent: HTMLElement = input.parentElement ?? input.ownerDocument.body,
 ): void {
 	const paths = readVaultPathSuggestions(app, kind);
 	if (paths.length === 0) return;

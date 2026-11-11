@@ -72,7 +72,7 @@ export class SteamConnectModal extends Modal {
 		intro.textContent = t('connect.steam.intro');
 		const steps = this.contentEl.createEl('ol');
 		const keyStep = steps.createEl('li');
-		keyStep.append(document.createTextNode(t('connect.steam.getApiKeyStep')));
+		keyStep.append(keyStep.ownerDocument.createTextNode(t('connect.steam.getApiKeyStep')));
 		new Setting(keyStep).addButton((button) => {
 			button.setButtonText(t('connect.steam.openApiKey')).onClick(() => openUrl(STEAM_API_KEY_URL, this.options.openUrl));
 		});

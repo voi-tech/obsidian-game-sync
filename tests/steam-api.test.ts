@@ -34,4 +34,10 @@ describe('Steam Web API boundary', () => {
 
 		await expect(createSteamApi({ http: createHttpClient(transport), apiKey: 'steam-test-key' }).getAppDetails?.(10)).resolves.toBeUndefined();
 	});
+
+	it('rejects an unsuccessful player-stats body instead of returning an empty achievement list', async () => {
+		const transport: HttpTransport = async () => ({ status: 200, headers: {}, json: { playerstats: { success: false, error: 'Profile is not public' } } });
+
+		await expect(createSteamApi({ http: createHttpClient(transport), apiKey: 'steam-test-key' }).getPlayerAchievements('76561198000000001', 10)).rejects.toThrow(/success = false/);
+	});
 });

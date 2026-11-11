@@ -163,7 +163,10 @@ export class IgnoredGamesModal extends Modal {
 			const rows = this.contentEl.querySelector<HTMLElement>('[data-ignored-games-rows]');
 			if (rows !== null) this.renderRows(rows);
 		} catch {
-			if (this.isCurrent(version)) this.setStatus(translation('ignoredGames.restoreFailed'));
+			if (this.isCurrent(version)) {
+				this.setStatus(translation('ignoredGames.restoreFailed'));
+				button.disabled = false;
+			}
 		} finally {
 			if (this.isCurrent(version)) this.updateRestoreSelectedButton();
 		}

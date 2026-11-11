@@ -33,6 +33,18 @@ describe('SteamEnricher', () => {
 		expect(result.patches[0]?.patch.achievements?.[0]).toMatchObject({ source: 'steam', unlocked: 1, total: 1, completionPercent: 100 });
 	});
 
+	it('never matches by title across different non-Latin titles or against a conflicting Steam app ID', async () => {
+		const api: SteamApi = {
+			resolveVanityUrl: vi.fn(), getPlayerSummaries: vi.fn(),
+			getOwnedGames: vi.fn(async () => ({ game_count: 2, games: [{ appid: 30, name: 'ペルソナ５', playtime_forever: 123 }, { appid: 40, name: 'Example', playtime_forever: 50 }] })),
+			getPlayerAchievements: vi.fn(async () => ({ achievements: [] })),
+		};
+		const japanese = game({ identity: { canonicalKey: 'gametrack:jp', externalIds: { gametrack: 'jp' } }, title: 'ドラゴンクエスト' });
+		const result = await createSteamEnricher({ auth: steamAuth, api, now: () => '2026-09-14T12:00:00.000Z' }).enrich(snapshot([japanese, game()]));
+
+		expect(result.patches).toEqual([]);
+	});
+
 	it('keeps the base snapshot usable when the optional API fails', async () => {
 		const api = { getOwnedGames: vi.fn(async () => { throw new Error('network'); }) } as unknown as SteamApi;
 		const result = await createSteamEnricher({ auth: steamAuth, api }).enrich(snapshot([game()]));
