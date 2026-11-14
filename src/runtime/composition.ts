@@ -13,6 +13,7 @@ import type { LibraryProvider as CanonicalGameProvider } from '../model/canonica
 import { CanonicalSyncService } from '../sync/canonical-service';
 import { CanonicalVaultWriter } from '../vault/canonical-writer';
 import { canonicalMappingFromLegacy } from '../vault/canonical-projection';
+import { linkNote } from '../state/note-links';
 import type { GameTrackRuntimeStatus } from '../model/library-provider';
 import type { SyncExecutor } from '../sync/background-executor';
 import { createCanonicalSyncExecutor, createLegacySyncExecutor } from './executors';
@@ -122,6 +123,17 @@ export class GameSyncRuntimeComposition {
 				revealHidden: state.settings.revealHiddenAchievements,
 			},
 			writer: new CanonicalVaultWriter(this.options.gateway, { propertyMapping }),
+			noteLinks: {
+				load: async () => (await this.options.stateStore.load()).noteLinks,
+				// Apply runs inside the sync lock (manual and scheduled), so a fresh load-change-save is not racing
+				// another sync; the rename/delete handlers take the same lock.
+				record: async (links) => {
+					const current = await this.options.stateStore.load();
+					if (this.options.isActive?.() === false) return;
+					for (const link of links) linkNote(current, link.canonicalId, link.path);
+					await this.options.stateStore.save(current);
+				},
+			},
 		});
 	}
 

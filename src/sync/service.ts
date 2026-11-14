@@ -29,10 +29,11 @@ import type { MatchManagerAdapter, MatchManagerRow, MatchResolutionAction, Prepa
 import { buildManagedProperties, resolvePropertyMapping } from '../model/property-mapping';
 import { noteRefId } from '../vault/matcher';
 import { buildNoteIndex, type IndexedNote } from '../vault/note-index';
-import { parseFrontmatter } from '../vault/frontmatter';
+import { parseFrontmatter, readProperty } from '../vault/frontmatter';
 import { VaultConflictError } from '../network/errors';
 import { noteFingerprint } from '../vault/gateway';
 import { mergeStateChanges } from '../state/merge';
+import { linkNote } from '../state/note-links';
 
 export type ServiceProviderState = 'success' | 'partial' | 'failed';
 
@@ -126,11 +127,6 @@ interface ProviderFetchRecord {
 interface RecoveryOperationsResult {
 	operations: Array<{ operation: Operation; progress: ExecutorProgress }>;
 	rejectedOperationIds: string[];
-}
-
-/** Records that `canonicalId` lives in the note at `path`; one note per game. */
-function linkNote(state: GameSyncData, canonicalId: string, path: string): void {
-	state.noteLinks = [...state.noteLinks.filter((link) => link.canonicalId !== canonicalId), { canonicalId, path }];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1578,9 +1574,20 @@ export class SyncService {
 		// Same key the matcher reads: with the ID property turned off, an old leftover ID on the note is ignored
 		// and the decision is recorded against the note itself.
 		const gameSyncIdKey = resolvePropertyMapping(state.propertyMapping).gameSyncId;
-		const candidateValue = gameSyncIdKey === undefined ? undefined : note?.properties[gameSyncIdKey];
-		const candidateId = typeof candidateValue === 'string' ? candidateValue : undefined;
+		const candidateValue = gameSyncIdKey === undefined ? undefined : note === undefined ? undefined : readProperty(note.properties, gameSyncIdKey);
+		// A note that already carries this game's own ID is decided like a note without an ID (by its path):
+		// merging a game into itself or keeping it apart from itself has no meaning.
+		const candidateId = typeof candidateValue === 'string' && candidateValue !== game.canonicalId ? candidateValue : undefined;
 		if (note === undefined || noteFingerprint(await this.planner.gateway.read(note.path)) !== candidate.fingerprint) throw new VaultConflictError('The review candidate changed after the preview.');
+		// Choosing one of several notes (e.g. game-sync-id on one note, a provider ID on another) also means "not
+		// the others"; without that record the next plan would report the same contradiction again.
+		const excludeOtherCandidates = (canonicalId: string): void => {
+			if (decision.action !== 'merge') return;
+			for (const other of status?.match?.candidates ?? []) {
+				if (other.path === note.path) continue;
+				state.negativeMappings = addNegativeMapping(state, canonicalId, noteRefId(other.path)).negativeMappings as GameSyncData['negativeMappings'];
+			}
+		};
 		if (candidateId === undefined) {
 			// A note without a game-sync-id (written by hand, or IDs turned off in the property mapping): remember
 			// the note for this game. Keeping them separate needs no record, the next plan simply creates a note.
@@ -1589,6 +1596,7 @@ export class SyncService {
 			if (decision.action === 'merge' && owners.length === 1) {
 				// The note already belongs to another game (e.g. the Steam entry): one game with both providers.
 				this.mergeGameInto(state, game, owners[0]);
+				excludeOtherCandidates(owners[0]);
 				await this.saveState();
 				return;
 			}
@@ -1597,6 +1605,7 @@ export class SyncService {
 					if (providerGame !== undefined) state.identityMappings = addPositiveMapping(state, { canonicalId: game.canonicalId, provider, providerGameId: providerGame.providerGameId }).identityMappings as GameSyncData['identityMappings'];
 				}
 				linkNote(state, game.canonicalId, note.path);
+				excludeOtherCandidates(game.canonicalId);
 			} else {
 				state.noteLinks = state.noteLinks.filter((link) => !(link.canonicalId === game.canonicalId && link.path === note.path));
 				state.negativeMappings = addNegativeMapping(state, game.canonicalId, noteRefId(note.path)).negativeMappings as GameSyncData['negativeMappings'];
@@ -1607,6 +1616,7 @@ export class SyncService {
 		}
 		if (decision.action === 'merge') {
 			this.mergeGameInto(state, game, candidateId);
+			excludeOtherCandidates(candidateId);
 			await this.saveState();
 			return;
 		}

@@ -1,5 +1,10 @@
 import type { GameSyncData } from './schema';
 
+/** Records that `canonicalId` lives in the note at `path`; one note per game. Used by both sync pipelines. */
+export function linkNote(state: GameSyncData, canonicalId: string, path: string): void {
+	state.noteLinks = [...state.noteLinks.filter((link) => link.canonicalId !== canonicalId), { canonicalId, path }];
+}
+
 /**
  * Follows a renamed or moved note (or a renamed folder) so a game stays linked to its note.
  * Returns whether anything changed, so callers only save when needed.

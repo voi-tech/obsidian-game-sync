@@ -90,6 +90,7 @@ vi.mock('obsidian', () => ({
 }));
 
 import GameSyncPlugin, { createGameSyncRuntime, createStaticCommandErrorNotifier } from '../src/main';
+import { SyncService } from '../src/sync/service';
 
 function createHost(rawState: unknown, secrets: Record<string, string> = {}) {
 	const commands: Array<{ id: string; name: string; callback: () => void }> = [];
@@ -312,6 +313,33 @@ describe('main runtime integration', () => {
 
 		const savedStates = fixture.host.saveData.mock.calls as unknown as Array<[unknown]>;
 		expect(savedStates.every(([saved]) => (saved as { settings?: { setupCompleted?: boolean } } | undefined)?.settings?.setupCompleted !== true)).toBe(true);
+		runtime.stop();
+	});
+
+	it('applies the Quick Setup preview inside the sync lock, after a note-link update already holding it', async () => {
+		mainTestMocks.steamAdapterFactory.mockReturnValue({ id: 'steam', getConnectionStatus: vi.fn(async () => ({ provider: 'steam', state: 'disconnected', connected: false })), fetchLibrary: vi.fn(), disconnect: vi.fn() });
+		mainTestMocks.playStationAdapterFactory.mockReturnValue({ id: 'playstation', getConnectionStatus: vi.fn(async () => ({ provider: 'playstation', state: 'disconnected', connected: false })), fetchLibrary: vi.fn(), disconnect: vi.fn() });
+		const rawState = { settings: { setupCompleted: false, firstSyncCompleted: false } };
+		const fixture = createHost(rawState);
+		const runtime = createGameSyncRuntime(fixture.host, { timer: { setInterval: vi.fn(), clearInterval: vi.fn() }, isMobile: () => false });
+		await runtime.ready;
+		fixture.commands.find((command) => command.id === 'run-setup-wizard')?.callback();
+		await vi.waitFor(() => expect(mainTestMocks.setupOptions?.prepareAll).toBeDefined());
+		const prepared = await mainTestMocks.setupOptions?.prepareAll?.();
+		await mainTestMocks.setupOptions?.onPreparedSync?.(prepared);
+		await vi.waitFor(() => expect(mainTestMocks.previewOptions).toBeDefined());
+
+		let release!: () => void;
+		fixture.host.loadData.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve(rawState); }));
+		fixture.vaultEvents.find((event) => event.name === 'rename')?.callback({ path: 'Games/New.md' }, 'Games/Old.md');
+		const applySelection = vi.spyOn(SyncService.prototype, 'applySelection');
+		const applying = mainTestMocks.previewOptions?.onApply(prepared, []);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(applySelection).not.toHaveBeenCalled();
+		release();
+		await applying;
+		expect(applySelection).toHaveBeenCalledTimes(1);
+		applySelection.mockRestore();
 		runtime.stop();
 	});
 

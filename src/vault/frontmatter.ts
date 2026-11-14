@@ -119,6 +119,21 @@ export function existingPropertyKey(frontmatter: Record<string, unknown>, key: s
 	return Object.keys(frontmatter).find((candidate) => candidate.toLocaleLowerCase() === lower) ?? key;
 }
 
+/**
+ * Every value stored under `key` in any letter case. Obsidian shows `GAME-SYNC-ID` and `game-sync-id` as one
+ * property, so identity checks must see both; returning all of them lets a contradiction surface instead of
+ * whichever spelling happens to come first.
+ */
+export function readPropertyValues(frontmatter: Record<string, unknown>, key: string): unknown[] {
+	const lower = key.toLocaleLowerCase();
+	return Object.keys(frontmatter).filter((candidate) => candidate.toLocaleLowerCase() === lower).map((candidate) => frontmatter[candidate]);
+}
+
+/** One value of a property, preferring the exact spelling, otherwise any letter case. */
+export function readProperty(frontmatter: Record<string, unknown>, key: string): unknown {
+	return frontmatter[existingPropertyKey(frontmatter, key)];
+}
+
 export function applyManagedFrontmatter(frontmatter: Record<string, unknown>, managedProperties: Record<string, unknown>): void {
 	for (const [key, value] of Object.entries(managedProperties)) {
 		if (value !== undefined && value !== null) frontmatter[existingPropertyKey(frontmatter, key)] = value;

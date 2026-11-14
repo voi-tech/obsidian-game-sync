@@ -121,12 +121,19 @@ describe('canonical planner path allocation', () => {
 		expect(plan.statuses.find((status) => status.canonicalKey === second.identity.canonicalKey)?.path).toBe('Games/Dead Space.md');
 	});
 
-	it('does not overwrite an unrelated file occupying the base path', async () => {
-		const gateway = new FakeVaultGateway({ 'Games/Dead Space.md': '# unrelated' });
+	it('offers a hand-written note at the base path for review instead of writing beside it', async () => {
+		const gateway = new FakeVaultGateway({ 'Games/Dead Space.md': '# my notes' });
+		const plan = await planCanonicalSync([game({ metadata: { releaseDate: '2023-01-27', developers: [], publishers: [], genres: [] } })], { gateway, notesFolder: 'Games' });
+
+		expect(plan.operations).toHaveLength(0);
+		expect(plan.statuses[0]).toMatchObject({ status: 'conflict', path: 'Games/Dead Space.md', match: { status: 'review' } });
+	});
+
+	it('allocates a year path when the note at the base path is another release', async () => {
+		const gateway = new FakeVaultGateway({ 'Games/Dead Space.md': '---\nreleased: 2008\n---\n# original' });
 		const plan = await planCanonicalSync([game({ metadata: { releaseDate: '2023-01-27', developers: [], publishers: [], genres: [] } })], { gateway, notesFolder: 'Games' });
 
 		expect(plan.statuses[0]).toMatchObject({ status: 'create', path: 'Games/Dead Space (2023).md' });
-		expect(plan.statuses.some((status) => status.status === 'conflict')).toBe(false);
 	});
 
 	it('keeps allocated paths stable after the first write', async () => {

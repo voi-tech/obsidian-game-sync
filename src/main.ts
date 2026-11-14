@@ -412,12 +412,15 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 					await ui.openCanonicalPreview(preview, async (selection) => {
 						const service = setupCanonicalServices.get(preview);
 						if (service === undefined) throw new Error('GameTrack provider is unavailable.');
-						await service.applyPreview(preview, selection);
-						const importedState = await stateStore.load();
-						importedState.settings.gametrackLastImportedAt = new Date().toISOString();
-						await composition.approveCanonicalBackgroundSync();
-						importedState.settings.setupCompleted = true;
-						await stateStore.save(importedState);
+						// Same lock as every other sync: apply writes notes and records note links in the state.
+						await syncLock(async () => {
+							await service.applyPreview(preview, selection);
+							const importedState = await stateStore.load();
+							importedState.settings.gametrackLastImportedAt = new Date().toISOString();
+							await composition.approveCanonicalBackgroundSync();
+							importedState.settings.setupCompleted = true;
+							await stateStore.save(importedState);
+						});
 					});
 				},
 					onCanonicalPreview: async (preview) => {
@@ -425,14 +428,16 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 					await ui.openCanonicalPreview(preview, async (selection) => {
 						const service = setupCanonicalServices.get(preview);
 						if (service === undefined) throw new Error('Selected library provider is unavailable.');
-						await service.applyPreview(preview, selection);
-						const importedState = await stateStore.load();
-						if (importedState.settings.libraryProvider === 'gametrack') {
-							importedState.settings.gametrackLastImportedAt = new Date().toISOString();
-							await composition.approveCanonicalBackgroundSync();
-						}
-						importedState.settings.setupCompleted = true;
-						await stateStore.save(importedState);
+						await syncLock(async () => {
+							await service.applyPreview(preview, selection);
+							const importedState = await stateStore.load();
+							if (importedState.settings.libraryProvider === 'gametrack') {
+								importedState.settings.gametrackLastImportedAt = new Date().toISOString();
+								await composition.approveCanonicalBackgroundSync();
+							}
+							importedState.settings.setupCompleted = true;
+							await stateStore.save(importedState);
+						});
 					});
 				},
 				onPreparedSync: async (prepared) => {
@@ -441,11 +446,16 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 					await ui.openPreview(
 						prepared,
 						async (preview, selectedOperationIds) => {
-							const result = await service.applySelection(preview, selectedOperationIds, { explicit: true });
-							const state = await stateStore.load();
-							if (state.settings.firstSyncCompleted !== true) return;
-							state.settings.setupCompleted = true;
-							await stateStore.save(state);
+							// The summary opens outside the lock: its "sync again" button takes the lock itself.
+							const result = await syncLock(async () => {
+								const applied = await service.applySelection(preview, selectedOperationIds, { explicit: true });
+								const state = await stateStore.load();
+								if (state.settings.firstSyncCompleted !== true) return undefined;
+								state.settings.setupCompleted = true;
+								await stateStore.save(state);
+								return applied;
+							});
+							if (result === undefined) return;
 							await ui.openSummary(result, () => actions.syncAll());
 						},
 						async () => undefined,

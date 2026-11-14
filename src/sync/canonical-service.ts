@@ -1,8 +1,9 @@
 import type { CanonicalLibrarySnapshot, LibraryProvider } from '../model/canonical-provider';
 import { mergeEnrichmentResults, type GameEnricher, type GameEnrichmentResult } from '../model/enrichment';
 import { planCanonicalSync, type CanonicalSyncPlan, type CanonicalSyncPlannerOptions, type CanonicalSyncSelection } from './canonical-planner';
-import { CanonicalVaultWriter } from '../vault/canonical-writer';
+import { CanonicalPartialApplyError, CanonicalVaultWriter } from '../vault/canonical-writer';
 import { canonicalGameFingerprint } from './canonical-state';
+import type { NoteLink } from '../state/schema';
 
 export interface CanonicalPreviewResult {
 	readonly snapshot: CanonicalLibrarySnapshot;
@@ -17,6 +18,13 @@ export class CanonicalProviderError extends Error {
 	}
 }
 
+/** Persisted `canonicalId -> note path` links (shared with the legacy pipeline). */
+export interface CanonicalNoteLinkStore {
+	load(): Promise<readonly NoteLink[]>;
+	/** Called after apply, inside the caller's sync lock, with the notes that were actually written. */
+	record(links: readonly NoteLink[]): Promise<void>;
+}
+
 export interface CanonicalSyncServiceOptions {
 	readonly provider: LibraryProvider;
 	readonly enrichers?: readonly GameEnricher[];
@@ -28,6 +36,7 @@ export interface CanonicalSyncServiceOptions {
 	readonly configurationRevision?: string;
 	readonly readConfigurationRevision?: () => Promise<string>;
 	readonly isActive?: () => boolean;
+	readonly noteLinks?: CanonicalNoteLinkStore;
 }
 
 export class CanonicalSyncService {
@@ -45,7 +54,8 @@ export class CanonicalSyncService {
 		const snapshot = mergeEnrichmentResults(base, enrichments);
 		await this.assertCurrent();
 		const revision = `${base.revision ?? 'base'}:${enrichedRevision(snapshot.games, enrichments)}`;
-		const preview = { snapshot, enrichments, plan: await planCanonicalSync(snapshot.games, { ...this.options.planner, protectedCanonicalProperties: unavailableEnrichmentProperties(enrichments) }, revision) };
+		const noteLinks = await this.options.noteLinks?.load();
+		const preview = { snapshot, enrichments, plan: await planCanonicalSync(snapshot.games, { ...this.options.planner, ...(noteLinks === undefined ? {} : { noteLinks }), protectedCanonicalProperties: unavailableEnrichmentProperties(enrichments) }, revision) };
 		await this.assertCurrent();
 		this.previews.add(preview);
 		return preview;
@@ -75,7 +85,25 @@ export class CanonicalSyncService {
 		if (currentRevision !== preview.plan.planRevision) {
 			throw new CanonicalProviderError('The library source changed; this preview is no longer valid. Preview the sync again.');
 		}
-		return this.options.writer.apply(preview.plan, selection, () => this.assertCurrent());
+		const plan = preview.plan;
+		try {
+			const applied = await this.options.writer.apply(plan, selection, () => this.assertCurrent());
+			await this.recordNoteLinks(plan, applied);
+			return applied;
+		} catch (error) {
+			// Notes written before a per-note conflict are this game's notes all the same.
+			if (error instanceof CanonicalPartialApplyError) await this.recordNoteLinks(plan, error.appliedOperationIds);
+			throw error;
+		}
+	}
+
+	/** Remembers where each written game lives, so it is found again even with every ID property turned off. */
+	private async recordNoteLinks(plan: CanonicalSyncPlan, appliedOperationIds: readonly string[]): Promise<void> {
+		if (this.options.noteLinks === undefined || appliedOperationIds.length === 0) return;
+		if (this.options.isActive?.() === false) throw new CanonicalProviderError('Sync runtime is inactive; no further writes will be made.');
+		const applied = new Set(appliedOperationIds);
+		const links = plan.operations.filter((operation) => applied.has(operation.id)).map((operation) => ({ canonicalId: operation.canonicalKey, path: operation.path }));
+		await this.options.noteLinks.record(links);
 	}
 
 	private async assertCurrent(): Promise<void> {

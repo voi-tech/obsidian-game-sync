@@ -9,6 +9,7 @@ import type { AchievementRenderOptions } from '../vault/achievement-renderer';
 import { noteFingerprint, type VaultGateway } from '../vault/gateway';
 import { matchVaultNote, type VaultMatch } from '../vault/matcher';
 import { buildNoteIndex, type NoteIndex } from '../vault/note-index';
+import { readProperty } from '../vault/frontmatter';
 import { buildTemplateContext, renderFilename } from '../vault/template';
 import { diffNote } from './diff';
 
@@ -141,7 +142,7 @@ export class SyncPlanner {
 				statuses.push({ canonicalGameId: game.canonicalId, status: 'conflict', path: match.note.path, match, reason: error.message });
 				continue;
 			}
-			const isAdoption = gameSyncIdKey === undefined || match.note.properties[gameSyncIdKey] !== game.canonicalId;
+			const isAdoption = gameSyncIdKey === undefined || readProperty(match.note.properties, gameSyncIdKey) !== game.canonicalId;
 			if (!diff.changed) {
 				statuses.push({ canonicalGameId: game.canonicalId, status: 'unchanged', path: match.note.path, match });
 				pathAssignments.push({ canonicalGameId: game.canonicalId, path: match.note.path, statusIndex: statuses.length - 1 });

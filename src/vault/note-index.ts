@@ -1,6 +1,6 @@
 import { DEFAULT_PROPERTY_MAPPING, resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
 import { resolveCanonicalPropertyMapping, type CanonicalPropertyMapping } from './canonical-projection';
-import { InvalidFrontmatterError, parseFrontmatter } from './frontmatter';
+import { InvalidFrontmatterError, parseFrontmatter, readProperty, readPropertyValues } from './frontmatter';
 import { noteFingerprint, type VaultGateway, type VaultNoteRef } from './gateway';
 
 export interface IndexedNote extends VaultNoteRef {
@@ -14,23 +14,20 @@ function normalize(value: string): string {
 	return value.toLocaleLowerCase().replace(/\.md$/i, '').replace(/[ _-]+/g, ' ').trim();
 }
 
-function readPropertyValue(properties: Record<string, unknown>, name: string): unknown {
-	if (Object.prototype.hasOwnProperty.call(properties, name)) return properties[name];
-	const entry = Object.entries(properties).find(([key]) => key.toLocaleLowerCase() === name.toLocaleLowerCase());
-	return entry?.[1];
-}
-
-function valuesFor(properties: Record<string, unknown>, names: readonly (string | undefined)[]): string[] {
-	return names.flatMap((name) => {
+/** String values of the named properties, read case-insensitively (Obsidian property names ignore case). */
+export function propertyStrings(properties: Record<string, unknown>, names: readonly (string | undefined)[]): string[] {
+	return [...new Set(names.flatMap((name) => {
 		if (!name) return [];
-		const value = readPropertyValue(properties, name);
-		if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
-		return typeof value === 'string' || typeof value === 'number' ? [String(value)] : [];
-	});
+		return readPropertyValues(properties, name).flatMap((value) => {
+			if (Array.isArray(value)) return value.filter((item): item is string | number => typeof item === 'string' || typeof item === 'number').map(String);
+			return typeof value === 'string' || typeof value === 'number' ? [String(value)] : [];
+		});
+	}))];
 }
 
 export class NoteIndex {
 	private readonly gameSyncIds = new Map<string, IndexedNote[]>();
+	private readonly gameSyncIdsByPath = new Map<string, string[]>();
 	private readonly igdbIds = new Map<string, IndexedNote[]>();
 	private readonly gameTrackIds = new Map<string, IndexedNote[]>();
 	private readonly steamIds = new Map<string, IndexedNote[]>();
@@ -42,11 +39,13 @@ export class NoteIndex {
 		const resolved = resolvePropertyMapping(mapping);
 		const canonical = resolveCanonicalPropertyMapping(canonicalMapping);
 		for (const note of notes) {
-			this.add(this.gameSyncIds, note, valuesFor(note.properties, [resolved.gameSyncId]));
-			this.add(this.igdbIds, note, valuesFor(note.properties, [canonical.igdbId]));
-			this.add(this.gameTrackIds, note, valuesFor(note.properties, [canonical.gametrackId]));
-			this.add(this.steamIds, note, valuesFor(note.properties, [resolved.steamId]));
-			this.add(this.playstationIds, note, valuesFor(note.properties, [
+			const gameSyncIds = propertyStrings(note.properties, [resolved.gameSyncId]);
+			this.gameSyncIdsByPath.set(note.path, gameSyncIds);
+			this.add(this.gameSyncIds, note, gameSyncIds);
+			this.add(this.igdbIds, note, propertyStrings(note.properties, [canonical.igdbId]));
+			this.add(this.gameTrackIds, note, propertyStrings(note.properties, [canonical.gametrackId]));
+			this.add(this.steamIds, note, propertyStrings(note.properties, [resolved.steamId]));
+			this.add(this.playstationIds, note, propertyStrings(note.properties, [
 				resolved.playstationId, 'playstation-concept-id', 'playstation-title-ids', 'playstation-communication-ids', 'psn-title-ids', 'psn-communication-ids',
 			]));
 		}
@@ -65,6 +64,8 @@ export class NoteIndex {
 	}
 
 	findByGameSyncId(value: string): IndexedNote[] { return this.all(this.gameSyncIds, value); }
+	/** The game-sync-id values a note carries under the mapped property, in any letter case. */
+	gameSyncIdsOf(note: IndexedNote): readonly string[] { return this.gameSyncIdsByPath.get(note.path) ?? []; }
 	findByIgdbId(value: number | string): IndexedNote[] { return this.all(this.igdbIds, String(value)); }
 	findByGameTrackId(value: string): IndexedNote[] { return this.all(this.gameTrackIds, value); }
 	findBySteamId(value: string): IndexedNote[] { return this.all(this.steamIds, value); }
@@ -96,7 +97,7 @@ export async function buildNoteIndex(
 			invalidNotePaths.push(ref.path);
 			continue;
 		}
-		const titleValue = parsed.frontmatter[resolved.title ?? 'title'];
+		const titleValue = readProperty(parsed.frontmatter, resolved.title ?? 'title');
 		const fileTitle = ref.path.split('/').at(-1) ?? ref.path;
 		notes.push({
 			...ref,

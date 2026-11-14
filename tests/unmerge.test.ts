@@ -327,6 +327,22 @@ describe('durable match decisions', () => {
 		expect(next.plan.operations.some((operation) => operation.kind === 'create-note')).toBe(true);
 	});
 
+	it('reads the candidate note ID case-insensitively when merging from review', async () => {
+		const playstation = new FakeProvider(fakeProviderSnapshot('playstation', [fakeProviderGame('playstation', 'psn-1', 'Example Game')]));
+		const harness = await createIntegrationHarness({
+			initialFiles: { 'Games/Example Game (2020).md': '---\nGAME-SYNC-ID: game-sync:other\n---\nmanual' },
+			providers: [playstation],
+			state: { settings: { firstSyncCompleted: true } },
+		});
+		const prepared = await harness.service.prepareAll();
+		const status = prepared.plan.statuses.find((entry) => entry.status === 'review')!;
+		await harness.service.applyReviewDecision({ planId: prepared.plan.id, canonicalGameId: status.canonicalGameId, action: 'merge', candidatePath: 'Games/Example Game (2020).md' });
+
+		const state = await harness.service.getState();
+		expect(state.noteLinks).toEqual([]);
+		expect(state.identityMappings).toContainEqual(expect.objectContaining({ canonicalId: 'game-sync:other', provider: 'playstation', providerGameId: 'psn-1' }));
+	});
+
 	it('remembers notes created by older versions from the operation journal', () => {
 		const state = migrateState({ operationJournal: [{ operation: createOperation({ kind: 'create-note', canonicalGameId: 'game-sync:a', path: 'Games/A.md', risk: 'safe', summary: 'Create', planRevision: 'r' }), noteApplied: true, noteFingerprintAfter: 'f', providerStateApplied: true, historyApplied: true, cacheApplied: true }] });
 		expect(state.noteLinks).toEqual([{ canonicalId: 'game-sync:a', path: 'Games/A.md' }]);

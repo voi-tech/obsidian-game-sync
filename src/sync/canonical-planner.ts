@@ -8,6 +8,7 @@ import { parseFrontmatter } from '../vault/frontmatter';
 import type { CanonicalPropertyKey } from '../vault/canonical-projection';
 import { NotePathAllocator } from './note-path-allocator';
 import { readCanonicalTemplate, renderCanonicalTemplate } from '../vault/canonical-template';
+import type { NoteLink } from '../state/schema';
 
 export type CanonicalPlanStatus = 'create' | 'update' | 'unchanged' | 'conflict' | 'skip';
 
@@ -66,6 +67,8 @@ export interface CanonicalSyncPlannerOptions {
 	readonly noteIndex?: NoteIndex;
 	readonly notesFolder?: string;
 	readonly canonicalMappings?: readonly CanonicalIdentityMapping[];
+	/** Persisted `canonicalId -> note path` links; they keep notes recognisable when ID properties are turned off. */
+	readonly noteLinks?: readonly NoteLink[];
 	readonly propertyMapping?: CanonicalPropertyMapping;
 	readonly protectedCanonicalProperties?: readonly CanonicalPropertyKey[];
 	readonly pathAllocator?: NotePathAllocator;
@@ -151,8 +154,17 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 	const orderedGames = [...games].sort((left, right) => left.identity.canonicalKey.localeCompare(right.identity.canonicalKey));
 	const matches = new Map<string, VaultMatch>();
 	const newGames: CanonicalGame[] = [];
+	const allocator = options.pathAllocator ?? new NotePathAllocator();
+	const candidateFolder = (options.notesFolder ?? 'Games').replace(/\/+$/u, '');
+	// The path a new note would get on an empty vault: an existing note there is offered for review, like legacy does.
+	const matchOptions = (game: CanonicalGame) => ({
+		canonicalMappings: options.canonicalMappings,
+		noteLinks: options.noteLinks,
+		candidateFolder,
+		targetPath: allocator.allocate(game, { notesFolder: options.notesFolder, existingPaths: [] }).path,
+	});
 	for (const game of orderedGames) {
-		const match = matchCanonicalVaultNote(game, index, { canonicalMappings: options.canonicalMappings, candidateFolder: (options.notesFolder ?? 'Games').replace(/\/+$/u, '') });
+		const match = matchCanonicalVaultNote(game, index, matchOptions(game));
 		matches.set(game.identity.canonicalKey, match);
 		if (match.status !== 'conflict' && match.status !== 'review' && match.note === undefined) newGames.push(game);
 		if (match.note !== undefined) {
@@ -161,13 +173,13 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 			assignments.set(match.note.path, assigned);
 		}
 	}
-	const allocatedPaths = (options.pathAllocator ?? new NotePathAllocator()).allocateBatch(newGames, {
+	const allocatedPaths = allocator.allocateBatch(newGames, {
 		notesFolder: options.notesFolder,
 		existingPaths: index.notes.map((note) => note.path),
 		reservedPaths: new Set(assignments.keys()),
 	});
 	for (const game of orderedGames) {
-		const match = matches.get(game.identity.canonicalKey) ?? matchCanonicalVaultNote(game, index, { canonicalMappings: options.canonicalMappings, candidateFolder: (options.notesFolder ?? 'Games').replace(/\/+$/u, '') });
+		const match = matches.get(game.identity.canonicalKey) ?? matchCanonicalVaultNote(game, index, matchOptions(game));
 		const path = match.note?.path ?? allocatedPaths.get(game.identity.canonicalKey) ?? '';
 		if (match.status === 'conflict' || match.status === 'review') {
 			statuses.push({ canonicalKey: game.identity.canonicalKey, status: 'conflict', path: match.note?.path ?? path, match, reason: match.reason ?? 'Matching requires explicit review.' });

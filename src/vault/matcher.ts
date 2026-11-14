@@ -4,8 +4,9 @@ import type { GameProvider } from '../model/provider';
 import type { IdentityMapping } from '../model/identity';
 import { normalizeTitle, titleMatchKey } from '../identity/normalize-title';
 import { isSafeForAutomaticMerge, type MatchConfidence } from '../identity/confidence';
-import { resolvePropertyMapping, type PropertyMapping } from '../model/property-mapping';
-import type { IndexedNote, NoteIndex } from './note-index';
+import type { PropertyMapping } from '../model/property-mapping';
+import { propertyStrings, type IndexedNote, type NoteIndex } from './note-index';
+import { readProperty } from './frontmatter';
 import type { NegativeIdentityMapping, NoteLink } from '../state/schema';
 
 export type MatchMethod =
@@ -62,11 +63,7 @@ function inFolder(folder: string | undefined): (note: IndexedNote) => boolean {
 }
 
 function values(properties: Record<string, unknown>, names: readonly string[]): string[] {
-	return names.flatMap((name) => {
-		const value = properties[name];
-		if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
-		return typeof value === 'string' || typeof value === 'number' ? [String(value)] : [];
-	});
+	return propertyStrings(properties, names);
 }
 
 function uniqueNotes(notes: readonly IndexedNote[]): IndexedNote[] {
@@ -79,7 +76,7 @@ function gameYear(game: NormalizedGame): string | undefined {
 }
 
 function noteYear(note: IndexedNote): string | undefined {
-	const released = note.properties.released;
+	const released = readProperty(note.properties, 'released');
 	if (typeof released === 'string' && /^\d{4}/u.test(released)) return released.slice(0, 4);
 	if (typeof released === 'number' && Number.isInteger(released)) return String(released);
 	return undefined;
@@ -149,59 +146,104 @@ function matchByPriority(notes: readonly IndexedNote[], method: MatchMethod, con
 	};
 }
 
+interface StableIdentitySource {
+	readonly method: MatchMethod;
+	readonly notes: readonly IndexedNote[];
+	/** Reason used when this source points at a note that belongs to another game. */
+	readonly foreignReason?: string;
+}
+
+interface StableIdentityOptions {
+	readonly isNegative: (note: IndexedNote) => boolean;
+	/** True when the note's own game-sync-id says it belongs to a different game. */
+	readonly ownedByOtherGame: (note: IndexedNote) => boolean;
+}
+
+/**
+ * Shared by the legacy and the canonical pipeline. Collects every note any stable identifier of the game
+ * points to (game-sync-id, IGDB, GameTrack, provider IDs, durable mappings, remembered note links) before
+ * choosing. One note: a safe match. Several notes, or a note owned by another game: review, never the first hit;
+ * otherwise the writer would add this game's IDs to one note while another note still carries them.
+ * Returns undefined when no stable identifier matched, so heuristics may run.
+ */
+function resolveStableIdentity(sources: readonly StableIdentitySource[], options: StableIdentityOptions): VaultMatch | undefined {
+	const found = new Map<string, { note: IndexedNote; source: StableIdentitySource }>();
+	for (const source of sources) {
+		for (const note of source.notes) {
+			if (options.isNegative(note) || found.has(note.path)) continue;
+			found.set(note.path, { note, source });
+		}
+	}
+	if (found.size === 0) return undefined;
+	// Every found note, including one found by its game-sync-id: a note carrying this game's ID and another
+	// game's ID at the same time is a contradiction too.
+	const foreign = [...found.values()].filter(({ note }) => options.ownedByOtherGame(note));
+	if (foreign.length > 0) {
+		return {
+			status: 'conflict',
+			method: 'ambiguous',
+			confidence: 'ambiguous',
+			candidates: uniqueNotes(foreign.map(({ note }) => note)),
+			reason: foreign[0].source.foreignReason ?? 'A stable identifier points to a note with a different game-sync-id.',
+		};
+	}
+	const candidates = uniqueNotes([...found.values()].map(({ note }) => note));
+	if (candidates.length > 1) {
+		return { status: 'conflict', method: 'ambiguous', confidence: 'ambiguous', candidates, reason: 'Stable identifiers of this game point to different notes.' };
+	}
+	const [{ note, source }] = [...found.values()] as [{ note: IndexedNote; source: StableIdentitySource }];
+	return { status: 'matched', method: source.method, confidence: 'explicit', note, candidates: [note] };
+}
+
+/**
+ * Hand-named notes in the games folder: the file name without a trailing year, compared with punctuation
+ * collapsed ("Detroit - Become Human (2018)" for "Detroit: Become Human™", or a bare "Returnal"). Exact key
+ * equality only, so sequels never match by prefix. A year in the file name or a `released` property that
+ * contradicts the game's year rules the note out. These are review candidates, never an automatic merge.
+ */
+function looseFilenameCandidates(notes: readonly IndexedNote[], titles: readonly string[], year: string | undefined): IndexedNote[] {
+	return filenameTitleCandidates(notes, titles).filter((note) => yearAgrees(note, year));
+}
+
+/** False when the file name year or the `released` property names another year than the game's. */
+function yearAgrees(note: IndexedNote, year: string | undefined): boolean {
+	if (year === undefined) return true;
+	const named = filenameYear(note.path);
+	const released = noteYear(note);
+	return (named === undefined || named === year) && (released === undefined || released === year);
+}
+
+function sameNamespace(left: string, right: string): boolean {
+	const prefix = (value: string): string | undefined => /^([a-z0-9-]+):/iu.exec(value)?.[1]?.toLocaleLowerCase();
+	const leftPrefix = prefix(left);
+	return leftPrefix !== undefined && leftPrefix === prefix(right);
+}
+
 export function matchVaultNote(game: NormalizedGame, index: NoteIndex, options: VaultMatcherOptions = {}): VaultMatch {
-	const gameSyncIdKey = resolvePropertyMapping(options.propertyMapping).gameSyncId;
 	const negativeMappings = options.negativeMappings ?? [];
+	const otherIds = (note: IndexedNote): string[] => index.gameSyncIdsOf(note).filter((id) => id !== game.canonicalId);
+	// "Keep separate" is recorded against the note's game-sync-id or, for notes decided by path, against the path.
 	const isNegative = (note: IndexedNote): boolean => {
-		const noteCanonicalId = values(note.properties, gameSyncIdKey === undefined ? [] : [gameSyncIdKey])[0] ?? noteRefId(note.path);
+		const noteIds = new Set([...index.gameSyncIdsOf(note).filter((id) => id !== game.canonicalId), noteRefId(note.path)]);
 		return negativeMappings.some((mapping) =>
-			(mapping.leftCanonicalId === game.canonicalId && mapping.rightCanonicalId === noteCanonicalId)
-			|| (mapping.rightCanonicalId === game.canonicalId && mapping.leftCanonicalId === noteCanonicalId),
+			(mapping.leftCanonicalId === game.canonicalId && noteIds.has(mapping.rightCanonicalId))
+			|| (mapping.rightCanonicalId === game.canonicalId && noteIds.has(mapping.leftCanonicalId)),
 		);
 	};
 	const filterNegative = (notes: readonly IndexedNote[]): IndexedNote[] => uniqueNotes(notes.filter((note) => !isNegative(note)));
-	const byProvider = filterNegative(providerCandidates(index, game));
-	const conflictingProviderCandidates = gameSyncIdKey === undefined ? [] : byProvider.filter((note) => {
-		const ids = values(note.properties, [gameSyncIdKey]);
-		return ids.some((id) => id !== game.canonicalId);
-	});
-	if (conflictingProviderCandidates.length > 0) {
-		return {
-			status: 'conflict',
-			method: 'ambiguous',
-			confidence: 'ambiguous',
-			candidates: uniqueNotes(conflictingProviderCandidates),
-			reason: 'A provider identifier points to a note with a different game-sync-id.',
-		};
-	}
-	const byCanonical = filterNegative(index.findByGameSyncId(game.canonicalId));
-	if (byCanonical.length > 0) return matchByPriority(byCanonical, 'game-sync-id', 'explicit');
-
-	if (byProvider.length > 0) return matchByPriority(byProvider, 'provider-id', 'explicit');
-
-	const durable = filterNegative((options.mappings ?? [])
+	const durable = (options.mappings ?? [])
 		.filter((mapping) => mapping.canonicalId === game.canonicalId)
-		.flatMap((mapping) => mapping.provider === 'steam' ? index.findBySteamId(mapping.providerGameId) : index.findByPlayStationIdentifier(mapping.providerGameId)));
-	const conflictingDurableCandidates = gameSyncIdKey === undefined ? [] : durable.filter((note) => {
-		const ids = values(note.properties, [gameSyncIdKey]);
-		return ids.some((id) => id !== game.canonicalId);
-	});
-	if (conflictingDurableCandidates.length > 0) {
-		return {
-			status: 'conflict',
-			method: 'ambiguous',
-			confidence: 'ambiguous',
-			candidates: uniqueNotes(conflictingDurableCandidates),
-			reason: 'A durable provider mapping points to a note with a different game-sync-id.',
-		};
-	}
-	if (durable.length > 0) return matchByPriority(durable, 'durable-mapping', 'explicit');
-
+		.flatMap((mapping) => mapping.provider === 'steam' ? index.findBySteamId(mapping.providerGameId) : index.findByPlayStationIdentifier(mapping.providerGameId));
 	const linkedPaths = new Set((options.noteLinks ?? []).filter((link) => link.canonicalId === game.canonicalId).map((link) => link.path));
-	const linked = filterNegative(index.notes.filter((note) => linkedPaths.has(note.path)
-		// A note that meanwhile carries another game's ID is not ours any more.
-		&& (gameSyncIdKey === undefined || values(note.properties, [gameSyncIdKey]).every((id) => id === game.canonicalId))));
-	if (linked.length > 0) return matchByPriority(linked, 'note-link', 'explicit');
+	// A linked note that meanwhile carries another game's ID is not ours any more.
+	const linked = index.notes.filter((note) => linkedPaths.has(note.path) && otherIds(note).length === 0);
+	const stable = resolveStableIdentity([
+		{ method: 'game-sync-id', notes: index.findByGameSyncId(game.canonicalId) },
+		{ method: 'provider-id', notes: providerCandidates(index, game), foreignReason: 'A provider identifier points to a note with a different game-sync-id.' },
+		{ method: 'durable-mapping', notes: durable, foreignReason: 'A durable provider mapping points to a note with a different game-sync-id.' },
+		{ method: 'note-link', notes: linked },
+	], { isNegative, ownedByOtherGame: (note) => otherIds(note).length > 0 });
+	if (stable !== undefined) return stable;
 
 	const heuristic = inFolder(options.candidateFolder);
 	const byTitle = filterNegative(titleCandidates(index, game).filter(heuristic));
@@ -221,7 +263,9 @@ export function matchVaultNote(game: NormalizedGame, index: NoteIndex, options: 
 		if (normalizedTitleYear.length > 0) return matchByPriority(normalizedTitleYear, 'normalized-title-year', 'likely');
 	}
 
-	const byLooseTitle = filterNegative(filenameTitleCandidates(index.notes.filter(heuristic), [game.title]));
+	// No year filter here: Steam and PlayStation report the release date of the port, which often differs
+	// from the year in a hand-written file name; the legacy review lets the user keep the two apart.
+	const byLooseTitle = filterNegative(looseFilenameCandidates(index.notes.filter(heuristic), [game.title], undefined));
 	if (byLooseTitle.length > 0) return matchByPriority(byLooseTitle, 'filename-title', 'likely', 'The note name matches the game title without its year or punctuation.');
 
 	return { status: 'none', confidence: 'none', candidates: [] };
@@ -236,6 +280,9 @@ export interface CanonicalIdentityMapping {
 
 export interface CanonicalVaultMatcherOptions {
 	canonicalMappings?: readonly CanonicalIdentityMapping[];
+	/** Same as {@link VaultMatcherOptions.noteLinks}: notes this game was written to before. */
+	noteLinks?: readonly NoteLink[];
+	/** Where a new note for this game would go before collision handling; an existing note there is offered for review. */
 	targetPath?: string;
 	/** Same as {@link VaultMatcherOptions.candidateFolder}. */
 	candidateFolder?: string;
@@ -267,21 +314,20 @@ export function matchCanonicalVaultNote(game: CanonicalGame, index: NoteIndex, o
 	const mapped = options.canonicalMappings?.filter((mapping) => mapping.canonicalKey === game.identity.canonicalKey)
 		.flatMap((mapping) => index.notes.filter((note) => note.path === mapping.notePath)) ?? [];
 	if (mapped.length > 0) return matchByPriority(mapped, 'game-sync-id', 'explicit', 'An explicit canonical mapping selected this note.');
-	const byCanonical = index.findByGameSyncId(game.identity.canonicalKey);
-	if (byCanonical.length > 0) return matchByPriority(byCanonical, 'game-sync-id', 'explicit');
-
-	const byIgdb = game.identity.externalIds.igdb === undefined ? [] : index.findByIgdbId(game.identity.externalIds.igdb);
-	const byGameTrack = game.identity.externalIds.gametrack === undefined ? [] : index.findByGameTrackId(game.identity.externalIds.gametrack);
-	const legacy = uniqueNotes(canonicalIds(game).flatMap(({ kind, id }) => kind === 'steam'
-		? index.findBySteamId(id)
-		: kind === 'playstation' ? index.findByPlayStationIdentifier(id) : []));
-	// Identifiers of one game that point at different notes are contradictory; merging into the first hit
-	// would silently attach the game to the wrong note, so the whole set goes to review instead.
-	const identified = uniqueNotes([...byIgdb, ...byGameTrack, ...legacy]);
-	if (identified.length > 1) return matchByPriority(identified, 'igdb-id', 'explicit', 'Stable identifiers of this game point to different notes.');
-	if (byIgdb.length > 0) return matchByPriority(byIgdb, 'igdb-id', 'explicit');
-	if (byGameTrack.length > 0) return matchByPriority(byGameTrack, 'gametrack-id', 'explicit');
-	if (legacy.length > 0) return matchByPriority(legacy, 'provider-id', 'explicit');
+	const canonicalKey = game.identity.canonicalKey;
+	// Another key of the same library (`gametrack:other`) marks another game's note. A key from elsewhere
+	// (an older `game-sync:` ID, a custom one) is a note being adopted and is kept by the planner.
+	const ownedByOtherGame = (note: IndexedNote): boolean => index.gameSyncIdsOf(note).some((id) => id !== canonicalKey && sameNamespace(id, canonicalKey));
+	const external = game.identity.externalIds;
+	const linkedPaths = new Set((options.noteLinks ?? []).filter((link) => link.canonicalId === canonicalKey).map((link) => link.path));
+	const stable = resolveStableIdentity([
+		{ method: 'game-sync-id', notes: index.findByGameSyncId(canonicalKey) },
+		{ method: 'igdb-id', notes: external.igdb === undefined ? [] : index.findByIgdbId(external.igdb) },
+		{ method: 'gametrack-id', notes: external.gametrack === undefined ? [] : index.findByGameTrackId(external.gametrack) },
+		{ method: 'provider-id', notes: canonicalIds(game).flatMap(({ kind, id }) => kind === 'steam' ? index.findBySteamId(id) : kind === 'playstation' ? index.findByPlayStationIdentifier(id) : []) },
+		{ method: 'note-link', notes: index.notes.filter((note) => linkedPaths.has(note.path) && !ownedByOtherGame(note)) },
+	], { isNegative: () => false, ownedByOtherGame });
+	if (stable !== undefined) return stable;
 
 	const titleCandidates = canonicalTitleCandidates(index, game).filter(inFolder(options.candidateFolder));
 	const year = canonicalYear(game);
@@ -292,13 +338,14 @@ export function matchCanonicalVaultNote(game: CanonicalGame, index: NoteIndex, o
 		if (year === undefined || candidatesWithKnownYear.length === 0) return matchByPriority(titleCandidates, 'exact-title', 'likely', 'Title fallback has no matching release year and requires review.');
 	}
 
+	const folderNotes = index.notes.filter(inFolder(options.candidateFolder));
 	if (options.targetPath !== undefined) {
-		const target = index.notes.filter((note) => note.path === options.targetPath);
-		if (target.length > 0) return matchByPriority(target, 'exact-filename', 'likely', 'Target path fallback requires review.');
+		// The vault's file names ignore case on macOS and Windows, so `returnal.md` occupies `Returnal.md`.
+		const wanted = options.targetPath.toLocaleLowerCase();
+		const target = folderNotes.filter((note) => note.path.toLocaleLowerCase() === wanted && yearAgrees(note, year));
+		if (target.length > 0) return matchByPriority(target, 'exact-filename', 'likely', 'A note already exists at the target path and requires review.');
 	}
-	const loose = filenameTitleCandidates(index.notes.filter(inFolder(options.candidateFolder)), [game.title, ...(game.aliases ?? [])])
-		// Only names carrying a year: a bare file at the target path is handled above and may be unrelated.
-		.filter((note) => filenameYear(note.path) !== undefined && (year === undefined || (filenameYear(note.path) === year && (noteYear(note) ?? year) === year)));
+	const loose = looseFilenameCandidates(folderNotes, [game.title, ...(game.aliases ?? [])], year);
 	if (loose.length > 0) return matchByPriority(loose, 'filename-title', 'likely', 'The note name matches the game title without its year or punctuation.');
 	return { status: 'none', confidence: 'none', candidates: [] };
 }
