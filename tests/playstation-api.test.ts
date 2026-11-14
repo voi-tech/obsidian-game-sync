@@ -116,6 +116,18 @@ describe('PlayStation paginated API boundary', () => {
 		expect(result.complete).toBe(true);
 	});
 
+	it('does not report the purchase list as complete when a malformed purchase was dropped', async () => {
+		getPurchasedGames.mockReset();
+		getPurchasedGames.mockResolvedValue({ data: { purchasedTitlesRetrieve: { games: [
+			{ titleId: 'PPSA1', name: 'Game', platform: 'PS5' },
+			{ titleId: 'PPSA2', name: null },
+		] } } });
+		const result = await createPlayStationApi(auth).getPurchasedGames();
+		expect(result.games.map((game) => game.titleId)).toEqual(['PPSA1']);
+		// Absence from a complete purchase list means "not owned"; a dropped purchase must not prove that.
+		expect(result.complete).toBe(false);
+	});
+
 	it('names the endpoint and field paths (never values) when every title is malformed', async () => {
 		getUserPlayedGames.mockReset();
 		getUserPlayedGames.mockResolvedValue({ titles: [{ titleId: 7, name: 'secret-value' }], totalItemCount: 1 });

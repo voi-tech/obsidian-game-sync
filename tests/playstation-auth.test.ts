@@ -190,6 +190,28 @@ describe('PlayStation authentication', () => {
 		await expect(auth.getConnectionStatus()).resolves.toMatchObject({ state: 'connected', connected: true, account: { accountId: 'acc-1' } });
 	});
 
+	it.each(['playstation-http-404', 'playstation-http-408', 'playstation-response-too-large'])('keeps the session on %s instead of requiring a new sign-in', async (code) => {
+		const { store, values } = secrets();
+		store.set(GAME_SYNC_SECRET_NAMES.psnRefreshToken, 'refresh-token');
+		exchangeRefreshTokenForAuthTokens.mockRejectedValueOnce(new PlayStationRequestError(code));
+		const auth = createPlayStationAuth({ secretStore: store });
+
+		await expect(auth.getAccessToken()).rejects.toBeInstanceOf(PlayStationRequestError);
+		expect(values.get(GAME_SYNC_SECRET_NAMES.psnRefreshToken)).toBe('refresh-token');
+		exchangeRefreshTokenForAuthTokens.mockRejectedValueOnce(new PlayStationRequestError(code));
+		await expect(auth.getConnectionStatus()).resolves.toMatchObject({ state: 'error', error: { code } });
+	});
+
+	it.each(['playstation-http-401', 'playstation-http-403'])('treats %s on refresh as needing a new sign-in', async (code) => {
+		const { store } = secrets();
+		store.set(GAME_SYNC_SECRET_NAMES.psnRefreshToken, 'refresh-token');
+		exchangeRefreshTokenForAuthTokens.mockRejectedValueOnce(new PlayStationRequestError(code));
+		const auth = createPlayStationAuth({ secretStore: store });
+
+		await expect(auth.getAccessToken()).rejects.toBeInstanceOf(PlayStationNeedsAuthenticationError);
+		await expect(auth.getConnectionStatus()).resolves.toMatchObject({ state: 'needs-auth' });
+	});
+
 	it('treats a rejected refresh token (HTTP 400) as needing a new sign-in', async () => {
 		const { store } = secrets();
 		store.set(GAME_SYNC_SECRET_NAMES.psnRefreshToken, 'refresh-token');

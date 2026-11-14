@@ -6,7 +6,6 @@ import { ProviderHttpError, ProviderNetworkError, ProviderRateLimitError, Provid
 import { SteamAccountInputError, SteamInvalidApiKeyError, SteamPrivateGameDetailsError, createSteamAuth } from '../providers/steam/auth';
 import type { SteamAuthOptions, SteamAuthService } from '../providers/steam/types';
 import type { HttpClient } from '../network/http';
-import { retry } from '../sync/retry';
 import { renderStatusMessage } from './status';
 
 export type SteamAuthFactory = (options: SteamAuthOptions) => SteamAuthService;
@@ -200,7 +199,7 @@ export class SteamConnectModal extends Modal {
 				account,
 				apiKeySecretName: GAME_SYNC_SECRET_NAMES.steamApiKey,
 			});
-			const connected = publicAccount(await retry(() => auth.testConnection()));
+			const connected = publicAccount(await auth.testConnection());
 			if (!this.isCurrent(version)) return;
 			if (enteredApiKey.length > 0) this.options.secretStore.set(GAME_SYNC_SECRET_NAMES.steamApiKey, enteredApiKey);
 			await this.options.onConnected(connected);

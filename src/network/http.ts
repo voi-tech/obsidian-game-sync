@@ -7,6 +7,7 @@ import {
 	ProviderRateLimitError,
 	ProviderSchemaError,
 } from './errors';
+import { describeIssues, issuePaths, withoutNulls } from './validation';
 
 export interface HttpRequest {
 	url: string;
@@ -40,11 +41,8 @@ function retryAfterMs(headers: Record<string, string>): number | undefined {
 	return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : undefined;
 }
 
+/** A fixed message: server-supplied text is never copied into errors, diagnostics or notes. */
 function responseMessage(response: HttpTransportResponse): string {
-	if (typeof response.json === 'object' && response.json !== null && 'message' in response.json) {
-		const message = response.json.message;
-		return typeof message === 'string' ? message : `Provider request failed with HTTP ${response.status}.`;
-	}
 	return `Provider request failed with HTTP ${response.status}.`;
 }
 
@@ -146,9 +144,10 @@ export function createHttpClient(transport: HttpTransport = defaultTransport, re
 					await sleep(delay);
 				}
 			}
-			const parsed = schema.safeParse(response.json);
+			// Optional fields often arrive as null; schemas describe them as absent.
+			const parsed = schema.safeParse(withoutNulls(response.json));
 			if (!parsed.success) {
-				throw new ProviderSchemaError('Provider response did not match the expected schema.', { cause: parsed.error });
+				throw new ProviderSchemaError(`Provider response did not match the expected schema${describeIssues(issuePaths(parsed.error))}.`, { cause: parsed.error });
 			}
 			return parsed.data;
 		},

@@ -7,12 +7,12 @@ import malformed from './fixtures/steam/malformed.json';
 import noAchievementSupport from './fixtures/steam/no-achievement-support.json';
 import recentPlay from './fixtures/steam/recent-play.json';
 import { normalizeSteamGames } from '../src/providers/steam/normalize';
-import { steamOwnedGamesSchema } from '../src/providers/steam/schemas';
+import { steamOwnedGameSchema } from '../src/providers/steam/schemas';
 import type { SteamAppDetails } from '../src/providers/steam/types';
 
 describe('Steam normalization', () => {
-	it('rejects malformed owned-games payloads at the schema boundary', () => {
-		expect(() => steamOwnedGamesSchema.parse(malformed)).toThrow();
+	it('rejects malformed owned-games items at the item schema boundary', () => {
+		expect(() => steamOwnedGameSchema.parse(malformed.response.games[0])).toThrow();
 	});
 
 	it('normalizes integer minutes, includes played free games, and filters only explicit non-game categories', () => {

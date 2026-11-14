@@ -23,10 +23,14 @@ export class PlayStationAuthError extends Error {
 	}
 }
 
+/**
+ * Only a rejected refresh token (HTTP 400/401/403) or an unusable token response means "sign in again".
+ * Every other transport failure (timeout, network, 404, 408, 429, 5xx, oversized response) is temporary.
+ */
 function isTransientRefreshFailure(error: unknown): boolean {
 	if (!(error instanceof PlayStationRequestError)) return false;
 	const status = /^playstation-http-(\d+)$/.exec(error.code)?.[1];
-	return status === undefined ? error.code === 'playstation-timeout' || error.code === 'playstation-network-error' : status === '429' || Number(status) >= 500;
+	return status !== '400' && status !== '401' && status !== '403';
 }
 
 interface TokenPayload {
@@ -122,7 +126,7 @@ export function createPlayStationAuth(options: PlayStationAuthOptions): PlayStat
 					if (startedAt !== generation) throw new PlayStationNeedsAuthenticationError();
 					storeTokens(tokens);
 				} catch (error) {
-					// Timeouts, network errors, 429 and 5xx are temporary: keep the saved refresh token and let the caller retry.
+					// Temporary failures keep the saved refresh token and let the caller retry.
 					if (startedAt === generation && isTransientRefreshFailure(error)) throw error;
 					if (startedAt === generation) {
 						accessToken = undefined;

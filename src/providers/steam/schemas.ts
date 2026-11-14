@@ -1,5 +1,5 @@
 // Named imports let esbuild tree-shake Zod; the `z` namespace object pulls in the whole library (about 350 KB).
-import { array, boolean, number, object, record, string, union, type infer as Infer } from 'zod';
+import { array, boolean, number, object, record, string, union, unknown, type infer as Infer } from 'zod';
 
 const optionalString = string().optional();
 
@@ -49,7 +49,8 @@ export const steamOwnedGameSchema = object({
 export const steamOwnedGamesSchema = object({
 	response: object({
 		game_count: number().int().nonnegative().optional(),
-		games: array(steamOwnedGameSchema).optional(),
+		// Items are validated one by one in the API, so one odd entry cannot discard the library.
+		games: array(unknown()).optional(),
 	}),
 });
 

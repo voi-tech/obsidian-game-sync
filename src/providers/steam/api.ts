@@ -1,6 +1,8 @@
-import { ProviderPartialError } from '../../network/errors';
+import { ProviderPartialError, ProviderSchemaError } from '../../network/errors';
+import { describeIssues, validateItems } from '../../network/validation';
 import type { HttpClient } from '../../network/http';
 import {
+	steamOwnedGameSchema,
 	steamOwnedGamesSchema,
 	steamAppDetailsSchema,
 	steamPlayerAchievementsSchema,
@@ -42,12 +44,17 @@ export function createSteamApi(options: SteamApiOptions): SteamApi {
 			return payload.response.players;
 		},
 		async getOwnedGames(steamId64: string): Promise<SteamOwnedGamesResponse> {
-			const payload = await request<{ response: SteamOwnedGamesResponse }>(options.http, 'IPlayerService/GetOwnedGames/v0001/', {
+			const payload = await request<{ response: { game_count?: number; games?: unknown[] } }>(options.http, 'IPlayerService/GetOwnedGames/v0001/', {
 				steamid: steamId64,
 				include_appinfo: '1',
 				include_played_free_games: '1',
 			}, steamOwnedGamesSchema);
-			return payload.response;
+			const { game_count: gameCount, games: rawGames } = payload.response;
+			if (rawGames === undefined) return gameCount === undefined ? {} : { game_count: gameCount };
+			const { items, paths } = validateItems(steamOwnedGameSchema, rawGames);
+			// Every entry failing means the format changed; dropped entries leave games shorter than game_count (partial library).
+			if (rawGames.length > 0 && items.length === 0) throw new ProviderSchemaError(`Steam owned games did not match the expected schema${describeIssues(paths)}.`);
+			return { ...(gameCount === undefined ? {} : { game_count: gameCount }), games: items };
 		},
 		async getPlayerAchievements(steamId64: string, appId: number): Promise<SteamPlayerStatsResponse> {
 			const payload = await request<{ playerstats: SteamPlayerStatsResponse }>(options.http, 'ISteamUserStats/GetPlayerAchievements/v0001/', {

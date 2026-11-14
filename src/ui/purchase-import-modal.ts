@@ -146,6 +146,16 @@ export class PurchaseImportModal extends Modal {
 		}
 	}
 
+	private markWritten(path: string): void {
+		this.selected.delete(path);
+		for (const row of Array.from(this.contentEl.querySelectorAll<HTMLElement>('[data-purchase-row]'))) {
+			if (row.dataset.purchaseRow !== path) continue;
+			row.classList.add('is-muted');
+			const checkbox = row.querySelector<HTMLInputElement>('input[type="checkbox"]');
+			if (checkbox !== null) { checkbox.checked = false; checkbox.disabled = true; }
+		}
+	}
+
 	private textSection(parent: HTMLElement, title: string, names: readonly string[]): void {
 		const section = parent.createEl('section', { cls: 'game-sync-preview-section' });
 		const header = section.createDiv({ cls: 'game-sync-preview-section-header' });
@@ -167,6 +177,8 @@ export class PurchaseImportModal extends Modal {
 			try {
 				await this.options.writeFrontmatter(match.path, (frontmatter) => applyPurchase(frontmatter, match, this.options.propertyMapping), match.fingerprint);
 				written += 1;
+				// A saved note leaves the selection: retrying the failed ones must not rewrite it against its old fingerprint.
+				this.markWritten(match.path);
 			} catch {
 				failed += 1;
 			}

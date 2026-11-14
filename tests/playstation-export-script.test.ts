@@ -37,6 +37,26 @@ describe('PlayStation console export script', () => {
 		vi.unstubAllGlobals();
 	});
 
+	it('leaves an unknown price empty instead of exporting 0.00, but keeps an explicit zero', async () => {
+		const page = { transactions: [{ transactionDetail: { transactionDate: '2024-06-09T10:00:00.000Z', transactionId: 'T1' }, currencyCode: 'PLN', additionalInfo: { orderItems: [
+			{ transactionType: 'PRODUCT_PURCHASE', productName: 'Unknown Price', skuId: 'A', totalPrice: null },
+			{ transactionType: 'PRODUCT_PURCHASE', productName: 'Blank Price', skuId: 'B', totalPrice: { value: '' } },
+			{ transactionType: 'PRODUCT_PURCHASE', productName: 'Free Game', skuId: 'C', totalPrice: { value: 0 } },
+		] } }], hasMore: false };
+		vi.stubGlobal('fetch', vi.fn((input: string) => Promise.resolve(new Response(input.includes('startDate=2010') ? JSON.stringify(page) : '{}'))));
+		let copied = '';
+		vi.stubGlobal('copy', (text: string) => { copied = text; });
+		vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+		const done = vm.runInThisContext(playStationExportScript('en')) as Promise<void>;
+		await window.fetch('https://web.np.playstation.com/api/transactions/v2/history?page-own-call=1&limit=20', { headers: { Authorization: 'Bearer page-token' } });
+		await done;
+
+		const prices = Object.fromEntries(parsePurchaseCsv(copied).map((row) => [row.productName, row.price]));
+		expect(prices).toEqual({ 'Unknown Price': undefined, 'Blank Price': undefined, 'Free Game': 0 });
+		vi.unstubAllGlobals();
+	});
+
 	it('does not copy an incomplete history when Sony fails part-way, and speaks the user language', async () => {
 		const pages: Array<Response> = [
 			new Response(JSON.stringify({ transactions: [{ transactionDetail: { transactionDate: '2024-06-09T10:00:00.000Z', transactionId: 'T2' }, currencyCode: 'PLN', additionalInfo: { orderItems: [{ transactionType: 'PRODUCT_PURCHASE', productName: 'Returnal', skuId: 'S', totalPrice: { value: 29900 } }] } }], hasMore: true, nextEndDate: '2024-01-01T00:00:00.000+0000' })),

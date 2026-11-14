@@ -71,7 +71,8 @@ const SCRIPT = String.raw`(async () => {
   if (!complete && transactions.length > 0) LOG(T('pageLimit'));
 
   const cell = (value) => { const text = value === undefined || value === null ? '' : String(value); return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text; };
-  const money = (minor) => { const value = Number(minor && typeof minor === 'object' ? minor.value : minor); return Number.isFinite(value) ? (value / 100).toFixed(2) : ''; };
+  // An unknown price stays empty: Number(null) and Number('') are 0 and would invent a free purchase.
+  const money = (minor) => { const raw = minor && typeof minor === 'object' ? minor.value : minor; if (raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '')) return ''; const value = Number(raw); return Number.isFinite(value) ? (value / 100).toFixed(2) : ''; };
   const lines = ['date,transaction_id,type,product_name,sku_id,price,currency'];
   for (const transaction of transactions) {
     const detail = transaction.transactionDetail || {};

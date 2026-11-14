@@ -31,7 +31,6 @@
 	},
 	"dependencies": {
 		"handlebars": "^4.7.9",
-		"psn-api": "^2.18.1",
 		"yaml": "^2.9.1",
 		"zod": "^4.6.2"
 	},

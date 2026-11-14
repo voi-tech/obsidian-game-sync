@@ -146,7 +146,7 @@ describe('Game Sync settings tab (Obsidian 1.13 declarative API)', () => {
 		expect(byName(notes.items, 'Game notes folder')).toMatchObject({ control: { type: 'folder', key: 'notesFolder' } });
 		expect(byName(notes.items, 'Template')).toMatchObject({ control: { type: 'file', key: 'templatePath' } });
 		const more = groupByHeading(items, 'More settings');
-		expect((more.items ?? []).filter(isPage).map((page) => page.name)).toEqual(['Library filters', 'Note properties', 'Game information', 'Additional data']);
+		expect((more.items ?? []).filter(isPage).map((page) => page.name)).toEqual(['Library filters', 'Note properties', 'Achievement details', 'Additional data']);
 		expect(controlKeys(more.items)).toEqual(expect.arrayContaining(['includeUnplayed', 'steamEnricherEnabled', 'property:title']));
 		// Settings with no effect on sync are not offered (they stay in the stored schema for compatibility).
 		for (const hidden of ['metadataLanguage', 'metadataPreference', 'recordHistory', 'historyPath', 'includeDemosTrials', 'includeBetasTestApps']) expect(controlKeys(more.items)).not.toContain(hidden);

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- PlayStation: a purchase entry that fails validation no longer marks its game as not owned. The purchase list then counts as incomplete and the previous ownership is kept.
+- PlayStation purchase import: a missing price in Sony's history is exported as empty instead of 0.00, so the import keeps the price already in the note. A refund of one SKU bought at two prices cancels the purchase with the refunded amount; when the amount does not decide, the refund is reported instead of cancelling the latest purchase.
+- PlayStation: only a rejected refresh token (HTTP 400, 401, 403) asks you to sign in again. Other failures (404, 408, oversized response) keep the session and report a temporary error.
+- Steam: one malformed or `null` entry in the owned-games list no longer discards the whole library; the library is reported as partial. Error messages name failing fields, never response values or server text.
+- Requests are retried in one place only. Before, connecting could send up to 9 requests on a persistent 429 instead of 3.
+- "Open games" in the sync summary opens the games base (it did nothing). Restored games leave the ignored-games list immediately. Retrying a partially failed purchase import writes only the notes that failed.
+- Settings: the "Game information" page is now "Achievement details" and describes what it contains; it never offered a language choice.
+- Removed the unused `psn-api` dependency; the notices now credit the endpoint definitions adapted from it.
+
 ## 26.11.1 (BRAT prerelease)
 
 - PlayStation: purchases reported without a concept ID now join the game that already lists their title ID. Before, one game was split into two or three entries, the played one was marked as not owned, and trophies were not attached. Trophy lists are matched with Unicode-aware titles and prefer the played entry.

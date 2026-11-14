@@ -113,4 +113,21 @@ describe('typed provider HTTP client', () => {
 		await expect(createHttpClient(limited, { sleep }).request({ url: 'https://example.test' }, responseSchema)).rejects.toMatchObject({ name: 'ProviderRateLimitError' });
 		expect(limited).toHaveBeenCalledOnce();
 	});
+
+	it('never copies server-supplied text into error messages', async () => {
+		const transport: HttpTransport = async () => ({ status: 403, headers: {}, json: { message: 'key=secret-api-key rejected' } });
+		const error = await createHttpClient(transport).request({ url: 'https://example.test' }, responseSchema).then(() => new Error('expected failure'), (caught: unknown) => caught as Error);
+
+		expect(error).toBeInstanceOf(ProviderAuthError);
+		expect(error.message).toBe('Provider request failed with HTTP 403.');
+	});
+
+	it('names failing field paths, never values, in schema errors', async () => {
+		const transport: HttpTransport = async () => ({ status: 200, headers: {}, json: { ok: 'secret-value' } });
+		const error = await createHttpClient(transport).request({ url: 'https://example.test' }, responseSchema).then(() => new Error('expected failure'), (caught: unknown) => caught as Error);
+
+		expect(error).toBeInstanceOf(ProviderSchemaError);
+		expect(error.message).toContain('at ok');
+		expect(error.message).not.toContain('secret-value');
+	});
 });

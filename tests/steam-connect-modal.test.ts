@@ -97,6 +97,14 @@ describe('SteamConnectModal', () => {
 		for (const [error, safeText] of cases) { const modal = new SteamConnectModal({} as never, { http: {} as never, secretStore: secretStore().store, createAuth: () => authThat(async () => { throw error; }), onConnected: vi.fn() }); modal.onOpen(); const values = inputs(modal); values[0].value = 'key'; values[1].value = 'profile'; connectButton(modal).click(); await vi.waitFor(() => expect(modal.contentEl.textContent?.toLowerCase()).toContain(safeText.toLowerCase()), { timeout: 5000 }); expect(modal.contentEl.textContent).not.toContain('raw'); }
 	});
 
+	it('tries the connection once, because the HTTP client already retries temporary failures', async () => {
+		const attempt = vi.fn(async (): Promise<ProviderAccount> => { throw new ProviderRateLimitError('raw', 86_400_000); });
+		const modal = new SteamConnectModal({} as never, { http: {} as never, secretStore: secretStore().store, createAuth: () => authThat(attempt), onConnected: vi.fn() });
+		modal.onOpen(); const values = inputs(modal); values[0].value = 'key'; values[1].value = 'profile'; connectButton(modal).click();
+		await vi.waitFor(() => expect(modal.contentEl.textContent).toContain('Wait a moment'));
+		expect(attempt).toHaveBeenCalledTimes(1);
+	});
+
 	it('ignores duplicate clicks during loading and late results after close', async () => {
 		let resolveConnection!: (value: ProviderAccount) => void; const onConnected = vi.fn(); const createAuth = vi.fn(() => authThat(() => new Promise((resolve) => { resolveConnection = resolve; })));
 		const modal = new SteamConnectModal({} as never, { http: {} as never, secretStore: secretStore().store, createAuth, onConnected }); modal.onOpen(); const values = inputs(modal); values[0].value = 'key'; values[1].value = 'profile'; const button = connectButton(modal); button.click(); button.click(); await Promise.resolve(); expect(createAuth).toHaveBeenCalledOnce(); expect(button.disabled).toBe(true); modal.onClose(); resolveConnection(account()); await Promise.resolve(); await Promise.resolve(); expect(onConnected).not.toHaveBeenCalled();

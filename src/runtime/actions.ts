@@ -23,9 +23,9 @@ export interface RuntimeUiPort {
 		preview: CanonicalPreviewResult,
 		onApply: (selection: CanonicalSyncSelection) => void | PromiseLike<void>,
 	) => void | PromiseLike<void>;
+	/** The UI owns "open games" (it knows the Bases file); the runtime only supplies "sync now". */
 	openSummary(
 		summary: RuntimeSummary,
-		onOpenBase: () => void | PromiseLike<void>,
 		onSyncNow: () => void | PromiseLike<void>,
 	): void | PromiseLike<void>;
 	openIgnoredGames(): void | PromiseLike<void>;
@@ -45,8 +45,6 @@ export interface GameSyncCommandActionsOptions {
 	stateStore?: StateStore;
 	runExclusive?: SyncExclusiveRunner;
 }
-
-function noop(): void {}
 
 export function createGameSyncCommandActions(options: GameSyncCommandActionsOptions): GameSyncCommandActions {
 	const runExclusive = options.runExclusive ?? createSyncConcurrencyGuard();
@@ -77,7 +75,7 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 		await options.ui.openPreview(
 			prepared,
 			(preview, selectedOperationIds) => withProgress('applying', () => runExclusive(async () => service.applySelection(preview, selectedOperationIds, { explicit: true })))
-				.then((result) => options.ui.openSummary(result, noop, () => actions.syncAll()))
+				.then((result) => options.ui.openSummary(result, () => actions.syncAll()))
 				.then(() => undefined),
 			(decision) => runExclusive(async () => { await service.applyReviewDecision?.(decision); }),
 		);
@@ -123,7 +121,7 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 			}
 			const safeOperationIds = prepared.plan.operations.filter((operation) => operation.risk === 'safe').map((operation) => operation.id);
 			const result = await withProgress('applying', () => runExclusive(() => service.applySelection(prepared, safeOperationIds, { explicit: true })));
-			await options.ui.openSummary(result, noop, () => actions.syncAll());
+			await options.ui.openSummary(result, () => actions.syncAll());
 			return;
 		}
 		await openPreview(force);
@@ -133,7 +131,7 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 		await options.ui.openPreview(
 			prepared,
 			(preview, selectedOperationIds) => withProgress('applying', () => runExclusive(async () => service.applySelection(preview, selectedOperationIds, { explicit: true })))
-				.then((result) => options.ui.openSummary(result, noop, () => actions.syncAll()))
+				.then((result) => options.ui.openSummary(result, () => actions.syncAll()))
 				.then(() => undefined),
 			(decision) => runExclusive(async () => { await service.applyReviewDecision?.(decision); }),
 		);
@@ -162,7 +160,7 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 			return buildLibrarySummary(state);
 		}));
 
-		await options.ui.openSummary(summary, noop, () => actions.syncAll());
+		await options.ui.openSummary(summary, () => actions.syncAll());
 	};
 
 	actions.syncAll = () => openSelectedPreview(false);

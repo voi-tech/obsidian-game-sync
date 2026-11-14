@@ -163,17 +163,25 @@ function chronological(left: PurchaseRow, right: PurchaseRow): number {
 }
 
 /**
- * The purchase a refund cancels: the same SKU, else the same amount and currency, else the only purchase of
- * that product. When several purchases fit equally, nothing is cancelled (undefined) instead of guessing.
+ * The purchase a refund cancels: the same SKU (narrowed by amount and currency), else the same amount and
+ * currency, else the only purchase of that product. Several identical purchases are interchangeable, so the
+ * latest one goes (a refund follows its purchase). When the fitting purchases differ, nothing is cancelled
+ * (undefined) instead of guessing.
  */
 function refundedIndex(active: readonly PurchaseRow[], refund: PurchaseRow): number | undefined {
 	const key = productKey(refund.productName);
 	const candidates = active.map((row, index) => ({ row, index })).filter(({ row }) => productKey(row.productName) === key);
 	if (candidates.length === 0) return -1;
-	const bySku = refund.skuId === undefined ? [] : candidates.filter(({ row }) => row.skuId === refund.skuId);
 	const amount = refund.price === undefined ? undefined : Math.abs(refund.price);
-	const byAmount = amount === undefined ? [] : candidates.filter(({ row }) => row.price === amount && (refund.currency === undefined || row.currency === undefined || row.currency === refund.currency));
-	for (const narrowed of [bySku, byAmount]) if (narrowed.length > 0) return narrowed.at(-1)!.index;
+	const sameAmount = (list: typeof candidates) => amount === undefined ? [] : list.filter(({ row }) => row.price === amount && (refund.currency === undefined || row.currency === undefined || row.currency === refund.currency));
+	const latestIfIdentical = (list: typeof candidates): number | undefined => new Set(list.map(({ row }) => `${row.skuId ?? ''}|${row.price ?? ''}|${row.currency ?? ''}`)).size === 1 ? list.at(-1)!.index : undefined;
+	const bySku = refund.skuId === undefined ? [] : candidates.filter(({ row }) => row.skuId === refund.skuId);
+	if (bySku.length > 0) {
+		const narrowed = sameAmount(bySku);
+		return latestIfIdentical(narrowed.length > 0 ? narrowed : bySku);
+	}
+	const byAmount = sameAmount(candidates);
+	if (byAmount.length > 0) return latestIfIdentical(byAmount);
 	return candidates.length === 1 ? candidates[0].index : undefined;
 }
 

@@ -19,10 +19,10 @@ import { GameSyncRuntimeComposition } from './runtime/composition';
 import { registerGameSyncCommands, type CommandErrorHandler, type CommandRegistrar, type GameSyncCommandActions } from './runtime/commands';
 import { GAME_SYNC_RUNTIME_REGISTRY } from './runtime/registry';
 import { createStateStore, type StateStore } from './state/store';
+import type { GameSyncData } from './state/schema';
 import { BackgroundSyncScheduler } from './sync/scheduler';
 import { removeNoteLinks, renameNoteLinks } from './state/note-links';
 import { createSyncConcurrencyGuard } from './sync/concurrency';
-import { retry } from './sync/retry';
 import type { ProviderStatusSummary, SyncService } from './sync/service';
 import type { CanonicalSyncSelection } from './sync/canonical-planner';
 import { PlayStationConnectModal } from './ui/playstation-connect-modal';
@@ -241,7 +241,8 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 				: secretStore.get(GAME_SYNC_SECRET_NAMES.psnRefreshToken) !== null;
 			if (adapter !== undefined && hasCredentials) {
 				try {
-					const account = await retry(() => adapter.testConnection());
+					// The HTTP client already retries temporary failures; a second retry layer multiplied requests.
+					const account = await adapter.testConnection();
 					await saveConnectedAccount(account, onConnected);
 					new Notice(t('connect.common.reconnected', { provider: t(`sync.providers.${provider}`) }));
 					return;
@@ -340,11 +341,12 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 				onApply: (selection: CanonicalSyncSelection) => Promise.resolve(onApply(selection)).then(() => undefined),
 			}).open();
 		},
-		openSummary: (summary, onOpenBase, onSyncNow) => {
+		openSummary: (summary, onSyncNow) => {
 			if ('plan' in summary) {
+				const onOpenGames = (): Promise<void> => openGamesBase();
 				void stateStore.load()
-					.then((state) => new SummaryModal(host.app, { result: summary, notesFolder: state.settings.notesFolder, onOpenGames: () => Promise.resolve(onOpenBase()).then(() => undefined) }).open())
-					.catch(() => new SummaryModal(host.app, { result: summary, onOpenGames: () => Promise.resolve(onOpenBase()).then(() => undefined) }).open());
+					.then((state) => new SummaryModal(host.app, { result: summary, notesFolder: state.settings.notesFolder, onOpenGames }).open())
+					.catch(() => new SummaryModal(host.app, { result: summary, onOpenGames }).open());
 			}
 			else new LibrarySummaryModal(host.app, {
 				summary,
@@ -353,8 +355,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 			}).open();
 		},
 		openIgnoredGames: async () => {
-			const state = await stateStore.load();
-			const entries = [
+			const ignoredEntries = (state: GameSyncData) => [
 				...state.ignoredCanonicalIds.map((id) => ({ kind: 'canonical' as const, id, label: id })),
 				...state.ignoredProviderRefs.flatMap((id) => {
 					const separator = id.indexOf(':');
@@ -366,7 +367,9 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 			];
 			new IgnoredGamesModal(host.app, {
 				adapter: {
-					entries,
+					entries: ignoredEntries(await stateStore.load()),
+					// Re-read after a restore, so restored games leave the list.
+					list: async () => ignoredEntries(await stateStore.load()),
 					restore: async (ids) => {
 						const next = await stateStore.load();
 						next.ignoredCanonicalIds = next.ignoredCanonicalIds.filter((id) => !ids.includes(id));
@@ -443,7 +446,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 							if (state.settings.firstSyncCompleted !== true) return;
 							state.settings.setupCompleted = true;
 							await stateStore.save(state);
-							await ui.openSummary(result, () => undefined, () => actions.syncAll());
+							await ui.openSummary(result, () => actions.syncAll());
 						},
 						async () => undefined,
 					);

@@ -92,6 +92,14 @@ describe('PlayStation purchase import', () => {
 
 		const ambiguous = parsePurchaseCsv('date,transaction_id,type,product_name,price,currency\n2024-01-01T10:00:00.000Z,T1,PRODUCT_PURCHASE,Game,99.00,PLN\n2024-02-01T10:00:00.000Z,T2,PRODUCT_PURCHASE,Game,199.00,PLN\n2024-03-01T10:00:00.000Z,T3,REFUND_PAYMENT_CHARGE,Game,,PLN\n');
 		expect(effectivePurchases(ambiguous)).toMatchObject({ refunded: 0, unresolvedRefunds: ['Game'] });
+
+		// Same SKU bought for two prices: the refund amount decides, not the purchase order.
+		const sameSkuTwoPrices = parsePurchaseCsv('date,transaction_id,type,product_name,sku_id,price,currency\n2024-01-01T10:00:00.000Z,T1,PRODUCT_PURCHASE,Game,S,10.00,PLN\n2024-02-01T10:00:00.000Z,T2,PRODUCT_PURCHASE,Game,S,20.00,PLN\n2024-03-01T10:00:00.000Z,T3,REFUND_PAYMENT_CHARGE,Game,S,-10.00,PLN\n');
+		expect(effectivePurchases(sameSkuTwoPrices).purchases.map((row) => row.price)).toEqual([20]);
+
+		// Same SKU, different prices and no refund amount: report it instead of guessing.
+		const sameSkuNoAmount = parsePurchaseCsv('date,transaction_id,type,product_name,sku_id,price,currency\n2024-01-01T10:00:00.000Z,T1,PRODUCT_PURCHASE,Game,S,10.00,PLN\n2024-02-01T10:00:00.000Z,T2,PRODUCT_PURCHASE,Game,S,20.00,PLN\n2024-03-01T10:00:00.000Z,T3,REFUND_PAYMENT_CHARGE,Game,S,,PLN\n');
+		expect(effectivePurchases(sameSkuNoAmount)).toMatchObject({ refunded: 0, unresolvedRefunds: ['Game'] });
 	});
 
 	it('keeps an existing price and currency when the export has none, and carries the preview fingerprint', () => {

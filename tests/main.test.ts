@@ -11,6 +11,7 @@ const mainTestMocks = vi.hoisted(() => ({
 	setupOptions: undefined as { openConnection: (provider: 'steam' | 'playstation') => void; prepareAll?: () => Promise<unknown>; onPreparedSync?: (prepared: unknown) => Promise<void> } | undefined,
 	previewOptions: undefined as { onApply: (prepared: unknown, selectedOperationIds: readonly string[]) => Promise<void> } | undefined,
 	summaryModal: vi.fn(),
+	ignoredGamesModal: vi.fn(),
 }));
 
 vi.mock('../src/providers/steam/adapter', () => ({ createSteamAdapter: mainTestMocks.steamAdapterFactory }));
@@ -36,6 +37,12 @@ vi.mock('../src/ui/setup/setup-modal', () => ({
 vi.mock('../src/ui/preview-modal', () => ({
 	PreviewModal: class {
 		constructor(_app: unknown, options: { onApply: (prepared: unknown, selectedOperationIds: readonly string[]) => Promise<void> }) { mainTestMocks.previewOptions = options; }
+		open(): void {}
+	},
+}));
+vi.mock('../src/ui/ignored-games-modal', () => ({
+	IgnoredGamesModal: class {
+		constructor(_app: unknown, options: unknown) { mainTestMocks.ignoredGamesModal(options); }
 		open(): void {}
 	},
 }));
@@ -107,7 +114,7 @@ function createHost(rawState: unknown, secrets: Record<string, string> = {}) {
 		} as unknown as import('obsidian').App,
 		plugin: { registerEvent } as unknown as import('obsidian').Plugin,
 		loadData: vi.fn(async () => rawState),
-		saveData: vi.fn(async () => undefined),
+		saveData: vi.fn(async (_value?: unknown) => undefined),
 		addCommand: (command: { id: string; name: string; callback: () => void }) => { commands.push(command); },
 		addSettingTab: (settingTab: unknown) => { settingTabs.push(settingTab); },
 		registerInterval: (timerId: number) => {
@@ -220,7 +227,7 @@ describe('main runtime integration', () => {
 		expect(notices.join('\n')).not.toContain('raw credential failure');
 	});
 
-	it('retries a transient network failure during one-click reconnect', async () => {
+	it('does not add a second retry layer on top of the HTTP client during one-click reconnect', async () => {
 		const account = { provider: 'steam' as const, displayName: 'Stored Steam', accountId: '76561198000000001' };
 		let attempts = 0;
 		const steamAdapter = {
@@ -242,8 +249,9 @@ describe('main runtime integration', () => {
 		fixture.commands.find((command) => command.id === 'run-setup-wizard')?.callback();
 		mainTestMocks.setupOptions?.openConnection('steam');
 
-		await vi.waitFor(() => expect(steamAdapter.testConnection).toHaveBeenCalledTimes(2));
-		expect(mainTestMocks.steamModal).not.toHaveBeenCalled();
+		// The adapter's HTTP client has already retried; a failure here falls through to the repair modal.
+		await vi.waitFor(() => expect(mainTestMocks.steamModal).toHaveBeenCalled());
+		expect(steamAdapter.testConnection).toHaveBeenCalledTimes(1);
 	});
 
 	it.each([
@@ -304,6 +312,46 @@ describe('main runtime integration', () => {
 
 		const savedStates = fixture.host.saveData.mock.calls as unknown as Array<[unknown]>;
 		expect(savedStates.every(([saved]) => (saved as { settings?: { setupCompleted?: boolean } } | undefined)?.settings?.setupCompleted !== true)).toBe(true);
+		runtime.stop();
+	});
+
+	it('opens the games base from the sync summary instead of ignoring the button', async () => {
+		const account = { provider: 'steam' as const, displayName: 'Stored Steam', accountId: '76561198000000001' };
+		mainTestMocks.steamAdapterFactory.mockReturnValue({
+			id: 'steam',
+			testConnection: vi.fn(async () => account),
+			getConnectionStatus: vi.fn(async () => ({ provider: 'steam', state: 'connected', connected: true, account })),
+			fetchLibrary: vi.fn(async () => ({ provider: 'steam', status: 'success', fetchedAt: '2026-01-01T00:00:00.000Z', games: [], account })),
+			disconnect: vi.fn(),
+		});
+		mainTestMocks.playStationAdapterFactory.mockReturnValue({ id: 'playstation', getConnectionStatus: vi.fn(async () => ({ provider: 'playstation', state: 'disconnected', connected: false })), fetchLibrary: vi.fn(), disconnect: vi.fn() });
+		const fixture = createHost({ settings: { steamAccountId: account.accountId, setupCompleted: true, firstSyncCompleted: true } }, { 'game-sync-steam-api-key': 'stored-api-key' });
+		const openLinkText = vi.fn();
+		Object.assign(fixture.host.app.vault, { create: vi.fn(async () => undefined), adapter: { exists: vi.fn(async () => false) } });
+		Object.assign(fixture.host.app.workspace, { openLinkText });
+		const runtime = createGameSyncRuntime(fixture.host, { timer: { setInterval: vi.fn(), clearInterval: vi.fn() }, isMobile: () => false });
+		await runtime.ready;
+		fixture.commands.find((command) => command.id === 'sync-all')?.callback();
+		await vi.waitFor(() => expect(mainTestMocks.summaryModal).toHaveBeenCalled());
+		const options = mainTestMocks.summaryModal.mock.calls[0][0] as { onOpenGames?: () => Promise<void> };
+		await options.onOpenGames?.();
+		expect(openLinkText).toHaveBeenCalledWith('Games.base', '', false);
+		runtime.stop();
+	});
+
+	it('removes restored games from the ignored-games list', async () => {
+		let saved: unknown = { ignoredCanonicalIds: ['game-sync:a', 'game-sync:b'] };
+		const fixture = createHost(saved);
+		fixture.host.loadData.mockImplementation(async () => saved);
+		fixture.host.saveData.mockImplementation(async (value?: unknown) => { saved = value; return undefined; });
+		const runtime = createGameSyncRuntime(fixture.host, { timer: { setInterval: vi.fn(), clearInterval: vi.fn() }, isMobile: () => false });
+		await runtime.ready;
+		fixture.commands.find((command) => command.id === 'manage-ignored-games')?.callback();
+		await vi.waitFor(() => expect(mainTestMocks.ignoredGamesModal).toHaveBeenCalled());
+		const { adapter } = mainTestMocks.ignoredGamesModal.mock.calls[0][0] as { adapter: { restore(ids: string[]): Promise<void>; list?: () => Promise<Array<{ id: string }>> } };
+
+		await adapter.restore(['game-sync:a']);
+		expect((await adapter.list?.())?.map((entry) => entry.id)).toEqual(['game-sync:b']);
 		runtime.stop();
 	});
 });

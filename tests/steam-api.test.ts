@@ -16,6 +16,27 @@ describe('Steam Web API boundary', () => {
 		expect(requestedUrl).toContain('include_played_free_games=1');
 	});
 
+	it('keeps the library when one owned game is malformed, and reports it as shorter than game_count', async () => {
+		const transport: HttpTransport = async () => ({ status: 200, headers: {}, json: { response: { game_count: 3, games: [
+			{ appid: 10, name: 'Game', playtime_forever: 12, rtime_last_played: null },
+			{ appid: 20, name: null },
+			{ appid: 'broken' },
+		] } } });
+		const result = await createSteamApi({ http: createHttpClient(transport), apiKey: 'steam-test-key' }).getOwnedGames('76561198000000001');
+
+		// null means "absent", so appid 20 survives; the broken entry is dropped and the library counts as incomplete.
+		expect(result.games?.map((game) => game.appid)).toEqual([10, 20]);
+		expect(result.game_count).toBe(3);
+	});
+
+	it('fails with field paths, never values, when every owned game is malformed', async () => {
+		const transport: HttpTransport = async () => ({ status: 200, headers: {}, json: { response: { game_count: 1, games: [{ appid: 'secret-value' }] } } });
+		const error = await createSteamApi({ http: createHttpClient(transport), apiKey: 'steam-test-key' }).getOwnedGames('76561198000000001').then(() => new Error('expected failure'), (caught: unknown) => caught as Error);
+
+		expect(error.message).toContain('appid');
+		expect(error.message).not.toContain('secret-value');
+	});
+
 	it('requests official Store app details through the shared HTTP boundary', async () => {
 		let requestedUrl = '';
 		const transport: HttpTransport = async (request) => {
