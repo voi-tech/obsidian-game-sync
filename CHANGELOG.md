@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 26.11.2 (BRAT prerelease)
 
+- No more duplicate beside a hand-written note without a year: in the GameTrack import, `Games/Returnal.md` is offered for review as a likely match instead of getting `Returnal (2021).md` next to it. Whole-title match in the games folder only (no prefix match, so sequels do not match); a different year in the filename or `released` rules it out. Never merged automatically.
+- All stable IDs of a game are checked together (game-sync-id, IGDB, GameTrack, Steam/PlayStation IDs, saved mappings and note links). When they point to different notes, or to a note of another game, the game goes to review instead of updating the first note found. "Merge" in the review keeps the other candidates separate, so the same question does not return.
+- ID properties are read regardless of case (`GAME-SYNC-ID`), as Obsidian does, so a note carrying another game's ID no longer passes the conflict check.
+- GameTrack import finds the note a game was written to before and remembers it after writing, so its notes are recognised with ID properties turned off, as in Steam and PlayStation sync.
 - PlayStation: a purchase entry that fails validation no longer marks its game as not owned. The purchase list then counts as incomplete and the previous ownership is kept.
 - PlayStation purchase import: a missing price in Sony's history is exported as empty instead of 0.00, so the import keeps the price already in the note. A refund of one SKU bought at two prices cancels the purchase with the refunded amount; when the amount does not decide, the refund is reported instead of cancelling the latest purchase.
 - PlayStation: only a rejected refresh token (HTTP 400, 401, 403) asks you to sign in again. Other failures (404, 408, oversized response) keep the session and report a temporary error.
@@ -13,6 +17,7 @@
 - GameTrack sync honours the ignored-games list and the library filters (unplayed, no longer owned), like Steam and PlayStation sync. Filters only decide about new notes.
 - One note that cannot be written safely (edited after the preview, unsupported YAML) is skipped and reported; the other notes in the batch are written. Before, it stopped the whole batch.
 - Settings, account changes, restored games and note links are saved one change at a time on fresh state, so two changes made at once no longer overwrite each other.
+- Verified with 704 automated tests and a read-only matching simulation against a real vault (1706 notes, 91 PlayStation games: no new duplicates, no false review items). Not yet verified in Obsidian with real accounts or a real GameTrack ZIP import.
 
 ## 26.11.1 (BRAT prerelease)
 
