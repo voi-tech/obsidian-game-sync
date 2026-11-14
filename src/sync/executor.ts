@@ -93,16 +93,14 @@ export class SyncExecutor {
 		const selectedOperations = plan.operations.filter((operation) => selected.has(operation.id));
 		const revisionStale = currentRevision !== plan.planRevision;
 		if (revisionStale) throw new VaultConflictError('Sync plan is stale; prepare a new plan.');
-		const staleForNewNoteWork = selectedOperations.some((operation) => {
+		// A note edited after the preview skips only its own operation (it stays pending); the other notes are written.
+		const staleOperationIds = new Set(selectedOperations.filter((operation) => {
 			const progress = this.progress.get(operation.id);
 			const noteApplied = progress?.noteApplied === true;
 			const pathMismatch = fingerprints !== undefined && operation.path !== undefined && (fingerprints[operation.path] ?? null) !== operation.expectedNoteFingerprint;
 			const postWriteMismatch = fingerprints !== undefined && noteApplied && progress?.noteFingerprintAfter !== undefined && operation.path !== undefined && (fingerprints[operation.path] ?? null) !== progress.noteFingerprintAfter;
 			return postWriteMismatch || (!noteApplied && pathMismatch);
-		});
-		if (staleForNewNoteWork) {
-			throw new VaultConflictError('Sync plan is stale; prepare a new plan.');
-		}
+		}).map((operation) => operation.id));
 		const appliedOperationIds: string[] = [];
 		const failedOperationIds: string[] = [];
 		const pendingOperationIds: string[] = [];
@@ -116,7 +114,7 @@ export class SyncExecutor {
 				continue;
 			}
 			const game = operationGame(this.options.games, operation.canonicalGameId);
-			if (game === undefined) {
+			if (game === undefined || staleOperationIds.has(operation.id)) {
 				pendingOperationIds.push(operation.id);
 				failedOperationIds.push(operation.id);
 				continue;

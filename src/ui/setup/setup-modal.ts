@@ -5,7 +5,7 @@ import type { GameSyncSettings } from '../../model/settings';
 import { mergeStateChanges } from '../../state/merge';
 import { migrateState } from '../../state/migrations';
 import type { GameSyncData } from '../../state/schema';
-import type { StateStore } from '../../state/store';
+import { replaceState, type StateChange, type StateStore } from '../../state/store';
 import type { PreparedSync } from '../../sync/service';
 import type { ProviderConnectionStatus } from '../../providers/provider';
 import { renderConnectionStatus } from '../status';
@@ -17,6 +17,8 @@ import { attachVaultPathSuggestions } from '../settings/vault-path-suggestions';
 export interface SetupModalOptions {
 	stateStore: StateStore;
 	save: (state: GameSyncData) => Promise<void>;
+	/** Atomic load-change-save of the store; when present, the merge runs on the state current at save time. */
+	update?: (change: StateChange) => Promise<void>;
 	openConnection: (provider: GameProvider, onConnected?: () => void) => void | Promise<void>;
 	disconnect?: (provider: GameProvider) => void | Promise<void>;
 	confirm?: (message: string) => boolean | Promise<boolean>;
@@ -104,6 +106,17 @@ export class SetupModal extends Modal {
 	 * connecting an account (or anything else) can save newer values in the meantime.
 	 */
 	private async persist(next: GameSyncData): Promise<void> {
+		if (this.options.update !== undefined) {
+			const baseline = this.baseline;
+			let merged = next;
+			await this.options.update((current) => {
+				merged = baseline === undefined ? next : migrateState(mergeStateChanges(baseline, next, migrateState(current)));
+				replaceState(current, structuredClone(merged));
+			});
+			this.state = merged;
+			this.baseline = structuredClone(merged);
+			return;
+		}
 		let current: GameSyncData;
 		try { current = migrateState(await this.options.stateStore.load()); }
 		catch { current = this.baseline ?? next; }

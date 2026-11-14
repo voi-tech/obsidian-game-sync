@@ -13,6 +13,8 @@ import { templateKeyPage } from './template-key-catalog';
 export interface GameSyncSettingsHost {
 	readSettings: () => GameSyncSettings | Promise<GameSyncSettings>;
 	writeSettings: (settings: GameSyncSettings) => void | Promise<void>;
+	/** Applies one change to the settings stored at save time; preferred over read + writeSettings when present. */
+	updateSettings?: (change: (settings: GameSyncSettings) => void) => Promise<void>;
 	readPropertyMapping: () => PropertyMapping | undefined | Promise<PropertyMapping | undefined>;
 	writePropertyMapping: (mapping: PropertyMapping) => void | Promise<void>;
 	getConnectionStatus: (provider: GameProvider) => ProviderConnectionStatus | Promise<ProviderConnectionStatus>;
@@ -153,6 +155,11 @@ export class GameSyncSettingsTab extends PluginSettingTab {
 	private updateSettings(change: (settings: GameSyncSettings) => void): Promise<void> {
 		this.settingsSave = this.settingsSave.then(async () => {
 			try {
+				if (this.host.updateSettings !== undefined) {
+					await this.host.updateSettings(change);
+					this.settings = settingCopy(await this.host.readSettings());
+					return;
+				}
 				const next = settingCopy(await this.host.readSettings());
 				change(next);
 				await this.host.writeSettings(next);

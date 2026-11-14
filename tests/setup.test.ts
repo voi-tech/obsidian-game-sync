@@ -123,6 +123,26 @@ describe('Quick Setup', () => {
 		await vi.waitFor(() => expect(fixture.modal.contentEl.textContent).toContain('✓ Connected as voitech'));
 	});
 
+	it('merges its changes into the state current at save time, so a concurrent change is kept', async () => {
+		let stored = migrateState(undefined);
+		const update = vi.fn(async (change: (state: GameSyncData) => unknown) => {
+			// Something else (a sync) saved a note link after the modal loaded its copy.
+			stored = migrateState({ ...stored, noteLinks: [{ canonicalId: 'game-sync:a', path: 'Games/A.md' }] });
+			const current = structuredClone(stored);
+			await change(current);
+			stored = current;
+		});
+		const fixture = setupFixture({ update }); await openAndWait(fixture.modal);
+		const input = fixture.modal.contentEl.querySelector<HTMLInputElement>('[data-settings-field="notesFolder"]')!;
+		input.value = 'My Games'; input.dispatchEvent(new Event('change'));
+		fixture.modal.contentEl.querySelector<HTMLButtonElement>('[data-quick-setup-preview]')!.click();
+		await vi.waitFor(() => expect(update).toHaveBeenCalled());
+
+		expect(stored.settings.notesFolder).toBe('My Games');
+		expect(stored.noteLinks).toEqual([{ canonicalId: 'game-sync:a', path: 'Games/A.md' }]);
+		expect(fixture.options.save).not.toHaveBeenCalled();
+	});
+
 	it('uses a native folder setting with a useful placeholder', async () => {
 		const fixture = setupFixture(); await openAndWait(fixture.modal);
 		const input = fixture.modal.contentEl.querySelector<HTMLInputElement>('[data-settings-field="notesFolder"]')!;

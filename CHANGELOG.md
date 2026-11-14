@@ -10,6 +10,9 @@
 - "Open games" in the sync summary opens the games base (it did nothing). Restored games leave the ignored-games list immediately. Retrying a partially failed purchase import writes only the notes that failed.
 - Settings: the "Game information" page is now "Achievement details" and describes what it contains; it never offered a language choice.
 - Removed the unused `psn-api` dependency; the notices now credit the endpoint definitions adapted from it.
+- GameTrack sync honours the ignored-games list and the library filters (unplayed, no longer owned), like Steam and PlayStation sync. Filters only decide about new notes.
+- One note that cannot be written safely (edited after the preview, unsupported YAML) is skipped and reported; the other notes in the batch are written. Before, it stopped the whole batch.
+- Settings, account changes, restored games and note links are saved one change at a time on fresh state, so two changes made at once no longer overwrite each other.
 
 ## 26.11.1 (BRAT prerelease)
 

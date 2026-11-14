@@ -153,6 +153,21 @@ describe('Game Sync settings tab (Obsidian 1.13 declarative API)', () => {
 		expect(controlKeys(groupByHeading(items, 'Accounts').items)).toEqual([]);
 	});
 
+	it('applies a change atomically on the stored settings when the host supports it', async () => {
+		const host = makeHost();
+		const updateSettings = vi.fn(async (change: (settings: typeof host.current) => void) => {
+			// An account was connected after the tab read its copy.
+			host.current.steamAccountId = '76561198000000001';
+			change(host.current);
+		});
+		const { tab } = await loadedTab({ ...host, updateSettings });
+		await tab.setControlValue('includeFreeToPlay', false);
+
+		expect(updateSettings).toHaveBeenCalledOnce();
+		expect(host.writeSettings).not.toHaveBeenCalled();
+		expect(host.current).toMatchObject({ includeFreeToPlay: false, steamAccountId: '76561198000000001' });
+	});
+
 	it('persists a change on top of freshly read settings so external changes are kept', async () => {
 		const { tab, host } = await loadedTab();
 		host.current.enabledProviders.playstation = true;

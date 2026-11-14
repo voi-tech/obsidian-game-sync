@@ -1,7 +1,8 @@
 import type { GameProvider } from '../model/provider';
 import type { GameSyncSettings } from '../model/settings';
 import type { GameProviderAdapter } from '../providers/provider';
-import type { StateStore } from '../state/store';
+import { updateState, type StateStore } from '../state/store';
+import { ignoredProviderRefsFor } from '../sync/library-filter';
 import type { DisposableCache } from '../sync/cache';
 import { SyncService, type SyncServiceOptions } from '../sync/service';
 import { SyncPlanner } from '../sync/planner';
@@ -103,7 +104,7 @@ export class GameSyncRuntimeComposition {
 		const propertyMapping = canonicalMappingFromLegacy(state.propertyMapping);
 		const sourceKey = this.canonicalApprovalKey(state.settings);
 		const enrichers = this.options.createEnrichers?.(state.settings) ?? [];
-		const revisionFor = async (current: typeof state): Promise<string> => JSON.stringify({ settings: current.settings, mapping: current.propertyMapping, template: await this.readTemplate(current.settings.templatePath) });
+		const revisionFor = async (current: typeof state): Promise<string> => JSON.stringify({ settings: current.settings, mapping: current.propertyMapping, ignored: [current.ignoredCanonicalIds, ignoredProviderRefsFor(current)], template: await this.readTemplate(current.settings.templatePath) });
 		const configurationRevision = await revisionFor(state);
 		return new CanonicalSyncService({
 			configurationRevision,
@@ -121,18 +122,19 @@ export class GameSyncRuntimeComposition {
 				propertyMapping,
 				templatePath: state.settings.templatePath,
 				revealHidden: state.settings.revealHiddenAchievements,
+				ignoredCanonicalIds: state.ignoredCanonicalIds,
+				ignoredProviderRefs: ignoredProviderRefsFor(state),
+				libraryFilters: state.settings,
 			},
 			writer: new CanonicalVaultWriter(this.options.gateway, { propertyMapping }),
 			noteLinks: {
 				load: async () => (await this.options.stateStore.load()).noteLinks,
 				// Apply runs inside the sync lock (manual and scheduled), so a fresh load-change-save is not racing
 				// another sync; the rename/delete handlers take the same lock.
-				record: async (links) => {
-					const current = await this.options.stateStore.load();
-					if (this.options.isActive?.() === false) return;
+				record: (links) => updateState(this.options.stateStore, (current) => {
+					if (this.options.isActive?.() === false) return false;
 					for (const link of links) linkNote(current, link.canonicalId, link.path);
-					await this.options.stateStore.save(current);
-				},
+				}),
 			},
 		});
 	}

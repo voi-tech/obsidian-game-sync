@@ -165,14 +165,14 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 	const setupCanonicalServices = new WeakMap<import('./sync/canonical-service').CanonicalPreviewResult, import('./sync/canonical-service').CanonicalSyncService>();
 
 	const saveConnectedAccount = async (account: ProviderAccount, onConnected?: () => void): Promise<void> => {
-		const state = await stateStore.load();
-		if (account.provider === 'steam') {
-			state.settings.steamAccountId = account.accountId;
-			state.settings.enabledProviders.steam = true;
-		} else {
-			state.settings.enabledProviders.playstation = true;
-		}
-		await stateStore.save(state);
+		await stateStore.update((state) => {
+			if (account.provider === 'steam') {
+				state.settings.steamAccountId = account.accountId;
+				state.settings.enabledProviders.steam = true;
+			} else {
+				state.settings.enabledProviders.playstation = true;
+			}
+		});
 		onConnected?.();
 	};
 
@@ -255,13 +255,13 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 	};
 
 	const disconnectProvider = async (provider: GameProvider): Promise<void> => {
-		const state = await stateStore.load();
-		const adapter = createAdapters(http, secretStore, state.settings).find((candidate) => candidate.id === provider);
+		const adapter = createAdapters(http, secretStore, (await stateStore.load()).settings).find((candidate) => candidate.id === provider);
 		if (adapter === undefined) throw new Error('Provider adapter is unavailable.');
 		await adapter.disconnect();
-		state.settings.enabledProviders[provider] = false;
-		if (provider === 'steam') state.settings.steamAccountId = undefined;
-		await stateStore.save(state);
+		await stateStore.update((state) => {
+			state.settings.enabledProviders[provider] = false;
+			if (provider === 'steam') state.settings.steamAccountId = undefined;
+		});
 	};
 	const confirm = (message: string): boolean => {
 		const browserConfirm = window['confirm'].bind(window);
@@ -300,16 +300,16 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 	const settingsHost = {
 		readSettings: async () => (await stateStore.load()).settings,
 		writeSettings: async (settings: GameSyncSettings) => {
-			const state = await stateStore.load();
-			state.settings = { ...settings, enabledProviders: { ...settings.enabledProviders } };
-			await stateStore.save(state);
+			await stateStore.update((state) => { state.settings = { ...settings, enabledProviders: { ...settings.enabledProviders } }; });
+			await schedulerRef?.refresh();
+		},
+		updateSettings: async (change: (settings: GameSyncSettings) => void) => {
+			await stateStore.update((state) => { change(state.settings); });
 			await schedulerRef?.refresh();
 		},
 		readPropertyMapping: async () => (await stateStore.load()).propertyMapping,
 		writePropertyMapping: async (propertyMapping: import('./model/property-mapping').PropertyMapping) => {
-			const state = await stateStore.load();
-			state.propertyMapping = { ...propertyMapping };
-			await stateStore.save(state);
+			await stateStore.update((state) => { state.propertyMapping = { ...propertyMapping }; });
 		},
 		getConnectionStatus,
 		connect: openConnection,
@@ -370,12 +370,10 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 					entries: ignoredEntries(await stateStore.load()),
 					// Re-read after a restore, so restored games leave the list.
 					list: async () => ignoredEntries(await stateStore.load()),
-					restore: async (ids) => {
-						const next = await stateStore.load();
+					restore: (ids) => stateStore.update((next) => {
 						next.ignoredCanonicalIds = next.ignoredCanonicalIds.filter((id) => !ids.includes(id));
 						next.ignoredProviderRefs = next.ignoredProviderRefs.filter((id) => !ids.includes(id));
-						await stateStore.save(next);
-					},
+					}),
 				},
 			}).open();
 		},
@@ -383,6 +381,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 			new SetupModal(host.app, {
 				stateStore,
 				save: (state) => stateStore.save(state),
+				update: (change) => stateStore.update(change),
 				openConnection,
 				disconnect: disconnectProvider,
 				confirm,
@@ -415,11 +414,11 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 						// Same lock as every other sync: apply writes notes and records note links in the state.
 						await syncLock(async () => {
 							await service.applyPreview(preview, selection);
-							const importedState = await stateStore.load();
-							importedState.settings.gametrackLastImportedAt = new Date().toISOString();
 							await composition.approveCanonicalBackgroundSync();
-							importedState.settings.setupCompleted = true;
-							await stateStore.save(importedState);
+							await stateStore.update((importedState) => {
+								importedState.settings.gametrackLastImportedAt = new Date().toISOString();
+								importedState.settings.setupCompleted = true;
+							});
 						});
 					});
 				},
@@ -430,13 +429,11 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 						if (service === undefined) throw new Error('Selected library provider is unavailable.');
 						await syncLock(async () => {
 							await service.applyPreview(preview, selection);
-							const importedState = await stateStore.load();
-							if (importedState.settings.libraryProvider === 'gametrack') {
-								importedState.settings.gametrackLastImportedAt = new Date().toISOString();
-								await composition.approveCanonicalBackgroundSync();
-							}
-							importedState.settings.setupCompleted = true;
-							await stateStore.save(importedState);
+							if ((await stateStore.load()).settings.libraryProvider === 'gametrack') await composition.approveCanonicalBackgroundSync();
+							await stateStore.update((importedState) => {
+								if (importedState.settings.libraryProvider === 'gametrack') importedState.settings.gametrackLastImportedAt = new Date().toISOString();
+								importedState.settings.setupCompleted = true;
+							});
 						});
 					});
 				},
@@ -449,11 +446,13 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 							// The summary opens outside the lock: its "sync again" button takes the lock itself.
 							const result = await syncLock(async () => {
 								const applied = await service.applySelection(preview, selectedOperationIds, { explicit: true });
-								const state = await stateStore.load();
-								if (state.settings.firstSyncCompleted !== true) return undefined;
-								state.settings.setupCompleted = true;
-								await stateStore.save(state);
-								return applied;
+								let firstSyncCompleted = false;
+								await stateStore.update((state) => {
+									firstSyncCompleted = state.settings.firstSyncCompleted === true;
+									if (!firstSyncCompleted) return false;
+									state.settings.setupCompleted = true;
+								});
+								return firstSyncCompleted ? applied : undefined;
 							});
 							if (result === undefined) return;
 							await ui.openSummary(result, () => actions.syncAll());
@@ -537,10 +536,7 @@ export function createGameSyncRuntime(host: GameSyncRuntimeHost, options: GameSy
 	const ready = scheduler.start();
 	// Notes linked by path (ID properties turned off) must stay linked when the user renames or moves them.
 	const updateNoteLinks = (change: (state: Awaited<ReturnType<typeof stateStore.load>>) => boolean): void => {
-		void syncLock(async () => {
-			const state = await stateStore.load();
-			if (change(state)) await stateStore.save(state);
-		}).catch((error: unknown) => { console.warn('Game Sync: could not update the note links.', error); });
+		void syncLock(() => stateStore.update(change)).catch((error: unknown) => { console.warn('Game Sync: could not update the note links.', error); });
 	};
 	host.plugin?.registerEvent(host.app.vault.on('rename', (file, oldPath) => { updateNoteLinks((state) => renameNoteLinks(state, oldPath, file.path)); }));
 	host.plugin?.registerEvent(host.app.vault.on('delete', (file) => { updateNoteLinks((state) => removeNoteLinks(state, file.path)); }));

@@ -3,7 +3,7 @@ import { t, type TranslationKey } from '../i18n';
 import type { NormalizedGame, NormalizedProviderGame } from '../model/game';
 import type { GameSyncData, LastSuccessfulProviderState, NoteLink, OperationJournalEntry } from '../state/schema';
 import { migrateState } from '../state/migrations';
-import type { StateStore } from '../state/store';
+import { replaceState, updateState, type StateStore } from '../state/store';
 import type {
 	GameProvider,
 	ProviderGame,
@@ -595,9 +595,12 @@ export class SyncService {
 	 */
 	private async saveState(): Promise<void> {
 		if (this.stateValue === undefined || this.stateStore === undefined) return;
-		const current = await this.stateStore.load();
-		const merged = this.stateBaseline === undefined ? cloneState(this.stateValue) : mergeStateChanges(this.stateBaseline, cloneState(this.stateValue), current);
-		await this.stateStore.save(merged);
+		const local = cloneState(this.stateValue);
+		const baseline = this.stateBaseline;
+		await updateState(this.stateStore, (current) => {
+			const merged = baseline === undefined ? local : migrateState(mergeStateChanges(baseline, local, current));
+			replaceState(current, merged);
+		});
 		// Update in place so references obtained from loadState() stay valid.
 		// The base of the next merge must be exactly what the store returns (it migrates and sanitizes on save);
 		// otherwise array items no longer match and journal entries would duplicate.

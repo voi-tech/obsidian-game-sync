@@ -1,7 +1,7 @@
 import type { LibrarySummaryViewModel } from '../model/library-summary';
 import { buildLibrarySummary } from '../model/library-summary';
 import type { GameSyncData } from '../state/schema';
-import type { StateStore } from '../state/store';
+import { updateState, type StateStore } from '../state/store';
 import type { PreparedSync, SyncApplyResult } from '../sync/service';
 import type { ReviewDecision } from '../ui/preview-modal';
 import type { GameSyncRuntimeComposition } from './composition';
@@ -139,10 +139,10 @@ export function createGameSyncCommandActions(options: GameSyncCommandActionsOpti
 
 	const markGameTrackImport = async (): Promise<void> => {
 		if (options.stateStore === undefined) return;
-		const state = await options.stateStore.load();
-		if (state.settings.libraryProvider !== 'gametrack') return;
-		state.settings.gametrackLastImportedAt = new Date().toISOString();
-		await options.stateStore.save(state);
+		await updateState(options.stateStore, (state) => {
+			if (state.settings.libraryProvider !== 'gametrack') return false;
+			state.settings.gametrackLastImportedAt = new Date().toISOString();
+		});
 	};
 
 	const openLibrarySummary = async (): Promise<void> => {

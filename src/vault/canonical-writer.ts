@@ -1,6 +1,6 @@
 import type { CanonicalGame } from '../model/canonical-game';
 import { VaultConflictError } from '../network/errors';
-import { applyManagedFrontmatter, serializeNote } from './frontmatter';
+import { applyManagedFrontmatter, InvalidFrontmatterError, serializeNote } from './frontmatter';
 import { noteFingerprint, VaultFolderError, type VaultGateway } from './gateway';
 import type { CanonicalPropertyMapping } from './canonical-projection';
 import type { CanonicalOperation, CanonicalSyncPlan, CanonicalSyncSelection } from '../sync/canonical-planner';
@@ -120,7 +120,8 @@ export class CanonicalVaultWriter {
 		const failed: string[] = [];
 		for (const operation of plan.operations) {
 			if (!selected.has(operation.id)) continue;
-			// Runtime and folder failures stop the batch; a conflict on one note (edited meanwhile) must not block the others.
+			// Runtime and folder failures stop the batch; a problem with one note (edited meanwhile, YAML the plugin
+			// cannot safely rewrite) must not block the others.
 			await beforeWrite?.();
 			const selectedFields = validation.fieldsByOperation.get(operation.id) ?? new Set<string>();
 			try {
@@ -128,7 +129,7 @@ export class CanonicalVaultWriter {
 				else await this.update(operation, selectedFields);
 				applied.push(operation.id);
 			} catch (error) {
-				if (!(error instanceof VaultConflictError)) throw error;
+				if (!(error instanceof VaultConflictError) && !(error instanceof InvalidFrontmatterError)) throw error;
 				failed.push(operation.id);
 			}
 		}
@@ -137,10 +138,10 @@ export class CanonicalVaultWriter {
 	}
 }
 
-/** Some selected notes changed after the preview and were skipped; the rest were written. */
+/** Some selected notes could not be written safely and were skipped; the rest were written. */
 export class CanonicalPartialApplyError extends VaultConflictError {
 	constructor(readonly appliedOperationIds: readonly string[], readonly failedOperationIds: readonly string[]) {
-		super(`${failedOperationIds.length} note(s) changed after the preview and were skipped; ${appliedOperationIds.length} note(s) were written. Preview the sync again.`);
+		super(`${failedOperationIds.length} note(s) were skipped (changed after the preview or unsupported YAML); ${appliedOperationIds.length} note(s) were written. Preview the sync again.`);
 		this.name = 'CanonicalPartialApplyError';
 	}
 }

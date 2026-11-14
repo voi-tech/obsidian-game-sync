@@ -775,7 +775,15 @@ function readNoteLink(value: unknown): NoteLink {
  * state merge combines links added concurrently instead of letting one save replace the other.
  */
 function noteLinksFrom(raw: Record<string, unknown>): { noteLinks: NoteLink[] } {
-	if (raw.noteLinks !== undefined) return { noteLinks: readArray<NoteLink>(raw.noteLinks, [], readNoteLink, 'note links') };
+	if (raw.noteLinks !== undefined) {
+		// One note per game. A merge of two concurrent saves can carry two links for one game: the later one wins.
+		const links = new Map<string, NoteLink>();
+		for (const link of readArray<NoteLink>(raw.noteLinks, [], readNoteLink, 'note links')) {
+			links.delete(link.canonicalId);
+			links.set(link.canonicalId, link);
+		}
+		return { noteLinks: [...links.values()] };
+	}
 	if (!Array.isArray(raw.operationJournal)) return { noteLinks: [] };
 	const links = new Map<string, NoteLink>();
 	for (const entry of raw.operationJournal as unknown[]) {

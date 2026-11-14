@@ -102,7 +102,7 @@ describe('sync executor', () => {
 		expect(calls).toEqual(['state', 'history', 'history', 'cache']);
 	});
 
-	it('captures the post-write fingerprint before hooks and rejects a manual edit on retry', async () => {
+	it('captures the post-write fingerprint before hooks and skips a manually edited note on retry', async () => {
 		const gateway = new FakeVaultGateway();
 		const planner = createSyncPlanner({ gateway, noteIndex: await buildNoteIndex(gateway), notesFolder: 'Games' });
 		const plan = await planner.plan([game], 'revision-fingerprint');
@@ -117,6 +117,10 @@ describe('sync executor', () => {
 		expect(first.failedOperationIds).toHaveLength(1);
 		gateway.set('Games/Example Game.md', `${await gateway.read('Games/Example Game.md')}\nManual edit`);
 
-		await expect(executor.apply(plan)).rejects.toThrow(/stale|conflict/i);
+		// The edited note is skipped and stays pending, without running the remaining hooks for it.
+		const retry = await executor.apply(plan);
+		expect(retry.appliedOperationIds).toEqual([]);
+		expect(retry.failedOperationIds).toEqual([plan.operations[0].id]);
+		expect(await gateway.read('Games/Example Game.md')).toContain('Manual edit');
 	});
 });

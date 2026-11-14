@@ -9,6 +9,7 @@ import type { CanonicalPropertyKey } from '../vault/canonical-projection';
 import { NotePathAllocator } from './note-path-allocator';
 import { readCanonicalTemplate, renderCanonicalTemplate } from '../vault/canonical-template';
 import type { NoteLink } from '../state/schema';
+import { allowsNewCanonicalNote, isIgnoredCanonicalGame, type LibraryFilterSettings } from './library-filter';
 
 export type CanonicalPlanStatus = 'create' | 'update' | 'unchanged' | 'conflict' | 'skip';
 
@@ -75,6 +76,11 @@ export interface CanonicalSyncPlannerOptions {
 	readonly templatePath?: string;
 	readonly revealHidden?: boolean;
 	readonly updatedAt?: string;
+	/** Games the user chose to ignore: neither created nor updated, same as Steam/PlayStation sync. */
+	readonly ignoredCanonicalIds?: readonly string[];
+	readonly ignoredProviderRefs?: readonly string[];
+	/** Decide only about new notes; a game that already has a note keeps syncing. */
+	readonly libraryFilters?: LibraryFilterSettings;
 }
 
 function hash(value: string): string {
@@ -163,10 +169,20 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 		candidateFolder,
 		targetPath: allocator.allocate(game, { notesFolder: options.notesFolder, existingPaths: [] }).path,
 	});
+	const skipped = new Map<string, string>();
 	for (const game of orderedGames) {
+		if (isIgnoredCanonicalGame(game, options.ignoredCanonicalIds, options.ignoredProviderRefs)) {
+			skipped.set(game.identity.canonicalKey, 'Ignored game.');
+			continue;
+		}
 		const match = matchCanonicalVaultNote(game, index, matchOptions(game));
 		matches.set(game.identity.canonicalKey, match);
-		if (match.status !== 'conflict' && match.status !== 'review' && match.note === undefined) newGames.push(game);
+		const isNew = match.status !== 'conflict' && match.status !== 'review' && match.note === undefined;
+		if (isNew && options.libraryFilters !== undefined && !allowsNewCanonicalNote(game, options.libraryFilters)) {
+			skipped.set(game.identity.canonicalKey, 'Excluded by the library filters.');
+			continue;
+		}
+		if (isNew) newGames.push(game);
 		if (match.note !== undefined) {
 			const assigned = assignments.get(match.note.path) ?? [];
 			assigned.push(game.identity.canonicalKey);
@@ -179,6 +195,11 @@ export async function planCanonicalSync(games: readonly CanonicalGame[], options
 		reservedPaths: new Set(assignments.keys()),
 	});
 	for (const game of orderedGames) {
+		const skipReason = skipped.get(game.identity.canonicalKey);
+		if (skipReason !== undefined) {
+			statuses.push({ canonicalKey: game.identity.canonicalKey, status: 'skip', reason: skipReason });
+			continue;
+		}
 		const match = matches.get(game.identity.canonicalKey) ?? matchCanonicalVaultNote(game, index, matchOptions(game));
 		const path = match.note?.path ?? allocatedPaths.get(game.identity.canonicalKey) ?? '';
 		if (match.status === 'conflict' || match.status === 'review') {
