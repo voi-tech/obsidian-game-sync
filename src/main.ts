@@ -17,7 +17,6 @@ import { createPlayStationEnricher } from './providers/playstation/enricher';
 import { createGameSyncCommandActions, type RuntimeUiPort } from './runtime/actions';
 import { GameSyncRuntimeComposition } from './runtime/composition';
 import { registerGameSyncCommands, type CommandErrorHandler, type CommandRegistrar, type GameSyncCommandActions } from './runtime/commands';
-import { GAME_SYNC_RUNTIME_REGISTRY } from './runtime/registry';
 import { createStateStore, type StateStore } from './state/store';
 import type { GameSyncData } from './state/schema';
 import { BackgroundSyncScheduler } from './sync/scheduler';
@@ -46,8 +45,6 @@ declare const require: (moduleName: string) => unknown;
 function requireRuntimeModule(moduleName: string): unknown {
 	return require(moduleName);
 }
-
-export { GAME_SYNC_RUNTIME_REGISTRY } from './runtime/registry';
 
 export interface GameSyncRuntimeHost {
 	app: App;
@@ -560,7 +557,6 @@ export default class GameSyncPlugin extends Plugin {
 	private runtime?: GameSyncRuntime;
 
 	override async onload(): Promise<void> {
-		void GAME_SYNC_RUNTIME_REGISTRY.marker;
 		this.runtime = createGameSyncRuntime({
 			app: this.app,
 			plugin: this,

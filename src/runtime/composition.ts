@@ -20,7 +20,6 @@ import type { SyncExecutor } from '../sync/background-executor';
 import { createCanonicalSyncExecutor, createLegacySyncExecutor } from './executors';
 import type { GameEnricher } from '../model/enrichment';
 import type { CanonicalLibrarySnapshot } from '../model/canonical-provider';
-import type { LibraryProviderId } from '../model/library-provider';
 
 export interface RuntimeCompositionOptions {
 	stateStore: StateStore;
@@ -32,7 +31,6 @@ export interface RuntimeCompositionOptions {
 	secretValues?: readonly string[];
 	canonicalProvider?: CanonicalGameProvider;
 	canonicalProviderFactory?: () => Promise<CanonicalGameProvider | undefined>;
-	canonicalProviderFactories?: Partial<Record<LibraryProviderId, (settings: GameSyncSettings) => Promise<CanonicalGameProvider | undefined>>>;
 	canonicalStatusFactory?: () => Promise<GameTrackRuntimeStatus>;
 	createEnrichers?: (settings: GameSyncSettings) => readonly GameEnricher[];
 	isActive?: () => boolean;
@@ -97,7 +95,6 @@ export class GameSyncRuntimeComposition {
 		const state = await this.options.stateStore.load();
 		const selectedId = state.settings.libraryProvider;
 		const selectedProvider = provider
-			?? (selectedId === undefined ? undefined : await this.options.canonicalProviderFactories?.[selectedId]?.(state.settings))
 			?? (selectedId === 'gametrack' ? await this.options.canonicalProviderFactory?.() : undefined)
 			?? (selectedId === undefined ? this.options.canonicalProvider : undefined);
 		if (selectedProvider === undefined || !selectedProvider.getCapabilities().supported) return undefined;
@@ -126,7 +123,7 @@ export class GameSyncRuntimeComposition {
 				ignoredProviderRefs: ignoredProviderRefsFor(state),
 				libraryFilters: state.settings,
 			},
-			writer: new CanonicalVaultWriter(this.options.gateway, { propertyMapping }),
+			writer: new CanonicalVaultWriter(this.options.gateway),
 			noteLinks: {
 				load: async () => (await this.options.stateStore.load()).noteLinks,
 				// Apply runs inside the sync lock (manual and scheduled), so a fresh load-change-save is not racing

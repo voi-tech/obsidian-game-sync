@@ -1,17 +1,10 @@
-import type { CanonicalGame } from '../model/canonical-game';
 import { VaultConflictError } from '../network/errors';
 import { applyManagedFrontmatter, InvalidFrontmatterError, serializeNote } from './frontmatter';
 import { noteFingerprint, VaultFolderError, type VaultGateway } from './gateway';
-import type { CanonicalPropertyMapping } from './canonical-projection';
 import type { CanonicalOperation, CanonicalSyncPlan, CanonicalSyncSelection } from '../sync/canonical-planner';
 
-export interface CanonicalVaultWriterOptions {
-	readonly propertyMapping?: CanonicalPropertyMapping;
-	readonly template?: (game: CanonicalGame) => string;
-}
-
 export class CanonicalVaultWriter {
-	constructor(private readonly gateway: VaultGateway, _options: CanonicalVaultWriterOptions = {}) {}
+	constructor(private readonly gateway: VaultGateway) {}
 
 	private validateSelection(plan: CanonicalSyncPlan, selection: CanonicalSyncSelection | undefined): {
 		readonly selectedOperationIds: readonly string[];

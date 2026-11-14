@@ -1,27 +1,40 @@
 # Game Sync architecture
 
-Game Sync has one production sync path for library sources:
+Game Sync has two sync paths that share the vault gateway, the matcher, the
+state store and the scheduler:
 
 ```text
-LibraryProvider
+GameTrack ZIP (LibraryProvider)
   -> CanonicalSnapshot
-  -> optional GameEnricher patches
+  -> optional GameEnricher patches (Steam, PlayStation)
   -> matcher
   -> CanonicalSyncPlan
   -> CanonicalVaultWriter
+
+Steam and PlayStation accounts (GameProviderAdapter)
+  -> ProviderSnapshot per account
+  -> SyncPlanner (merges both platforms into one game)
+  -> matcher
+  -> SyncPlan
+  -> SyncExecutor + VaultWriter (managed achievement block)
 ```
 
-## Library providers
+The second path is the direct Steam and PlayStation sync. It is the default
+and stays permanent: it merges both platforms into one note per game, keeps
+the match manager, unmerge, history, ignored games and the achievement block.
+Moving it onto the canonical path would rebuild those features without a user
+benefit, so it is not planned.
 
-`GameTrack`, `Steam` and `PlayStation` are library sources. Each source
-produces `CanonicalGame` values and therefore does not own matching, planning,
-filenames or Markdown writing.
+## Library sources
 
 GameTrack uses the official, user-selected ZIP export. It is manual and
-read-only. Direct SQLite access is not part of the standard runtime.
+read-only. Direct SQLite access is not part of the standard runtime. It
+produces `CanonicalGame` values and does not own matching, planning, filenames
+or Markdown writing.
 
-Steam and PlayStation keep their platform clients and can be selected as
-standalone library sources. The same clients also power optional enrichers.
+Steam and PlayStation are read through their platform clients
+(`src/providers/steam`, `src/providers/playstation`). The same clients power
+the direct sync and the optional GameTrack enrichers.
 
 ## Enrichers
 
@@ -53,18 +66,18 @@ properties and the Markdown body remain intact.
 
 ## Runtime and state
 
-The runtime composition selects one library provider and builds one canonical
-executor. The scheduler consumes only `SyncExecutor` and shares one
-concurrency guard with manual operations. An executor can expose the neutral
-`canRunAutomatically()` capability; the scheduler does not inspect provider
-IDs or transport details. GameTrack ZIP imports are manual; platform
-enrichers may refresh independently when configured.
+`libraryProvider: gametrack` selects the canonical path. Any other value,
+including `steam`, `playstation` or no value, uses the direct Steam and
+PlayStation sync for every connected, enabled account. The scheduler consumes
+only `SyncExecutor` and shares one concurrency guard with manual operations.
+An executor can expose the neutral `canRunAutomatically()` capability; the
+scheduler does not inspect provider IDs or transport details. GameTrack ZIP
+imports are manual; platform enrichers may refresh independently when
+configured.
 
-Legacy state readers, the legacy service and legacy provider models remain
-only for compatibility with old combined configurations, match management,
-history and rollback-sensitive data. Unambiguous old Steam/PlayStation
-settings migrate to the corresponding canonical library provider and are no
-longer sent through the legacy library sync path.
+Both paths decide note identity with the same matcher
+(`src/vault/matcher.ts`) and write state through atomic `StateStore.update()`
+calls. A note that cannot be written safely skips only its own operation.
 
 ## Mobile boundary
 

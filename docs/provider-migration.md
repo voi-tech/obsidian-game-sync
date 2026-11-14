@@ -8,11 +8,12 @@ Game Sync keeps the library source as an explicit, optional setting:
 libraryProvider: gametrack | steam | playstation
 ```
 
-Existing unambiguous Steam-only or PlayStation-only settings are read as the
-corresponding canonical library source. Ambiguous combined legacy settings
-remain on the compatibility path until the user chooses a source. Selecting
-GameTrack is an explicit user action; it does not remove credentials, legacy
-state, history or existing mappings.
+Only `gametrack` selects the canonical path. `steam`, `playstation` and an
+empty value all use the direct Steam and PlayStation sync, which reads every
+connected, enabled account. Older installations may have `steam` or
+`playstation` stored after a migration; the value is kept and means the direct
+sync. Selecting GameTrack is an explicit user action; it does not remove
+credentials, state, history or existing mappings.
 
 ## GameTrack selection
 
@@ -38,16 +39,15 @@ from background scheduling.
 
 ## Rollback and compatibility
 
-Changing `libraryProvider` back to Steam or PlayStation is non-destructive.
-Legacy credentials and state remain available. Existing notes are matched by
-stable identifiers and custom/user-managed properties are preserved by the
-canonical writer. No global frontmatter migration or legacy cleanup is part of
-Phase 4B.
+Changing the library source from GameTrack back to the direct sync is
+non-destructive. Credentials and state remain available. Existing notes are
+matched by stable identifiers and custom/user-managed properties are
+preserved by both writers. There is no global frontmatter migration.
 
-## Next phase boundary
+## Decision on the direct sync
 
-Legacy Steam/PlayStation paths remain in this release. Automatic Backup,
-filesystem watching, telemetry, automatic provider migration and full legacy
-cleanup are deliberately excluded. A later cleanup phase must first compare
-the value of direct providers as optional enrichers against the GameTrack
-export path.
+The direct Steam and PlayStation sync is permanent (decision 2026-11-14). It
+is not migrated to the canonical path: that would have to rebuild platform
+merging, the match manager, unmerge and the achievement block for no user
+benefit. Automatic Backup, filesystem watching, telemetry and automatic
+provider migration are out of scope.

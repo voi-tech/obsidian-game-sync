@@ -93,7 +93,7 @@ Create an official Steam Web API key at [Steam's API-key page](https://steamcomm
 
 ## PlayStation setup
 
-PlayStation connection opens the official PlayStation sign-in and connection-code pages. Sign in, get a connection code, paste it into the dialog and connect. Game Sync exchanges it for a reusable session and stores credentials in Obsidian SecretStorage; the one-time code is not retained.
+Select **Sign in to PlayStation**, sign in on the Sony page and finish connecting, as described under [PlayStation](#playstation). If Sony rejects the embedded sign-in, use **Advanced: manual connection**: open the sign-in and connection-code pages, paste the connection code into the dialog and connect. Game Sync exchanges it for a reusable session and stores credentials in Obsidian SecretStorage; the one-time code is not retained.
 
 PlayStation support is unofficial. Sony does not provide a public consumer API for this use case. The integration depends on undocumented PlayStation Network behavior and may break when Sony changes it.
 

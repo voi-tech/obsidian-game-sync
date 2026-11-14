@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Steam and PlayStation keep their direct sync permanently; the documentation no longer describes a migration to the GameTrack path that never happened. A stored `steam` or `playstation` library source keeps using the direct sync (covered by tests).
+- Removed unused code: the canonical Steam and PlayStation library providers, a runtime registry that kept unused modules in the bundle, unused re-export modules and ignored writer options. No change in behaviour.
+- README: the PlayStation setup section describes the embedded sign-in first and the connection code as the fallback.
+
 ## 26.11.2 (BRAT prerelease)
 
 - No more duplicate beside a hand-written note without a year: in the GameTrack import, `Games/Returnal.md` is offered for review as a likely match instead of getting `Returnal (2021).md` next to it. Whole-title match in the games folder only (no prefix match, so sequels do not match); a different year in the filename or `released` rules it out. Never merged automatically.

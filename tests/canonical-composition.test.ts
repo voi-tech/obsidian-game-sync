@@ -54,6 +54,21 @@ describe('direct library provider composition', () => {
 		expect(preview.status).toBe('complete');
 	});
 
+	it.each(['steam', 'playstation'] as const)('keeps a stored %s library source on the direct Steam and PlayStation sync', async (libraryProvider) => {
+		const state = migrateState({ settings: { ...DEFAULT_SETTINGS, libraryProvider, enabledProviders: { steam: true, playstation: true } } });
+		const composition = new GameSyncRuntimeComposition({
+			stateStore: new MemoryStateStore(state),
+			gateway: new FakeVaultGateway(),
+			adapters: [adapter('steam'), adapter('playstation')],
+		});
+
+		expect(await composition.createCanonicalService()).toBeUndefined();
+		const preview = await composition.createSyncExecutor().preview();
+
+		expect(preview.providerStatuses).toEqual([{ id: 'steam', state: 'success' }, { id: 'playstation', state: 'success' }]);
+		expect(preview.status).toBe('complete');
+	});
+
 	it('exposes manual GameTrack ZIP as non-automatic through the neutral executor capability', async () => {
 		const state = migrateState({ settings: { ...DEFAULT_SETTINGS, libraryProvider: 'gametrack' } });
 		const composition = new GameSyncRuntimeComposition({

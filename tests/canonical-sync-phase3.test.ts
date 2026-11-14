@@ -149,7 +149,7 @@ describe('Phase 3 canonical sync', () => {
 		});
 		const mapping = { title: ' status ' } as const;
 		const plan = await planCanonicalSync([game()], { gateway, notesFolder: 'Games', propertyMapping: mapping });
-		await new CanonicalVaultWriter(gateway, { propertyMapping: mapping }).apply(plan);
+		await new CanonicalVaultWriter(gateway).apply(plan);
 		const content = await gateway.read('Games/Example Game.md');
 
 		expect(content).toContain('status: "Example Game"');
@@ -173,7 +173,7 @@ describe('Phase 3 canonical sync', () => {
 		});
 		const mapping = { playtime: null } as const;
 		const plan = await planCanonicalSync([game()], { gateway, notesFolder: 'Games', propertyMapping: mapping });
-		await new CanonicalVaultWriter(gateway, { propertyMapping: mapping }).apply(plan);
+		await new CanonicalVaultWriter(gateway).apply(plan);
 		const content = await gateway.read('Games/Example Game.md');
 
 		expect(content).toContain('playtime: 90');
@@ -292,7 +292,7 @@ describe('Phase 3 canonical sync', () => {
 		const operation = plan.operations[0];
 		expect(operation?.preview.body).toBe('# Example Game\n\n120 minutes\n');
 
-		await new CanonicalVaultWriter(gateway, { template: () => '# diverging body\n' }).apply(plan);
+		await new CanonicalVaultWriter(gateway).apply(plan);
 		expect((await gateway.read(operation.path)).endsWith('# Example Game\n\n120 minutes\n')).toBe(true);
 	});
 
