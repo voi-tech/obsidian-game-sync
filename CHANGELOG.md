@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 26.11.3 (BRAT prerelease)
 
 - Steam and PlayStation keep their direct sync permanently; the documentation no longer describes a migration to the GameTrack path that never happened. A stored `steam` or `playstation` library source keeps using the direct sync (covered by tests).
 - Removed unused code: the canonical Steam and PlayStation library providers, a runtime registry that kept unused modules in the bundle, unused re-export modules and ignored writer options. No change in behaviour.
