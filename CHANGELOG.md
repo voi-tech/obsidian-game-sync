@@ -5,6 +5,10 @@
 - Steam and PlayStation keep their direct sync permanently; the documentation no longer describes a migration to the GameTrack path that never happened. A stored `steam` or `playstation` library source keeps using the direct sync (covered by tests).
 - Removed unused code: the canonical Steam and PlayStation library providers, a runtime registry that kept unused modules in the bundle, unused re-export modules and ignored writer options. No change in behaviour.
 - README: the PlayStation setup section describes the embedded sign-in first and the connection code as the fallback.
+- Release notes come from this file: the release workflow publishes the section of the tagged version, and the release check fails when that section is missing.
+- `npm run release:preflight` repeats the release CI on a clean copy before tagging (`npm ci` with the committed lock file, full check, committed `main.js` equal to the build), so a rejected lock file no longer surfaces only after the tag is pushed.
+- The release workflow installs and builds without write access and publishes in a separate job; checkouts no longer keep the token; GitHub Actions are pinned to commit SHAs. CI also fails when the committed `main.js` differs from the build.
+- CI and the development requirement move from Node 20 (end of life) to Node 22.12 or later; the matrix is Node 22, 24 and 26. Users are not affected.
 
 ## 26.11.2 (BRAT prerelease)
 

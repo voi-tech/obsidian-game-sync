@@ -14,7 +14,7 @@
 		"url": "https://github.com/voi-tech/obsidian-game-sync/issues"
 	},
 	"engines": {
-		"node": ">=20.19.0"
+		"node": ">=22.12.0"
 	},
 	"type": "module",
 	"scripts": {
@@ -26,6 +26,7 @@
 		"lint": "eslint . --max-warnings=0",
 		"check:mobile-bundle": "node scripts/check-mobile-bundle.mjs",
 		"release:check": "node scripts/check-release.mjs",
+		"release:preflight": "node scripts/release-preflight.mjs",
 		"check": "npm run lint && npm run typecheck && npm test && npm run build && npm run release:check",
 		"version": "node scripts/version-bump.mjs"
 	},

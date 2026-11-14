@@ -67,6 +67,15 @@ if (manifest !== undefined) {
 	if (/\bobsidian\b/i.test(manifest.description ?? '')) errors.push('manifest.json description must not mention Obsidian.');
 }
 
+try {
+	const changelog = await readFile('CHANGELOG.md', 'utf8');
+	if (manifest !== undefined && !changelog.split(/\r?\n/).some((line) => line.startsWith('## ') && line.slice(3).split(/\s/)[0] === manifest.version)) {
+		errors.push(`CHANGELOG.md has no section for ${manifest.version}.`);
+	}
+} catch {
+	// Reported below as a missing required file.
+}
+
 const requiredFiles = [
 	'package.json', 'package-lock.json', 'manifest.json', 'versions.json', 'CHANGELOG.md',
 	'README.md', 'README.pl.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'main.js', 'styles.css',

@@ -32,6 +32,12 @@ Do not include generated credentials, vault contents or private account identifi
 
 Versions use `YY.M.PATCH`, for example `26.9.0`. A release must pass the release check and include only the generated production assets required by the plugin.
 
+1. Move the `Unreleased` entries in `CHANGELOG.md` under a `## <version>` heading. That section becomes the GitHub release notes.
+2. Run `npm version <version> --no-git-tag-version`, commit, then run `npm run release:preflight`. It repeats the release CI on a clean copy of `HEAD`: `npm ci` with the committed lock file, `npm run check`, committed `main.js` equal to the build, an unused tag and a CHANGELOG section.
+3. Push the branch, then the annotated tag `<version>`. A tag on a commit outside `main` is published as a BRAT prerelease.
+
+The release workflow builds without write access and publishes the built files in a separate job. Actions are pinned to commit SHAs; update a pin together with its version comment.
+
 ## License
 
 By contributing, you agree that your contribution is provided under the project’s [MIT License](LICENSE).

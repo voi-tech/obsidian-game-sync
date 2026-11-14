@@ -204,7 +204,7 @@ Użyj **Copy diagnostic information** i przed udostępnieniem sprawdź raport po
 
 ## Rozwój
 
-Wymagany Node.js `>=20.19.0`.
+Wymagany Node.js `>=22.12.0`.
 
 ```bash
 npm ci

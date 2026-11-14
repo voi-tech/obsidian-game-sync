@@ -205,7 +205,7 @@ Use **Copy diagnostic information** and share the generated report only after ch
 
 ## Development
 
-Requirements: Node.js `>=20.19.0`.
+Requirements: Node.js `>=22.12.0`.
 
 ```bash
 npm ci
