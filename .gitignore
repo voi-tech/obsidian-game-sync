@@ -3,3 +3,10 @@ node_modules/
 dist/
 .DS_Store
 .worktrees/
+
+# Secrets and local config (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
