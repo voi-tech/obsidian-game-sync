@@ -6,6 +6,11 @@ updates:
       interval: monthly
       timezone: Europe/Warsaw
     open-pull-requests-limit: 3
+    ignore:
+      # typescript-eslint obsługuje TypeScript < 6.1. TypeScript 7 dopiero po wydaniu typescript-eslint z jego
+      # wsparciem (npm view typescript-eslint peerDependencies); inaczej npm ci kończy się ERESOLVE.
+      - dependency-name: typescript
+        versions: [">=6.1.0"]
     cooldown:
       default-days: 7
     groups:
