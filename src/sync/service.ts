@@ -814,9 +814,8 @@ export class SyncService {
 		}
 		let snapshot: ProviderSnapshot;
 		const { force, now, achievementCacheTtlMs } = fetchOptions;
-		let achievementCache: Readonly<Record<string, ProviderFetchRecord>> = {};
 		try {
-			achievementCache = await this.achievementCache(provider, previous);
+			const achievementCache = await this.achievementCache(provider, previous);
 			snapshot = await adapter.fetchLibrary({
 				force,
 				now: now ?? this.now(),
